@@ -486,6 +486,12 @@ CLI dispatch should wait until the parser contracts are stable.
 1. Run the new parser test file.
 2. Run the broadest available Python test command that is practical for this repo.
 
+**Completion Notes:**
+- Completed BE-T11 as a parser-test audit/consolidation task. The focused parser suite already contains synthetic coverage added across BE-T01 through BE-T06 and later numbered-save work.
+- Verified parser tests cover gzip loading, `H3SVG` offsets, raw deflate fallback, load errors, latest folder/save selection, special-name ignores, `.GM2` tie-breaks, explicit numbered save selection, XOR `0x01` hero parsing, invalid parser candidates, relevant-hero filtering, and structured hero selection errors.
+- Confirmed parser tests use synthetic byte buffers and temporary directories, and the repo contains no committed `.GM1`/`.GM2` save files.
+- Verification passed: `python3 -m unittest tests.test_h3_save_parser`; `python3 -m unittest discover`; `find . -type f \( -iname '*.GM1' -o -iname '*.GM2' \) -print`; `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### BE-T12: CLI/Wizard Tests
@@ -623,6 +629,6 @@ Deferred questions for later phases:
 | BE-T08 | List Save Heroes Command | done | BE-T07 | CLI | S | `tools/battle_estimator.py` |
 | BE-T09 | Interactive Wizard | done | BE-T07 | CLI | M | `tools/battle_estimator.py`, config helper |
 | BE-T10 | Simulation Output Context | done | BE-T07 | CLI | S | `tools/battle_estimator.py` |
-| BE-T11 | Parser Unit Tests | todo | BE-T01, BE-T03, BE-T05, BE-T06 | quality | M | parser tests |
+| BE-T11 | Parser Unit Tests | done | BE-T01, BE-T03, BE-T05, BE-T06 | quality | M | parser tests |
 | BE-T12 | CLI/Wizard Tests | todo | BE-T07, BE-T08, BE-T09 | quality | M | CLI tests, `tools/battle_estimator.py` |
 | BE-T13 | Documentation Verification Pass | blocked | BE-T10, BE-T11, BE-T12 | quality | S | planning docs, checkpoint, usage docs |
