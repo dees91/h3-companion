@@ -115,6 +115,11 @@ CLI dispatch should wait until the parser contracts are stable.
 1. Run a focused import/type smoke test for the new parser module.
 2. Run existing battle estimator CLI help or an equivalent no-op command to confirm no import regression.
 
+**Completion Notes:**
+- Added `tools/h3_save_parser.py` with parser data contracts, autosave/config constants, named hero army offsets, and lazy creature-ID mapping through `battle_estimator.CREATURES`.
+- Added synthetic parser contract tests in `tests/test_h3_save_parser.py`.
+- Verification passed: `python3 -m unittest tests.test_h3_save_parser`; `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### BE-T02: Save Loading + H3SVG Detection
@@ -548,10 +553,10 @@ Deferred questions for later phases:
 
 | ID | Task | Status | Blocked By | Wave | Effort | Files Likely Touched |
 |---|---|---|---|---|---|---|
-| BE-T01 | Parser Data Model + Constants | todo | -- | foundation | S | `tools/h3_save_parser.py`, parser tests |
-| BE-T02 | Save Loading + H3SVG Detection | blocked | BE-T01 | foundation | S | `tools/h3_save_parser.py`, parser tests |
-| BE-T03 | Latest Folder + Latest Save Selection | blocked | BE-T01 | foundation | M | `tools/h3_save_parser.py`, parser tests |
-| BE-T04 | Config Store | blocked | BE-T01 | foundation | S | `tools/h3_save_parser.py`, config tests |
+| BE-T01 | Parser Data Model + Constants | done | -- | foundation | S | `tools/h3_save_parser.py`, parser tests |
+| BE-T02 | Save Loading + H3SVG Detection | todo | BE-T01 | foundation | S | `tools/h3_save_parser.py`, parser tests |
+| BE-T03 | Latest Folder + Latest Save Selection | todo | BE-T01 | foundation | M | `tools/h3_save_parser.py`, parser tests |
+| BE-T04 | Config Store | todo | BE-T01 | foundation | S | `tools/h3_save_parser.py`, config tests |
 | BE-T05 | XOR 0x01 Hero Army Scanner | blocked | BE-T01, BE-T02 | parsing | M | `tools/h3_save_parser.py`, parser tests |
 | BE-T06 | Hero Filtering + Selection | blocked | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T07 | Autosave-First CLI Dispatch | blocked | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
@@ -561,4 +566,3 @@ Deferred questions for later phases:
 | BE-T11 | Parser Unit Tests | blocked | BE-T01, BE-T03, BE-T05, BE-T06 | quality | M | parser tests |
 | BE-T12 | CLI/Wizard Tests | blocked | BE-T07, BE-T08, BE-T09 | quality | M | CLI tests, `tools/battle_estimator.py` |
 | BE-T13 | Documentation Verification Pass | blocked | BE-T10, BE-T11, BE-T12 | quality | S | planning docs, checkpoint, usage docs |
-
