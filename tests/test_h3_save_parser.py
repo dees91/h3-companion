@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 import zlib
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -194,6 +195,119 @@ class H3SaveParserContractTests(unittest.TestCase):
             h3_save_parser.load_save(save_path)
 
             self.assertEqual(save_path.read_bytes(), before)
+
+    def test_parse_game_folder_datetime(self):
+        self.assertEqual(
+            h3_save_parser.parse_game_folder_datetime(
+                "2026.04.26 20;45 Diamond"
+            ),
+            datetime(2026, 4, 26, 20, 45),
+        )
+        self.assertEqual(
+            h3_save_parser.parse_game_folder_datetime(
+                "2026.04.26 20:45 Diamond"
+            ),
+            datetime(2026, 4, 26, 20, 45),
+        )
+        self.assertIsNone(h3_save_parser.parse_game_folder_datetime("Diamond"))
+        self.assertIsNone(
+            h3_save_parser.parse_game_folder_datetime("2026.99.99 20;45 Bad")
+        )
+
+    def test_select_game_dir_uses_explicit_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+
+            selected = h3_save_parser.select_game_dir(game_dir)
+
+        self.assertEqual(selected, game_dir)
+
+    def test_select_game_dir_errors_for_missing_explicit_directory(self):
+        missing_dir = Path("/tmp/vcmi-missing-game-dir-for-test")
+
+        with self.assertRaises(h3_save_parser.SaveSelectionError) as raised:
+            h3_save_parser.select_game_dir(missing_dir)
+
+        self.assertEqual(raised.exception.path, missing_dir)
+        self.assertIn("not a directory", raised.exception.reason)
+
+    def test_select_game_dir_picks_newest_dated_child(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            older = root / "2026.04.26 20;45 Diamond"
+            newest = root / "2026.05.01 09;15 Crystal"
+            ignored = root / "Manual Saves"
+            malformed = root / "2026.99.99 20;45 Bad"
+            for folder in (older, newest, ignored, malformed):
+                folder.mkdir()
+
+            selected = h3_save_parser.select_game_dir(autosave_root=root)
+
+        self.assertEqual(selected, newest)
+
+    def test_parse_numeric_save_name(self):
+        self.assertEqual(h3_save_parser.parse_numeric_save_name("415.GM1"), (415, 1))
+        self.assertEqual(h3_save_parser.parse_numeric_save_name("415.gm2"), (415, 2))
+        self.assertIsNone(h3_save_parser.parse_numeric_save_name("415_moved.GM1"))
+        self.assertIsNone(h3_save_parser.parse_numeric_save_name("BATTLE.GM2"))
+
+    def test_select_latest_save_ignores_non_numeric_names(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            (game_dir / "1.GM1").write_bytes(b"")
+            (game_dir / "415.GM1").write_bytes(b"")
+            expected = game_dir / "416.gm1"
+            expected.write_bytes(b"")
+            for ignored_name in (
+                "GAME_BEGIN.GM2",
+                "BATTLE.GM2",
+                "AUTOSAVE.GM2",
+                "415_moved.GM1",
+                "notes.txt",
+            ):
+                (game_dir / ignored_name).write_bytes(b"")
+            (game_dir / "999.GM2").mkdir()
+
+            selected = h3_save_parser.select_latest_save(game_dir)
+
+        self.assertEqual(selected, expected)
+
+    def test_select_latest_save_prefers_gm2_for_same_number(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            (game_dir / "415.GM1").write_bytes(b"")
+            expected = game_dir / "415.GM2"
+            expected.write_bytes(b"")
+
+            selected = h3_save_parser.select_latest_save(game_dir)
+
+        self.assertEqual(selected, expected)
+
+    def test_select_latest_save_errors_when_no_numeric_saves_exist(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            (game_dir / "BATTLE.GM2").write_bytes(b"")
+
+            with self.assertRaises(h3_save_parser.SaveSelectionError) as raised:
+                h3_save_parser.select_latest_save(game_dir)
+
+        self.assertEqual(raised.exception.path, game_dir)
+        self.assertIn("no numeric", raised.exception.reason)
+
+    def test_resolve_save_context_selects_game_dir_and_latest_save(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            game_dir = root / "2026.04.26 20;45 Diamond"
+            game_dir.mkdir()
+            latest_save = game_dir / "415.GM2"
+            latest_save.write_bytes(b"")
+            (game_dir / "414.GM2").write_bytes(b"")
+
+            context = h3_save_parser.resolve_save_context(autosave_root=root)
+
+        self.assertEqual(context.autosave_root, root)
+        self.assertEqual(context.game_dir, game_dir)
+        self.assertEqual(context.save_file, latest_save)
 
 
 if __name__ == "__main__":

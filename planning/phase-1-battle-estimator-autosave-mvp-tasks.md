@@ -187,6 +187,12 @@ CLI dispatch should wait until the parser contracts are stable.
 2. Unit test latest save selection with mixed numeric and non-numeric files.
 3. Unit test `.GM2` tie-break over `.GM1`.
 
+**Completion Notes:**
+- Added autosave selection helpers in `tools/h3_save_parser.py`: `select_game_dir()`, `select_latest_save()`, `resolve_save_context()`, and supporting parse/error helpers.
+- Folder selection supports explicit game directories and newest dated child-folder discovery under the autosave root.
+- Save selection considers only numeric `.GM1`/`.GM2` files, prefers highest numeric save, tie-breaks to `.GM2`, and ignores manual/special names.
+- Verification passed: `python3 -m unittest tests.test_h3_save_parser`; `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### BE-T04: Config Store
@@ -561,7 +567,7 @@ Deferred questions for later phases:
 |---|---|---|---|---|---|---|
 | BE-T01 | Parser Data Model + Constants | done | -- | foundation | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T02 | Save Loading + H3SVG Detection | done | BE-T01 | foundation | S | `tools/h3_save_parser.py`, parser tests |
-| BE-T03 | Latest Folder + Latest Save Selection | todo | BE-T01 | foundation | M | `tools/h3_save_parser.py`, parser tests |
+| BE-T03 | Latest Folder + Latest Save Selection | done | BE-T01 | foundation | M | `tools/h3_save_parser.py`, parser tests |
 | BE-T04 | Config Store | todo | BE-T01 | foundation | S | `tools/h3_save_parser.py`, config tests |
 | BE-T05 | XOR 0x01 Hero Army Scanner | todo | BE-T01, BE-T02 | parsing | M | `tools/h3_save_parser.py`, parser tests |
 | BE-T06 | Hero Filtering + Selection | blocked | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
