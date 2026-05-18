@@ -560,6 +560,13 @@ CLI dispatch should wait until the parser contracts are stable.
 1. Review docs for stale commands or contradicted decisions.
 2. Run final focused parser/CLI tests.
 
+**Completion Notes:**
+- Updated the autosave brief to describe implemented Phase 1 dispatch boundaries, including no-argument wizard, autosave short form, explicit `--hero`, `--save`, `--save-file`, `--list-save-heroes`, `--all-heroes`, manual-mode fallback, and `--hero` without `vs` as a usage error.
+- Updated the save parsing checkpoint from proposed `--from-save` direction to implemented `--save-file`, `--save`, autosave selection, hero listing, wizard, parser module, and config helper behavior while preserving historical parsing observations.
+- Updated `tools/battle_estimator.py` usage header to show current autosave-first examples and retained manual mode.
+- Marked Phase 1 checkpoint items complete and confirmed the no-real-save-file policy with a repository search.
+- Verification passed: `python3 -m unittest tests.test_h3_save_parser tests.test_battle_estimator_cli`; `python3 -m unittest discover`; `python3 tools/battle_estimator.py --help`; `find . -type f \( -iname '*.GM1' -o -iname '*.GM2' \) -print`.
+
 ---
 
 ## Checkpoints
@@ -568,30 +575,30 @@ CLI dispatch should wait until the parser contracts are stable.
 
 After BE-T01 through BE-T06:
 
-- [ ] Parser module imports without side effects.
-- [ ] Latest save selection works in temp-dir tests.
-- [ ] Synthetic XOR `Isra` fixture parses to the expected seven-stack army.
-- [ ] Hero filtering and selection behavior is deterministic.
-- [ ] No changes to `battle_estimator.py` CLI yet, except harmless imports if required.
+- [x] Parser module imports without side effects.
+- [x] Latest save selection works in temp-dir tests.
+- [x] Synthetic XOR `Isra` fixture parses to the expected seven-stack army.
+- [x] Hero filtering and selection behavior is deterministic.
+- [x] Parser foundation was completed before CLI integration.
 
 ### Checkpoint: CLI MVP
 
 After BE-T07 through BE-T10:
 
-- [ ] Short command form works.
-- [ ] No-argument wizard works manually.
-- [ ] `--list-save-heroes` shows selected folder/save and hero candidates.
-- [ ] Output clearly labels hero army and modeling limitations.
+- [x] Short command form works.
+- [x] No-argument wizard works in deterministic subprocess tests.
+- [x] `--list-save-heroes` shows selected folder/save and hero candidates.
+- [x] Output clearly labels hero army and modeling limitations.
 
 ### Checkpoint: Phase 1 Complete
 
 After BE-T11 through BE-T13:
 
-- [ ] Parser tests pass.
-- [ ] CLI/wizard tests or documented manual checks pass.
-- [ ] No real save files are committed.
-- [ ] Planning and brief docs match implemented behavior.
-- [ ] Feature is ready for user review before GUI or owner/team work.
+- [x] Parser tests pass.
+- [x] CLI/wizard tests or documented manual checks pass.
+- [x] No real save files are committed.
+- [x] Planning and brief docs match implemented behavior.
+- [x] Feature is ready for user review before GUI or owner/team work.
 
 ---
 
@@ -639,4 +646,4 @@ Deferred questions for later phases:
 | BE-T10 | Simulation Output Context | done | BE-T07 | CLI | S | `tools/battle_estimator.py` |
 | BE-T11 | Parser Unit Tests | done | BE-T01, BE-T03, BE-T05, BE-T06 | quality | M | parser tests |
 | BE-T12 | CLI/Wizard Tests | done | BE-T07, BE-T08, BE-T09 | quality | M | CLI tests, `tools/battle_estimator.py` |
-| BE-T13 | Documentation Verification Pass | todo | BE-T10, BE-T11, BE-T12 | quality | S | planning docs, checkpoint, usage docs |
+| BE-T13 | Documentation Verification Pass | done | BE-T10, BE-T11, BE-T12 | quality | S | planning docs, checkpoint, usage docs |

@@ -6,12 +6,16 @@ Symulator bitwy Monte Carlo oparty na formule obrażeń z VCMI
 (lib/battle/DamageCalculator.cpp) z kompletną bazą ~150 stworzeń z Heroes III.
 
 Użycie:
-    python3 tools/battle_estimator.py "10 pikeman, 2 griffin" vs "lot of boar"
-    python3 tools/battle_estimator.py "5 archangel" vs "horde of black dragon"
-    python3 tools/battle_estimator.py "100 skeleton, 20 vampire lord" vs "30 champion"
-    python3 tools/battle_estimator.py --list                   # lista stworzeń
-    python3 tools/battle_estimator.py --list castle             # stworzenia Castle
-    python3 tools/battle_estimator.py "10 pikeman" vs "20 boar" -v  # verbose
+    python3 tools/battle_estimator.py                           # wizard
+    python3 tools/battle_estimator.py Isra vs "horde of ancient behemoth"
+    python3 tools/battle_estimator.py --hero Isra --save 415 vs "30 champion"
+    python3 tools/battle_estimator.py --save-file "/path/to/415.GM2" --hero Isra vs "1 pikeman"
+    python3 tools/battle_estimator.py --list-save-heroes --all-heroes
+    python3 tools/battle_estimator.py --set-autosave-dir "/path/to/game folder"
+    python3 tools/battle_estimator.py --show-config
+    python3 tools/battle_estimator.py --clear-autosave-dir
+    python3 tools/battle_estimator.py "10 pikeman" vs "20 boar"  # manual mode
+    python3 tools/battle_estimator.py --list castle              # stworzenia Castle
 """
 
 import argparse

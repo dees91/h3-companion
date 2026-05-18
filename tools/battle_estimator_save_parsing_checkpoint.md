@@ -46,7 +46,7 @@ Observed formats:
 - `dd.GM1`: `H3SVG` starts at offset `0`
 - random multiplayer `GM2` saves: `H3SVG` starts at offset `65`
 
-So a parser should locate `H3SVG` rather than assuming it is at byte `0`.
+The implemented parser locates `H3SVG` rather than assuming it is at byte `0`.
 
 ## Known Control Save
 
@@ -296,52 +296,60 @@ The user reported for `337.GM2`:
 ```
 
 Initial raw searches did not find a normal army block. That result is now
-explained by the XOR `0x01` encoding. The next check should rerun the GM2 hero
-scanner against `337.GM2` and verify that the same hero, likely `Isra`, has
-that army after decoding.
+explained by the XOR `0x01` encoding. This remains a historical observation;
+full real saves are not committed as fixtures.
 
-## Proposed Implementation Direction
+## Implemented Phase 1 Direction
 
-Add save parsing support to `tools/battle_estimator.py` in a narrow, pragmatic
-way:
+Save parsing support is implemented in a narrow, pragmatic way through
+`tools/h3_save_parser.py` plus autosave-first dispatch in
+`tools/battle_estimator.py`.
 
-```text
---from-save PATH
---hero NAME
-```
-
-Example target UX:
+Implemented command examples:
 
 ```bash
-python3 tools/battle_estimator.py --from-save 415.GM2 --hero Isra vs "horde of ancient behemoth"
+python3 tools/battle_estimator.py
+python3 tools/battle_estimator.py Isra vs "horde of ancient behemoth"
+python3 tools/battle_estimator.py --hero Isra vs "30 champion"
+python3 tools/battle_estimator.py --save 415 --hero Isra vs "..."
+python3 tools/battle_estimator.py --save-file 415.GM2 --hero Isra vs "..."
+python3 tools/battle_estimator.py --list-save-heroes --all-heroes
 ```
 
-Possible fallback if `--hero` is omitted:
+The originally proposed `--from-save PATH` flag was not used. The implemented
+equivalent is `--save-file PATH`.
 
-- list detected heroes with non-empty armies, or
-- choose the largest army by total AI value/count, with a clear warning
+Implemented pieces:
 
-Recommended implementation pieces:
+1. `load_save(path)`
+   - reads gzip
+   - supports raw deflate fallback
+   - returns decompressed bytes plus located `H3SVG`
 
-1. `load_save_raw(path)`
-   - read gzip
-   - return decompressed bytes
-   - locate `H3SVG`
+2. `select_game_dir()`, `select_latest_save()`, `select_numbered_save()`
+   - select explicit or newest game folder
+   - select latest numeric `.GM1`/`.GM2`
+   - prefer `.GM2` for the same number
+   - ignore special/manual save names
 
-2. `parse_classic_h3sed_style(raw)`
-   - for classic `GM1`/normal saves
-   - no XOR
+3. `scan_xor01_hero_armies(raw)`
+   - scans candidate hero name offsets
+   - decodes candidate hero structs with `byte ^ 0x01`
+   - extracts name + seven army slots
 
-3. `parse_xor01_hero_scan(raw)`
-   - for multiplayer/HD `GM2` hero sections
-   - decode candidate hero structs or candidate army/name windows with
-     `byte ^ 0x01`
+4. `filter_relevant_heroes()` and `select_hero()`
+   - default visibility is `ai_value >= 5000 OR total_creatures >= 50`
+   - `--all-heroes` bypasses filtering
+   - exact and unambiguous prefix matching are supported
+   - missing and ambiguous selections are structured errors
 
-4. `select_hero(heroes, hero_name=None)`
-   - exact/fuzzy name match
-   - otherwise print candidates or choose a documented default
+5. config helpers
+   - user-global config at `~/.config/vcmi-battle-estimator/config.json`
+   - supports `autosave_dir` and wizard `last_hero`
 
-5. feed selected army into existing battle estimator data model
+Selected hero armies are converted into the existing battle estimator creature
+model before simulation, avoiding duplicate module identity when the estimator
+is run as a script.
 
 ## Important Caveats
 
@@ -350,18 +358,20 @@ Recommended implementation pieces:
 - It does not yet identify current player ownership from save data.
 - It does not yet distinguish active hero from all heroes except by name or
   by army size.
-- `BATTLE` at offset `964` should not be used as a battle-state indicator.
+- `BATTLE` at offset `964` must not be used as a battle-state indicator.
 - Full hero parsing is not required for the first useful implementation;
   extracting name + 7 army slots is enough.
 
 ## Current Status
 
-No production parser has been added yet.
-
-Known good facts:
+Implemented Phase 1 facts:
 
 - `dd.GM1` classic save can be parsed normally.
 - `415.GM2` multiplayer save can be parsed by XOR-decoding hero data.
 - `415_moved.GM1` confirms the army slot swap exactly.
 - `Isra` in `415.GM2` is recoverable with the correct army.
-
+- The production parser module exists at `tools/h3_save_parser.py`.
+- The CLI supports autosave-first simulation, hero listing, config commands,
+  and the no-argument wizard.
+- Tests use synthetic byte buffers and temporary directories; real local save
+  paths above are investigation notes, not required repo fixtures.

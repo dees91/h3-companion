@@ -9,9 +9,9 @@
 
 ## Product Intent
 
-`tools/battle_estimator.py` should become an autosave-first battle estimator for
-the user's Heroes III multiplayer games. The tool should read the current hero
-army from the latest autosave and run the existing battle estimate against a
+`tools/battle_estimator.py` is an autosave-first battle estimator for
+the user's Heroes III multiplayer games. The tool reads the current hero
+army from the latest autosave and runs the existing battle estimate against a
 manually supplied enemy army.
 
 The primary use case is a 2v2 multiplayer game:
@@ -61,8 +61,9 @@ multi-wrapper discovery in the MVP.
 
 ### Autosave-First UX
 
-The new workflow is autosave-first. Backward compatibility with the old manual
-army CLI is not a design constraint.
+The implemented workflow is autosave-first. The old manual-army CLI remains
+available only when the left side of `vs` looks like a manual army, for example
+`"10 pikeman" vs "20 boar"`.
 
 Primary command:
 
@@ -76,13 +77,13 @@ Equivalent explicit command:
 python3 tools/battle_estimator.py --hero Isra vs "horde of ancient behemoth"
 ```
 
-With no arguments, the tool should launch a simple terminal wizard:
+With no arguments, the tool launches a simple terminal wizard:
 
 ```bash
 python3 tools/battle_estimator.py
 ```
 
-The wizard should:
+The wizard:
 
 1. resolve the current autosave folder,
 2. select the latest save,
@@ -90,7 +91,23 @@ The wizard should:
 4. list relevant heroes and armies,
 5. ask for hero,
 6. ask for enemy army,
-7. run the estimate.
+7. save the selected hero as `last_hero`,
+8. run the estimate.
+
+Current Phase 1 command surface:
+
+```bash
+python3 tools/battle_estimator.py
+python3 tools/battle_estimator.py Isra vs "horde of ancient behemoth"
+python3 tools/battle_estimator.py --hero Isra vs "30 champion"
+python3 tools/battle_estimator.py --save 415 --hero Isra vs "..."
+python3 tools/battle_estimator.py --save-file "/path/to/415.GM2" --hero Isra vs "..."
+python3 tools/battle_estimator.py --list-save-heroes
+python3 tools/battle_estimator.py --list-save-heroes --all-heroes
+```
+
+`--hero HERO` without `vs enemy` is a usage error. Use the wizard or
+`--list-save-heroes` when no enemy army is being supplied.
 
 This terminal wizard is the Phase 1 substitute for GUI. A separate GUI is out
 of scope until the parser and CLI behavior are stable.
@@ -131,7 +148,7 @@ Selection rules:
 3. ignore special or manual names such as `GAME_BEGIN.GM2`, `BATTLE.GM2`,
    `AUTOSAVE.GM2`, and `415_moved.GM1`.
 
-Explicit save selection should exist:
+Explicit save selection exists:
 
 ```bash
 python3 tools/battle_estimator.py --save 415 --hero Isra vs "..."
@@ -150,11 +167,12 @@ python3 tools/battle_estimator.py "Lord Haart" vs "..."
 python3 tools/battle_estimator.py --hero Isra vs "..."
 ```
 
-Matching should be case-insensitive. Prefix matching is acceptable only when it
+Matching is case-insensitive. Prefix matching is accepted only when it
 is unambiguous.
 
-If no hero is supplied in non-interactive mode, list relevant heroes and exit.
-Do not guess.
+If no hero is supplied for a simulation command, do not guess. Use
+`--list-save-heroes` to inspect detected candidates, or run with no arguments
+to use the wizard.
 
 If a hero name is missing or ambiguous, print candidates and exit. Do not
 silently choose a hero.
@@ -198,7 +216,7 @@ Do not model:
 - battlefield terrain and obstacles
 - player ownership/team bonuses
 
-The estimator output should clearly state that only creature stacks are modeled.
+The estimator output states that only creature stacks are modeled.
 
 ### Config
 
@@ -234,14 +252,14 @@ non-interactive simulation unless the user explicitly selected that hero.
 
 ### Save Parsing
 
-Phase 1 parser should live outside `battle_estimator.py`, likely:
+Phase 1 parser lives outside `battle_estimator.py`:
 
 ```text
 tools/h3_save_parser.py
 ```
 
-The estimator script should remain responsible for CLI, simulation, and output.
-The parser module should own:
+The estimator script remains responsible for CLI, simulation, and output.
+The parser module owns:
 
 - gzip save loading
 - autosave folder resolution
@@ -288,7 +306,7 @@ slots exactly.
 
 ### Relevant Hero Listing
 
-Default hero lists should hide obvious starting armies and sort practical
+Default hero lists hide obvious starting armies and sort practical
 candidates first.
 
 Recommended default visibility rule:
@@ -297,9 +315,9 @@ Recommended default visibility rule:
 show if ai_value >= 5000 OR total_creatures >= 50
 ```
 
-Add an `--all-heroes` option for full debug listing.
+Use `--all-heroes` for full debug listing.
 
-The list should show:
+The list shows:
 
 - selected game folder
 - selected save
@@ -309,11 +327,11 @@ The list should show:
 
 ### Output
 
-Always print the selected source context:
+Save-based simulation output prints the selected source context:
 
 ```text
-Game folder: 2026.04.26 20;45 Diamond
-Save: 417.GM2
+Folder zapisu: 2026.04.26 20;45 Diamond
+Plik zapisu: 417.GM2
 Hero: Isra
 ```
 
@@ -324,7 +342,7 @@ Isra: 731x Skeleton Warrior, 181x Zombie, ...
 Wrog: horde Ancient Behemoth
 ```
 
-Include a concise limitation note:
+It also includes a concise limitation note:
 
 ```text
 Note: hero stats, skills, artifacts, spells, morale, and luck are not modeled.
@@ -357,4 +375,3 @@ Use synthetic tests for:
 - config read/write behavior
 
 Small synthetic byte buffers are preferred over real save fragments.
-
