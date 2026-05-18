@@ -44,11 +44,14 @@ GAME_FOLDER_DATE_PATTERN = re.compile(
     r"(?P<hour>\d{2})[;:](?P<minute>\d{2})(?:\b|$)"
 )
 NUMERIC_SAVE_PATTERN = re.compile(r"^(?P<number>\d+)\.(?P<ext>gm[12])$", re.I)
+HERO_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9 '\-]{0,12}$")
 
 HERO_ARMY_SLOT_COUNT = 7
 HERO_ARMY_VALUE_SIZE = 4
 HERO_NAME_SIZE = 13
 HERO_ARMY_XOR_KEY = 0x01
+# Sanity cap for parser candidates, not a Heroes III game-rule limit.
+MAX_HERO_ARMY_COUNT = 1_000_000
 
 HERO_STRUCT_ARMY_TYPES_OFFSET = 113
 HERO_STRUCT_ARMY_COUNTS_OFFSET = 141
@@ -256,6 +259,13 @@ def load_save(path: str | Path) -> LoadedSave:
     return LoadedSave(path=save_path, data=raw, h3svg_offset=h3svg_offset)
 
 
+def load_hero_armies_from_save(path: str | Path) -> tuple[HeroArmy, ...]:
+    """Load a save file and scan it for XOR 0x01 encoded hero armies."""
+
+    loaded_save = load_save(path)
+    return scan_xor01_hero_armies(loaded_save.data)
+
+
 def find_h3svg_offset(data: bytes) -> int | None:
     """Return the offset of the H3SVG signature, if present."""
 
@@ -263,6 +273,103 @@ def find_h3svg_offset(data: bytes) -> int | None:
     if offset == -1:
         return None
     return offset
+
+
+def xor_decode_bytes(
+    data: bytes,
+    offset: int,
+    length: int,
+    key: int = HERO_ARMY_XOR_KEY,
+) -> bytes:
+    """Decode a byte window using the observed XOR key."""
+
+    if offset < 0 or length < 0 or offset + length > len(data):
+        raise ValueError("XOR decode window is outside data")
+    return bytes(byte ^ key for byte in data[offset:offset + length])
+
+
+def decode_xor_u32(data: bytes, offset: int) -> int:
+    """Decode one XOR-obfuscated little-endian unsigned 32-bit integer."""
+
+    return int.from_bytes(
+        xor_decode_bytes(data, offset, HERO_ARMY_VALUE_SIZE),
+        "little",
+    )
+
+
+def decode_hero_name(data: bytes, name_offset: int) -> str | None:
+    """Decode and validate a null-padded XOR-obfuscated hero name."""
+
+    try:
+        decoded = xor_decode_bytes(data, name_offset, HERO_NAME_SIZE)
+    except ValueError:
+        return None
+
+    nul_index = decoded.find(b"\x00")
+    if nul_index == -1:
+        name_bytes = decoded
+    else:
+        name_bytes = decoded[:nul_index]
+        if any(byte != 0 for byte in decoded[nul_index:]):
+            return None
+
+    try:
+        name = name_bytes.decode("ascii").strip()
+    except UnicodeDecodeError:
+        return None
+
+    if not HERO_NAME_PATTERN.fullmatch(name):
+        return None
+    return name
+
+
+def parse_xor01_hero_at(data: bytes, name_offset: int) -> HeroArmy | None:
+    """Parse one XOR 0x01 hero-army candidate by hero-name offset."""
+
+    if name_offset < HERO_STRUCT_NAME_OFFSET:
+        return None
+
+    hero_name = decode_hero_name(data, name_offset)
+    if hero_name is None:
+        return None
+
+    ids_offset = name_offset + HERO_ARMY_TYPES_FROM_NAME_OFFSET
+    counts_offset = name_offset + HERO_ARMY_COUNTS_FROM_NAME_OFFSET
+    stacks = []
+
+    try:
+        for slot in range(HERO_ARMY_SLOT_COUNT):
+            creature_id = decode_xor_u32(
+                data,
+                ids_offset + slot * HERO_ARMY_VALUE_SIZE,
+            )
+            count = decode_xor_u32(
+                data,
+                counts_offset + slot * HERO_ARMY_VALUE_SIZE,
+            )
+            if count == 0:
+                continue
+            if count > MAX_HERO_ARMY_COUNT:
+                return None
+            stacks.append(HeroStack.from_creature_id(creature_id, count))
+    except (ValueError, OverflowError):
+        return None
+
+    if not stacks:
+        return None
+    return HeroArmy(hero_name=hero_name, stacks=tuple(stacks), source_offset=name_offset)
+
+
+def scan_xor01_hero_armies(data: bytes) -> tuple[HeroArmy, ...]:
+    """Scan decompressed save bytes for XOR 0x01 encoded hero armies."""
+
+    heroes = []
+    last_name_offset = len(data) - HERO_NAME_SIZE
+    for name_offset in range(HERO_STRUCT_NAME_OFFSET, last_name_offset + 1):
+        hero_army = parse_xor01_hero_at(data, name_offset)
+        if hero_army is not None:
+            heroes.append(hero_army)
+    return tuple(heroes)
 
 
 def parse_game_folder_datetime(name: str) -> datetime | None:

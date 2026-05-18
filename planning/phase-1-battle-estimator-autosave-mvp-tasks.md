@@ -262,6 +262,12 @@ CLI dispatch should wait until the parser contracts are stable.
 2. Unit test swapped first two slots matching `415_moved.GM1` behavior.
 3. Unit test invalid ID/count rejection.
 
+**Completion Notes:**
+- Added XOR `0x01` hero-army decoding helpers, candidate parsing, save scanning, and `load_hero_armies_from_save()` in `tools/h3_save_parser.py`.
+- Scanner decodes 13-byte hero names, validates clean null padding, reads seven creature IDs and seven counts from the standard offsets, ignores empty slots, and rejects invalid non-empty IDs or impossible counts.
+- Added synthetic `Isra` and `415_moved` fixtures plus tests for empty slots, invalid IDs/counts/names, noise, and boundary offsets.
+- Verification passed: `python3 -m unittest tests.test_h3_save_parser`; `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### BE-T06: Hero Filtering + Selection
@@ -575,8 +581,8 @@ Deferred questions for later phases:
 | BE-T02 | Save Loading + H3SVG Detection | done | BE-T01 | foundation | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T03 | Latest Folder + Latest Save Selection | done | BE-T01 | foundation | M | `tools/h3_save_parser.py`, parser tests |
 | BE-T04 | Config Store | done | BE-T01 | foundation | S | `tools/h3_save_parser.py`, config tests |
-| BE-T05 | XOR 0x01 Hero Army Scanner | todo | BE-T01, BE-T02 | parsing | M | `tools/h3_save_parser.py`, parser tests |
-| BE-T06 | Hero Filtering + Selection | blocked | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
+| BE-T05 | XOR 0x01 Hero Army Scanner | done | BE-T01, BE-T02 | parsing | M | `tools/h3_save_parser.py`, parser tests |
+| BE-T06 | Hero Filtering + Selection | todo | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T07 | Autosave-First CLI Dispatch | blocked | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
 | BE-T08 | List Save Heroes Command | blocked | BE-T07 | CLI | S | `tools/battle_estimator.py` |
 | BE-T09 | Interactive Wizard | blocked | BE-T07 | CLI | M | `tools/battle_estimator.py`, config helper |

@@ -13,6 +13,45 @@ from tools import battle_estimator
 from tools import h3_save_parser
 
 
+ISRA_CREATURE_IDS = (57, 59, 63, 65, 67, 56, 69)
+ISRA_MOVED_CREATURE_IDS = (59, 57, 63, 65, 67, 56, 69)
+ISRA_COUNTS = (731, 181, 59, 47, 19, 316, 8)
+ISRA_MOVED_COUNTS = (181, 731, 59, 47, 19, 316, 8)
+
+
+def _xor_encode(raw: bytes) -> bytes:
+    return bytes(byte ^ h3_save_parser.HERO_ARMY_XOR_KEY for byte in raw)
+
+
+def _build_xor_hero_fixture(
+    hero_name="Isra",
+    creature_ids=ISRA_CREATURE_IDS,
+    counts=ISRA_COUNTS,
+    name_offset=256,
+):
+    data = bytearray(name_offset + h3_save_parser.HERO_NAME_SIZE + 32)
+    ids_offset = name_offset + h3_save_parser.HERO_ARMY_TYPES_FROM_NAME_OFFSET
+    counts_offset = name_offset + h3_save_parser.HERO_ARMY_COUNTS_FROM_NAME_OFFSET
+
+    for slot, creature_id in enumerate(creature_ids):
+        encoded = _xor_encode(int(creature_id).to_bytes(4, "little"))
+        offset = ids_offset + slot * h3_save_parser.HERO_ARMY_VALUE_SIZE
+        data[offset:offset + 4] = encoded
+    for slot, count in enumerate(counts):
+        encoded = _xor_encode(int(count).to_bytes(4, "little"))
+        offset = counts_offset + slot * h3_save_parser.HERO_ARMY_VALUE_SIZE
+        data[offset:offset + 4] = encoded
+
+    name_bytes = hero_name.encode("ascii")
+    if len(name_bytes) > h3_save_parser.HERO_NAME_SIZE:
+        raise ValueError("test hero name is too long")
+    padded_name = name_bytes.ljust(h3_save_parser.HERO_NAME_SIZE, b"\x00")
+    data[name_offset:name_offset + h3_save_parser.HERO_NAME_SIZE] = _xor_encode(
+        padded_name
+    )
+    return bytes(data), name_offset
+
+
 class H3SaveParserContractTests(unittest.TestCase):
     def test_constants_use_home_derived_paths(self):
         home = Path.home()
@@ -493,6 +532,144 @@ class H3SaveParserContractTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.path, config_path)
         self.assertIn("must not be blank", raised.exception.reason)
+
+    def test_parse_xor01_hero_at_reads_synthetic_isra_army(self):
+        data, name_offset = _build_xor_hero_fixture()
+
+        hero = h3_save_parser.parse_xor01_hero_at(data, name_offset)
+
+        self.assertIsNotNone(hero)
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertEqual(hero.source_offset, name_offset)
+        self.assertEqual([stack.count for stack in hero.stacks], list(ISRA_COUNTS))
+        self.assertEqual(
+            [stack.creature.name for stack in hero.stacks],
+            [
+                "Skeleton Warrior",
+                "Zombie",
+                "Vampire Lord",
+                "Power Lich",
+                "Dread Knight",
+                "Skeleton",
+                "Ghost Dragon",
+            ],
+        )
+
+    def test_scan_xor01_hero_armies_finds_embedded_synthetic_hero(self):
+        fixture, name_offset = _build_xor_hero_fixture(name_offset=300)
+        data = b"prefix bytes" + fixture + b"suffix bytes"
+
+        heroes = h3_save_parser.scan_xor01_hero_armies(data)
+
+        self.assertEqual(len(heroes), 1)
+        self.assertEqual(heroes[0].hero_name, "Isra")
+        self.assertEqual(heroes[0].source_offset, name_offset + len(b"prefix bytes"))
+
+    def test_parse_xor01_hero_at_reads_swapped_first_two_slots(self):
+        data, name_offset = _build_xor_hero_fixture(
+            creature_ids=ISRA_MOVED_CREATURE_IDS,
+            counts=ISRA_MOVED_COUNTS,
+        )
+
+        hero = h3_save_parser.parse_xor01_hero_at(data, name_offset)
+
+        self.assertIsNotNone(hero)
+        self.assertEqual(
+            [(stack.count, stack.creature.name) for stack in hero.stacks],
+            [
+                (181, "Zombie"),
+                (731, "Skeleton Warrior"),
+                (59, "Vampire Lord"),
+                (47, "Power Lich"),
+                (19, "Dread Knight"),
+                (316, "Skeleton"),
+                (8, "Ghost Dragon"),
+            ],
+        )
+
+    def test_parse_xor01_hero_at_ignores_empty_slots_with_invalid_ids(self):
+        creature_ids = (57, 0xFFFFFFFF, 63, 65, 67, 56, 69)
+        counts = (10, 0, 0, 0, 0, 0, 0)
+        data, name_offset = _build_xor_hero_fixture(
+            creature_ids=creature_ids,
+            counts=counts,
+        )
+
+        hero = h3_save_parser.parse_xor01_hero_at(data, name_offset)
+
+        self.assertIsNotNone(hero)
+        self.assertEqual(len(hero.stacks), 1)
+        self.assertEqual(hero.stacks[0].creature.name, "Skeleton Warrior")
+        self.assertEqual(hero.stacks[0].count, 10)
+
+    def test_parse_xor01_hero_at_rejects_invalid_non_empty_creature_id(self):
+        creature_ids = (0xFFFFFFFF, 59, 63, 65, 67, 56, 69)
+        data, name_offset = _build_xor_hero_fixture(creature_ids=creature_ids)
+
+        hero = h3_save_parser.parse_xor01_hero_at(data, name_offset)
+
+        self.assertIsNone(hero)
+
+    def test_parse_xor01_hero_at_rejects_impossible_count(self):
+        counts = (
+            h3_save_parser.MAX_HERO_ARMY_COUNT + 1,
+            181,
+            59,
+            47,
+            19,
+            316,
+            8,
+        )
+        data, name_offset = _build_xor_hero_fixture(counts=counts)
+
+        hero = h3_save_parser.parse_xor01_hero_at(data, name_offset)
+
+        self.assertIsNone(hero)
+
+    def test_parse_xor01_hero_at_rejects_invalid_hero_name(self):
+        data, name_offset = _build_xor_hero_fixture()
+        mutable = bytearray(data)
+        mutable[name_offset] = ord("1") ^ h3_save_parser.HERO_ARMY_XOR_KEY
+
+        hero = h3_save_parser.parse_xor01_hero_at(bytes(mutable), name_offset)
+
+        self.assertIsNone(hero)
+
+    def test_decode_hero_name_accepts_full_thirteen_byte_name(self):
+        name_offset = 200
+        data = bytearray(name_offset + h3_save_parser.HERO_NAME_SIZE)
+        data[name_offset:name_offset + h3_save_parser.HERO_NAME_SIZE] = _xor_encode(
+            b"MaximusPrimeX"
+        )
+
+        hero_name = h3_save_parser.decode_hero_name(bytes(data), name_offset)
+
+        self.assertEqual(hero_name, "MaximusPrimeX")
+
+    def test_decode_hero_name_rejects_garbage_after_null_padding(self):
+        name_offset = 200
+        data = bytearray(name_offset + h3_save_parser.HERO_NAME_SIZE)
+        data[name_offset:name_offset + h3_save_parser.HERO_NAME_SIZE] = _xor_encode(
+            b"Isra\x00bad-data"
+        )
+
+        hero_name = h3_save_parser.decode_hero_name(bytes(data), name_offset)
+
+        self.assertIsNone(hero_name)
+
+    def test_scan_xor01_hero_armies_returns_empty_for_noise(self):
+        self.assertEqual(h3_save_parser.scan_xor01_hero_armies(b"\x00" * 512), ())
+
+    def test_parse_xor01_hero_at_rejects_boundary_offsets(self):
+        data, _ = _build_xor_hero_fixture(name_offset=256)
+
+        self.assertIsNone(h3_save_parser.parse_xor01_hero_at(data, 55))
+        self.assertIsNone(
+            h3_save_parser.parse_xor01_hero_at(
+                data[:h3_save_parser.HERO_STRUCT_NAME_OFFSET],
+                h3_save_parser.HERO_STRUCT_NAME_OFFSET,
+            )
+        )
 
 
 if __name__ == "__main__":
