@@ -337,6 +337,14 @@ CLI dispatch should wait until the parser contracts are stable.
 1. CLI-level tests or smoke commands using synthetic temp autosave directories.
 2. Manual smoke run against the known local `415.GM2` if available in the developer environment.
 
+**Completion Notes:**
+- Added autosave-first CLI dispatch in `tools/battle_estimator.py`: short `Hero vs enemy`, explicit `--hero`, `--save`, `--save-file`, `--autosave-dir`, `--all-heroes`, and config commands.
+- Added `select_numbered_save()` in `tools/h3_save_parser.py`, preserving numeric save filtering and `.GM2` tie-break behavior for explicit save numbers.
+- Refactored simulation output into `run_analysis()` so manual and autosave paths share static analysis, range scanning, and Monte Carlo execution.
+- Autosave hero stacks are converted back through `find_creature()` before simulation to avoid duplicate module identity when running the script directly.
+- Added subprocess CLI tests with synthetic gzip/XOR saves and isolated `HOME` for short-form dispatch, explicit hero dispatch, numbered save selection, save-file bypass, autosave-dir/config precedence, malformed config bypass, config commands, missing hero errors, `--list` precedence, and manual-mode compatibility.
+- Verification passed: `python3 -m unittest tests.test_h3_save_parser tests.test_battle_estimator_cli`; `python3 tools/battle_estimator.py --help`; manual descriptor smoke commands for single-range and multi-range manual armies.
+
 ---
 
 ### BE-T08: List Save Heroes Command
@@ -589,10 +597,10 @@ Deferred questions for later phases:
 | BE-T04 | Config Store | done | BE-T01 | foundation | S | `tools/h3_save_parser.py`, config tests |
 | BE-T05 | XOR 0x01 Hero Army Scanner | done | BE-T01, BE-T02 | parsing | M | `tools/h3_save_parser.py`, parser tests |
 | BE-T06 | Hero Filtering + Selection | done | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
-| BE-T07 | Autosave-First CLI Dispatch | todo | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
-| BE-T08 | List Save Heroes Command | blocked | BE-T07 | CLI | S | `tools/battle_estimator.py` |
-| BE-T09 | Interactive Wizard | blocked | BE-T07 | CLI | M | `tools/battle_estimator.py`, config helper |
-| BE-T10 | Simulation Output Context | blocked | BE-T07 | CLI | S | `tools/battle_estimator.py` |
-| BE-T11 | Parser Unit Tests | blocked | BE-T01, BE-T03, BE-T05, BE-T06 | quality | M | parser tests |
+| BE-T07 | Autosave-First CLI Dispatch | done | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
+| BE-T08 | List Save Heroes Command | todo | BE-T07 | CLI | S | `tools/battle_estimator.py` |
+| BE-T09 | Interactive Wizard | todo | BE-T07 | CLI | M | `tools/battle_estimator.py`, config helper |
+| BE-T10 | Simulation Output Context | todo | BE-T07 | CLI | S | `tools/battle_estimator.py` |
+| BE-T11 | Parser Unit Tests | todo | BE-T01, BE-T03, BE-T05, BE-T06 | quality | M | parser tests |
 | BE-T12 | CLI/Wizard Tests | blocked | BE-T07, BE-T08, BE-T09 | quality | M | CLI tests, `tools/battle_estimator.py` |
 | BE-T13 | Documentation Verification Pass | blocked | BE-T10, BE-T11, BE-T12 | quality | S | planning docs, checkpoint, usage docs |

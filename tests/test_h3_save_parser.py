@@ -345,6 +345,41 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(raised.exception.path, game_dir)
         self.assertIn("no numeric", raised.exception.reason)
 
+    def test_select_numbered_save_prefers_gm2_for_requested_number(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            (game_dir / "999.GM2").write_bytes(b"")
+            (game_dir / "415.GM1").write_bytes(b"")
+            (game_dir / "415_moved.GM2").write_bytes(b"")
+            (game_dir / "BATTLE.GM2").write_bytes(b"")
+            expected = game_dir / "415.GM2"
+            expected.write_bytes(b"")
+
+            selected = h3_save_parser.select_numbered_save(game_dir, "415")
+
+        self.assertEqual(selected, expected)
+
+    def test_select_numbered_save_reports_missing_number(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            (game_dir / "414.GM2").write_bytes(b"")
+
+            with self.assertRaises(h3_save_parser.SaveSelectionError) as raised:
+                h3_save_parser.select_numbered_save(game_dir, 415)
+
+        self.assertEqual(raised.exception.path, game_dir)
+        self.assertIn("number 415", raised.exception.reason)
+
+    def test_select_numbered_save_reports_invalid_number(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+
+            with self.assertRaises(h3_save_parser.SaveSelectionError) as raised:
+                h3_save_parser.select_numbered_save(game_dir, "bad")
+
+        self.assertEqual(raised.exception.path, game_dir)
+        self.assertIn("invalid save number", raised.exception.reason)
+
     def test_resolve_save_context_selects_game_dir_and_latest_save(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

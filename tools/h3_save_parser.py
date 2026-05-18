@@ -522,6 +522,42 @@ def select_latest_save(game_dir: str | Path) -> Path:
     return max(candidates, key=lambda item: (item[0], item[1], item[2]))[3]
 
 
+def select_numbered_save(game_dir: str | Path, save_number: str | int) -> Path:
+    """Return the best GM1/GM2 save matching an explicit numeric save number."""
+
+    folder = Path(game_dir)
+    if not folder.is_dir():
+        raise SaveSelectionError(folder, "game folder is not a directory")
+
+    try:
+        requested_number = int(save_number)
+    except (TypeError, ValueError) as exc:
+        raise SaveSelectionError(folder, f"invalid save number: {save_number!r}") from exc
+
+    try:
+        children = list(folder.iterdir())
+    except OSError as exc:
+        raise SaveSelectionError(folder, f"failed to list game folder: {exc}") from exc
+
+    candidates = []
+    for child in children:
+        if not child.is_file():
+            continue
+        numeric_save = parse_numeric_save_name(child)
+        if numeric_save is None:
+            continue
+        number, extension_rank = numeric_save
+        if number == requested_number:
+            candidates.append((extension_rank, child.name, child))
+
+    if not candidates:
+        raise SaveSelectionError(
+            folder,
+            f"no GM1/GM2 save found for number {requested_number}",
+        )
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
+
+
 def resolve_save_context(
     explicit_game_dir: str | Path | None = None,
     autosave_root: str | Path = DEFAULT_AUTOSAVE_ROOT,
