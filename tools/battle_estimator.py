@@ -763,6 +763,7 @@ def _print_cli_error(exc: Exception):
 
 def _print_usage_examples():
     print("\nPrzyklady:")
+    print("  python3 tools/battle_estimator.py")
     print('  python3 tools/battle_estimator.py Isra vs "horde of ancient behemoth"')
     print('  python3 tools/battle_estimator.py --hero Isra vs "1 pikeman"')
     print("  python3 tools/battle_estimator.py --list-save-heroes")
@@ -825,11 +826,7 @@ def _list_save_heroes(args: argparse.Namespace):
     print("=" * 65)
 
     if not listed_heroes:
-        if detected_heroes and not args.all_heroes:
-            print(f"  No relevant hero armies found ({len(detected_heroes)} detected).")
-            print("  Use --all-heroes to include small armies.")
-        else:
-            print("  No hero armies found in selected save.")
+        _print_no_listed_heroes(detected_heroes, args.all_heroes)
         return
 
     print(f"  {'Hero':<16} {'AIValue':>8} {'Total':>7}  Army")
@@ -839,6 +836,149 @@ def _list_save_heroes(args: argparse.Namespace):
             f"  {hero.hero_name:<16} {hero.ai_value:>8} "
             f"{hero.total_creatures:>7}  {_format_hero_army_summary(hero)}"
         )
+
+
+def _print_no_listed_heroes(detected_heroes, all_heroes: bool):
+    if detected_heroes and not all_heroes:
+        print(f"  No relevant hero armies found ({len(detected_heroes)} detected).")
+        print("  Use --all-heroes to include small armies.")
+    else:
+        print("  No hero armies found in selected save.")
+
+
+def _print_wizard_header(context: h3_save_parser.SaveContext):
+    print("=" * 65)
+    print("  VCMI Battle Estimator Wizard")
+    print(f"  Folder zapisu: {context.game_dir}")
+    print(f"  Plik zapisu:   {context.save_file}")
+    print("  Parser mode: XOR 0x01 hero army scanner")
+    print("=" * 65)
+
+
+def _find_last_hero_default(heroes) -> Optional[h3_save_parser.HeroArmy]:
+    try:
+        config = h3_save_parser.load_config()
+    except h3_save_parser.ConfigError:
+        return None
+    if config.last_hero is None:
+        return None
+    try:
+        return h3_save_parser.select_hero(heroes, config.last_hero)
+    except h3_save_parser.HeroSelectionError:
+        return None
+
+
+def _print_wizard_heroes(heroes, default_hero: Optional[h3_save_parser.HeroArmy]):
+    print("\n  Heroes:")
+    print(f"  {'No.':>3} {'Hero':<16} {'AIValue':>8} {'Total':>7}  Army")
+    print(f"  {'-' * 3} {'-' * 16} {'-' * 8} {'-' * 7}  {'-' * 32}")
+    for index, hero in enumerate(heroes, start=1):
+        suffix = " (default)" if default_hero == hero else ""
+        print(
+            f"  {index:>3} {hero.hero_name:<16} {hero.ai_value:>8} "
+            f"{hero.total_creatures:>7}  {_format_hero_army_summary(hero)}{suffix}"
+        )
+
+
+def _print_hero_selection_error(exc: h3_save_parser.HeroSelectionError):
+    print(f"  Invalid hero selection '{exc.query}': {exc.reason}")
+    if exc.candidate_names:
+        print(f"  Candidates: {', '.join(exc.candidate_names)}")
+
+
+def _prompt_hero_selection(
+    heroes,
+    default_hero: Optional[h3_save_parser.HeroArmy],
+) -> Optional[h3_save_parser.HeroArmy]:
+    prompt = "Hero number or name"
+    if default_hero is not None:
+        prompt += f" [{default_hero.hero_name}]"
+    prompt += ": "
+
+    while True:
+        try:
+            raw_selection = input(prompt).strip()
+        except EOFError:
+            print("  Wizard cancelled: missing hero selection.", file=sys.stderr)
+            return None
+
+        if not raw_selection and default_hero is not None:
+            return default_hero
+        if not raw_selection:
+            print("  Please enter a hero number or name.")
+            continue
+
+        if raw_selection.isdigit():
+            index = int(raw_selection)
+            if 1 <= index <= len(heroes):
+                return heroes[index - 1]
+            print(f"  Invalid hero number: {raw_selection}")
+            continue
+
+        try:
+            return h3_save_parser.select_hero(heroes, raw_selection)
+        except h3_save_parser.HeroSelectionError as exc:
+            _print_hero_selection_error(exc)
+
+
+def _prompt_enemy_army() -> Optional[str]:
+    while True:
+        try:
+            enemy_text = input("Enemy army: ").strip()
+        except EOFError:
+            print("  Wizard cancelled: missing enemy army.", file=sys.stderr)
+            return None
+
+        if enemy_text:
+            return enemy_text
+        print("  Please enter an enemy army.")
+
+
+def _save_wizard_last_hero(hero_name: str):
+    try:
+        h3_save_parser.set_config_last_hero(hero_name)
+    except h3_save_parser.ConfigError as exc:
+        print(f"  Warning: could not save last hero: {exc}", file=sys.stderr)
+
+
+def _run_wizard(args: argparse.Namespace) -> int:
+    context = _resolve_cli_save(args)
+    detected_heroes = h3_save_parser.load_hero_armies_from_save(context.save_file)
+    listed_heroes = h3_save_parser.filter_relevant_heroes(
+        detected_heroes,
+        all_heroes=args.all_heroes,
+    )
+    ordered_heroes = tuple(_sort_hero_armies(listed_heroes))
+
+    _print_wizard_header(context)
+    if not ordered_heroes:
+        _print_no_listed_heroes(detected_heroes, args.all_heroes)
+        return 1
+
+    default_hero = _find_last_hero_default(ordered_heroes)
+    _print_wizard_heroes(ordered_heroes, default_hero)
+
+    selected_hero = _prompt_hero_selection(ordered_heroes, default_hero)
+    if selected_hero is None:
+        return 1
+
+    enemy_text = _prompt_enemy_army()
+    if enemy_text is None:
+        return 1
+
+    enemy_parsed = parse_army(enemy_text)
+    _save_wizard_last_hero(selected_hero.hero_name)
+    player_parsed = _hero_army_to_parsed(selected_hero)
+    run_analysis(
+        player_parsed,
+        enemy_parsed,
+        args.simulations,
+        args.verbose,
+        player_label=selected_hero.hero_name,
+        enemy_label="Wrog",
+        save_context=context,
+    )
+    return 0
 
 
 def run_analysis(
@@ -973,7 +1113,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="VCMI Battle Estimator — Monte Carlo na bazie "
                     "DamageCalculator.cpp",
-        usage='%(prog)s [--hero HERO] HERO vs "enemy army" [-n 2000] [-v]'
+        usage='%(prog)s [options] [HERO vs "enemy army"]'
     )
     parser.add_argument("army_specs", nargs="*",
                         help='Armie rozdzielone słowem "vs"')
@@ -1025,6 +1165,25 @@ def main():
         ) as exc:
             _print_cli_error(exc)
             sys.exit(1)
+        return
+
+    if not args.army_specs:
+        if args.hero:
+            parser.print_help()
+            _print_usage_examples()
+            sys.exit(1)
+        try:
+            exit_code = _run_wizard(args)
+        except (
+            h3_save_parser.SaveSelectionError,
+            h3_save_parser.SaveLoadError,
+            h3_save_parser.HeroSelectionError,
+            h3_save_parser.ConfigError,
+        ) as exc:
+            _print_cli_error(exc)
+            sys.exit(1)
+        if exit_code:
+            sys.exit(exit_code)
         return
 
     vs_parts = _split_vs_args(args.army_specs)

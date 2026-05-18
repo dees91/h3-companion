@@ -110,7 +110,7 @@ def _write_empty_save(game_dir: Path, name: str):
     return save_path
 
 
-def _run_cli(args, home: Path | None = None):
+def _run_cli(args, home: Path | None = None, input_text: str | None = None):
     env = os.environ.copy()
     if home is not None:
         env["HOME"] = str(home)
@@ -118,17 +118,21 @@ def _run_cli(args, home: Path | None = None):
         [sys.executable, "tools/battle_estimator.py", *args],
         cwd=REPO_ROOT,
         env=env,
+        input=input_text,
         text=True,
         capture_output=True,
         check=False,
     )
 
 
-def _write_config(home: Path, autosave_dir: Path):
+def _write_config(home: Path, autosave_dir: Path, last_hero: str | None = None):
     config_path = home / ".config" / "vcmi-battle-estimator" / "config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
+    config = {"autosave_dir": str(autosave_dir)}
+    if last_hero is not None:
+        config["last_hero"] = last_hero
     config_path.write_text(
-        json.dumps({"autosave_dir": str(autosave_dir)}) + "\n",
+        json.dumps(config) + "\n",
         encoding="utf-8",
     )
 
@@ -489,6 +493,138 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(str(save_file), result.stdout)
         self.assertIn("Isra", result.stdout)
+
+    def test_no_argument_wizard_uses_configured_autosave_dir_and_saves_last_hero(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
+            game_dir = Path(temp_dir)
+            home = Path(temp_home)
+            _write_save(game_dir, "415.GM2", counts=(50, 0, 0, 0, 0, 0, 0))
+            _write_config(home, game_dir)
+
+            result = _run_cli([], home=home, input_text="1\n1 pikeman\n")
+            config_path = home / ".config" / "vcmi-battle-estimator" / "config.json"
+            saved_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("VCMI Battle Estimator Wizard", result.stdout)
+        self.assertIn(str(game_dir), result.stdout)
+        self.assertIn("415.GM2", result.stdout)
+        self.assertIn("  1 Isra", result.stdout)
+        self.assertIn("Enemy army:", result.stdout)
+        self.assertIn("SYMULACJA MONTE CARLO", result.stdout)
+        self.assertIn("Isra: 50x Skeleton Warrior", result.stdout)
+        self.assertEqual(saved_config["last_hero"], "Isra")
+
+    def test_wizard_accepts_hero_name_with_steering_flags(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
+            game_dir = Path(temp_dir)
+            home = Path(temp_home)
+            _write_save(game_dir, "415.GM2")
+
+            result = _run_cli([
+                "--autosave-dir",
+                str(game_dir),
+                "-n",
+                "1",
+            ], home=home, input_text="Isra\n1 pikeman\n")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("VCMI Battle Estimator Wizard", result.stdout)
+        self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
+
+    def test_wizard_uses_available_last_hero_as_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
+            game_dir = Path(temp_dir)
+            home = Path(temp_home)
+            _write_save(game_dir, "415.GM2")
+            _write_config(home, game_dir, last_hero="Isra")
+
+            result = _run_cli([
+                "--autosave-dir",
+                str(game_dir),
+                "-n",
+                "1",
+            ], home=home, input_text="\n1 pikeman\n")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Hero number or name [Isra]:", result.stdout)
+        self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
+
+    def test_wizard_reprompts_after_invalid_hero_selection(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
+            game_dir = Path(temp_dir)
+            home = Path(temp_home)
+            _write_save(game_dir, "415.GM2")
+
+            result = _run_cli([
+                "--autosave-dir",
+                str(game_dir),
+                "-n",
+                "1",
+            ], home=home, input_text="99\nIsra\n1 pikeman\n")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Invalid hero number: 99", result.stdout)
+        self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
+
+    def test_wizard_autosave_dir_bypasses_malformed_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
+            game_dir = Path(temp_dir)
+            home = Path(temp_home)
+            _write_save(game_dir, "415.GM2")
+            config_path = home / ".config" / "vcmi-battle-estimator" / "config.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text("{not json", encoding="utf-8")
+
+            result = _run_cli([
+                "--autosave-dir",
+                str(game_dir),
+                "-n",
+                "1",
+            ], home=home, input_text="1\n1 pikeman\n")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("VCMI Battle Estimator Wizard", result.stdout)
+        self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
+        self.assertIn("Warning: could not save last hero", result.stderr)
+
+    def test_wizard_reports_no_relevant_heroes_before_prompting(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
+            game_dir = Path(temp_dir)
+            home = Path(temp_home)
+            _write_save(game_dir, "415.GM2", counts=(1, 0, 0, 0, 0, 0, 0))
+
+            result = _run_cli([
+                "--autosave-dir",
+                str(game_dir),
+                "-n",
+                "1",
+            ], home=home, input_text="")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("VCMI Battle Estimator Wizard", result.stdout)
+        self.assertIn("No relevant hero armies found", result.stdout)
+        self.assertIn("Use --all-heroes", result.stdout)
+        self.assertNotIn("Enemy army:", result.stdout)
+
+    def test_hero_without_vs_does_not_start_wizard(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
+            game_dir = Path(temp_dir)
+            home = Path(temp_home)
+            _write_save(game_dir, "415.GM2")
+
+            result = _run_cli([
+                "--hero",
+                "Isra",
+                "--autosave-dir",
+                str(game_dir),
+                "-n",
+                "1",
+            ], home=home, input_text="1 pikeman\n")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("usage:", result.stdout)
+        self.assertNotIn("VCMI Battle Estimator Wizard", result.stdout)
 
 
 if __name__ == "__main__":

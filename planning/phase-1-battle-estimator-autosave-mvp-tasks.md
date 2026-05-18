@@ -413,6 +413,14 @@ CLI dispatch should wait until the parser contracts are stable.
 1. Unit or integration test using injectable stdin/stdout if practical.
 2. Manual smoke run through the wizard.
 
+**Completion Notes:**
+- Added no-argument wizard mode that resolves the selected save through the existing autosave precedence path, prints selected folder/save/parser mode, lists relevant heroes, prompts for hero and enemy army, and runs the same `run_analysis()` path as autosave CLI.
+- Wizard supports 1-based numeric selection, name/prefix selection through `select_hero()`, invalid-selection reprompting, `--all-heroes`, and steering flags such as `--autosave-dir`, `--save`, `--save-file`, and `-n` without positional `vs` arguments.
+- Wizard offers configured `last_hero` as a default only when that hero is present in the currently listed heroes, saves the selected hero after successful enemy parsing, and treats unreadable optional `last_hero` config as a warning rather than blocking explicitly steered wizard runs.
+- `--hero` without `vs` remains a non-interactive usage error instead of entering wizard implicitly.
+- Added subprocess stdin tests for no-argument wizard, name selection, default `last_hero`, invalid selection reprompt, malformed-config steering, no relevant heroes, and `--hero` without `vs`.
+- Verification passed: `python3 -m unittest tests.test_battle_estimator_cli tests.test_h3_save_parser`; `python3 -m unittest discover`; `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### BE-T10: Simulation Output Context
@@ -606,8 +614,8 @@ Deferred questions for later phases:
 | BE-T06 | Hero Filtering + Selection | done | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T07 | Autosave-First CLI Dispatch | done | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
 | BE-T08 | List Save Heroes Command | done | BE-T07 | CLI | S | `tools/battle_estimator.py` |
-| BE-T09 | Interactive Wizard | todo | BE-T07 | CLI | M | `tools/battle_estimator.py`, config helper |
+| BE-T09 | Interactive Wizard | done | BE-T07 | CLI | M | `tools/battle_estimator.py`, config helper |
 | BE-T10 | Simulation Output Context | todo | BE-T07 | CLI | S | `tools/battle_estimator.py` |
 | BE-T11 | Parser Unit Tests | todo | BE-T01, BE-T03, BE-T05, BE-T06 | quality | M | parser tests |
-| BE-T12 | CLI/Wizard Tests | blocked | BE-T07, BE-T08, BE-T09 | quality | M | CLI tests, `tools/battle_estimator.py` |
+| BE-T12 | CLI/Wizard Tests | todo | BE-T07, BE-T08, BE-T09 | quality | M | CLI tests, `tools/battle_estimator.py` |
 | BE-T13 | Documentation Verification Pass | blocked | BE-T10, BE-T11, BE-T12 | quality | S | planning docs, checkpoint, usage docs |
