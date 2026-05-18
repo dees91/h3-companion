@@ -52,6 +52,17 @@ def _build_xor_hero_fixture(
     return bytes(data), name_offset
 
 
+def _hero_army(hero_name, stacks, source_offset=0):
+    return h3_save_parser.HeroArmy(
+        hero_name=hero_name,
+        stacks=tuple(
+            h3_save_parser.HeroStack.from_creature_id(creature_id, count)
+            for creature_id, count in stacks
+        ),
+        source_offset=source_offset,
+    )
+
+
 class H3SaveParserContractTests(unittest.TestCase):
     def test_constants_use_home_derived_paths(self):
         home = Path.home()
@@ -670,6 +681,106 @@ class H3SaveParserContractTests(unittest.TestCase):
                 h3_save_parser.HERO_STRUCT_NAME_OFFSET,
             )
         )
+
+    def test_filter_relevant_heroes_uses_default_thresholds(self):
+        low = _hero_army("Low", [(0, 1)])
+        by_ai = _hero_army("ByAi", [(12, 1)])
+        by_count = _hero_army("ByCount", [(0, 50)])
+
+        relevant = h3_save_parser.filter_relevant_heroes((low, by_ai, by_count))
+
+        self.assertEqual(relevant, (by_ai, by_count))
+        self.assertEqual(by_ai.ai_value, 5019)
+        self.assertEqual(by_count.total_creatures, 50)
+
+    def test_filter_relevant_heroes_includes_exact_ai_threshold(self):
+        exactly_threshold = _hero_army("Threshold", [(0, 1)])
+
+        relevant = h3_save_parser.filter_relevant_heroes(
+            (exactly_threshold,),
+            min_ai_value=80,
+        )
+
+        self.assertEqual(exactly_threshold.ai_value, 80)
+        self.assertEqual(relevant, (exactly_threshold,))
+
+    def test_filter_relevant_heroes_all_heroes_bypasses_thresholds(self):
+        low = _hero_army("Low", [(0, 1)])
+        by_ai = _hero_army("ByAi", [(12, 1)])
+
+        relevant = h3_save_parser.filter_relevant_heroes(
+            (low, by_ai),
+            all_heroes=True,
+        )
+
+        self.assertEqual(relevant, (low, by_ai))
+
+    def test_select_hero_exact_match_is_case_insensitive(self):
+        isra = _hero_army("Isra", [(57, 1)])
+        astral = _hero_army("Astral", [(57, 1)])
+
+        selected = h3_save_parser.select_hero((astral, isra), "isra")
+
+        self.assertIs(selected, isra)
+
+    def test_select_hero_exact_match_takes_precedence_over_prefix(self):
+        is_hero = _hero_army("Is", [(57, 1)])
+        isra = _hero_army("Isra", [(57, 1)])
+
+        selected = h3_save_parser.select_hero((isra, is_hero), "is")
+
+        self.assertIs(selected, is_hero)
+
+    def test_select_hero_prefix_match_must_be_unambiguous(self):
+        isra = _hero_army("Isra", [(57, 1)])
+        astral = _hero_army("Astral", [(57, 1)])
+
+        selected = h3_save_parser.select_hero((astral, isra), "Is")
+
+        self.assertIs(selected, isra)
+
+    def test_select_hero_missing_returns_structured_error_with_candidates(self):
+        astral = _hero_army("Astral", [(57, 1)])
+        isra = _hero_army("Isra", [(57, 1)])
+
+        with self.assertRaises(h3_save_parser.HeroSelectionError) as raised:
+            h3_save_parser.select_hero((astral, isra), "Crag")
+
+        self.assertEqual(raised.exception.reason, "not_found")
+        self.assertEqual(raised.exception.query, "Crag")
+        self.assertEqual(raised.exception.candidates, (astral, isra))
+        self.assertEqual(raised.exception.candidate_names, ("Astral", "Isra"))
+
+    def test_select_hero_ambiguous_prefix_returns_matching_candidates(self):
+        isra = _hero_army("Isra", [(57, 1)])
+        israfel = _hero_army("Israfel", [(57, 1)])
+        astral = _hero_army("Astral", [(57, 1)])
+
+        with self.assertRaises(h3_save_parser.HeroSelectionError) as raised:
+            h3_save_parser.select_hero((isra, astral, israfel), "Is")
+
+        self.assertEqual(raised.exception.reason, "ambiguous_prefix")
+        self.assertEqual(raised.exception.candidates, (isra, israfel))
+        self.assertEqual(raised.exception.candidate_names, ("Isra", "Israfel"))
+
+    def test_select_hero_duplicate_exact_name_is_ambiguous(self):
+        isra_one = _hero_army("Isra", [(57, 1)], source_offset=100)
+        isra_two = _hero_army("isra", [(57, 2)], source_offset=200)
+
+        with self.assertRaises(h3_save_parser.HeroSelectionError) as raised:
+            h3_save_parser.select_hero((isra_one, isra_two), "Isra")
+
+        self.assertEqual(raised.exception.reason, "ambiguous_exact")
+        self.assertEqual(raised.exception.candidates, (isra_one, isra_two))
+
+    def test_select_hero_blank_query_is_structured_error(self):
+        isra = _hero_army("Isra", [(57, 1)])
+
+        with self.assertRaises(h3_save_parser.HeroSelectionError) as raised:
+            h3_save_parser.select_hero((isra,), "   ")
+
+        self.assertEqual(raised.exception.reason, "missing_query")
+        self.assertEqual(raised.exception.candidates, (isra,))
 
 
 if __name__ == "__main__":

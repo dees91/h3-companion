@@ -52,6 +52,8 @@ HERO_NAME_SIZE = 13
 HERO_ARMY_XOR_KEY = 0x01
 # Sanity cap for parser candidates, not a Heroes III game-rule limit.
 MAX_HERO_ARMY_COUNT = 1_000_000
+DEFAULT_RELEVANT_HERO_AI_VALUE = 5_000
+DEFAULT_RELEVANT_HERO_TOTAL_CREATURES = 50
 
 HERO_STRUCT_ARMY_TYPES_OFFSET = 113
 HERO_STRUCT_ARMY_COUNTS_OFFSET = 141
@@ -145,6 +147,21 @@ class ConfigError(ValueError):
         self.path = Path(path)
         self.reason = reason
         super().__init__(f"{self.path}: {reason}")
+
+
+class HeroSelectionError(ValueError):
+    """Raised when a hero query cannot be selected unambiguously."""
+
+    def __init__(self, query: str, reason: str, candidates):
+        self.query = query
+        self.reason = reason
+        self.candidates = tuple(candidates)
+        names = ", ".join(self.candidate_names) or "none"
+        super().__init__(f"{reason}: {query!r}; candidates: {names}")
+
+    @property
+    def candidate_names(self) -> tuple[str, ...]:
+        return tuple(hero.hero_name for hero in self.candidates)
 
 
 def load_config(config_path: str | Path = CONFIG_PATH) -> BattleEstimatorConfig:
@@ -370,6 +387,53 @@ def scan_xor01_hero_armies(data: bytes) -> tuple[HeroArmy, ...]:
         if hero_army is not None:
             heroes.append(hero_army)
     return tuple(heroes)
+
+
+def filter_relevant_heroes(
+    heroes,
+    all_heroes: bool = False,
+    min_ai_value: int = DEFAULT_RELEVANT_HERO_AI_VALUE,
+    min_total_creatures: int = DEFAULT_RELEVANT_HERO_TOTAL_CREATURES,
+) -> tuple[HeroArmy, ...]:
+    """Return hero armies relevant enough for default listing/selection."""
+
+    candidates = tuple(heroes)
+    if all_heroes:
+        return candidates
+    return tuple(
+        hero for hero in candidates
+        if hero.ai_value >= min_ai_value
+        or hero.total_creatures >= min_total_creatures
+    )
+
+
+def select_hero(heroes, query: str) -> HeroArmy:
+    """Select a hero by case-insensitive exact or unambiguous prefix match."""
+
+    candidates = tuple(heroes)
+    normalized_query = query.strip().casefold()
+    if not normalized_query:
+        raise HeroSelectionError(query, "missing_query", candidates)
+
+    exact_matches = tuple(
+        hero for hero in candidates
+        if hero.hero_name.casefold() == normalized_query
+    )
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if len(exact_matches) > 1:
+        raise HeroSelectionError(query, "ambiguous_exact", exact_matches)
+
+    prefix_matches = tuple(
+        hero for hero in candidates
+        if hero.hero_name.casefold().startswith(normalized_query)
+    )
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
+    if len(prefix_matches) > 1:
+        raise HeroSelectionError(query, "ambiguous_prefix", prefix_matches)
+
+    raise HeroSelectionError(query, "not_found", candidates)
 
 
 def parse_game_folder_datetime(name: str) -> datetime | None:

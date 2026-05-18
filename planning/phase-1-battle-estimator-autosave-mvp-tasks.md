@@ -299,6 +299,12 @@ CLI dispatch should wait until the parser contracts are stable.
 1. Unit tests for filter threshold behavior.
 2. Unit tests for exact, prefix, missing, and ambiguous selection.
 
+**Completion Notes:**
+- Added `filter_relevant_heroes()`, `select_hero()`, and structured `HeroSelectionError` in `tools/h3_save_parser.py`.
+- Default filtering keeps heroes with `ai_value >= 5000` or `total_creatures >= 50`; `all_heroes=True` bypasses the filter.
+- Selection uses case-insensitive exact matching before unambiguous prefix matching and returns structured missing/ambiguous errors without silent guesses.
+- Verification passed: `python3 -m unittest tests.test_h3_save_parser`; `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### BE-T07: Autosave-First CLI Dispatch
@@ -582,8 +588,8 @@ Deferred questions for later phases:
 | BE-T03 | Latest Folder + Latest Save Selection | done | BE-T01 | foundation | M | `tools/h3_save_parser.py`, parser tests |
 | BE-T04 | Config Store | done | BE-T01 | foundation | S | `tools/h3_save_parser.py`, config tests |
 | BE-T05 | XOR 0x01 Hero Army Scanner | done | BE-T01, BE-T02 | parsing | M | `tools/h3_save_parser.py`, parser tests |
-| BE-T06 | Hero Filtering + Selection | todo | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
-| BE-T07 | Autosave-First CLI Dispatch | blocked | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
+| BE-T06 | Hero Filtering + Selection | done | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
+| BE-T07 | Autosave-First CLI Dispatch | todo | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
 | BE-T08 | List Save Heroes Command | blocked | BE-T07 | CLI | S | `tools/battle_estimator.py` |
 | BE-T09 | Interactive Wizard | blocked | BE-T07 | CLI | M | `tools/battle_estimator.py`, config helper |
 | BE-T10 | Simulation Output Context | blocked | BE-T07 | CLI | S | `tools/battle_estimator.py` |
