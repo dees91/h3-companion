@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import gzip
+import json
 import re
 import zlib
 from dataclasses import dataclass
@@ -71,6 +72,14 @@ class SaveContext:
 
 
 @dataclass(frozen=True)
+class BattleEstimatorConfig:
+    """User-global battle estimator configuration."""
+
+    autosave_dir: Path | None = None
+    last_hero: str | None = None
+
+
+@dataclass(frozen=True)
 class LoadedSave:
     """Decompressed save bytes with the located H3SVG signature offset."""
 
@@ -124,6 +133,111 @@ class SaveSelectionError(ValueError):
         self.path = Path(path)
         self.reason = reason
         super().__init__(f"{self.path}: {reason}")
+
+
+class ConfigError(ValueError):
+    """Raised when the user config cannot be read or written."""
+
+    def __init__(self, path: str | Path, reason: str):
+        self.path = Path(path)
+        self.reason = reason
+        super().__init__(f"{self.path}: {reason}")
+
+
+def load_config(config_path: str | Path = CONFIG_PATH) -> BattleEstimatorConfig:
+    """Load user configuration, returning defaults when no config exists."""
+
+    path = Path(config_path)
+    if not path.exists():
+        return BattleEstimatorConfig()
+
+    try:
+        raw_config = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(path, f"read failed: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigError(path, f"invalid config encoding: {exc}") from exc
+
+    try:
+        data = json.loads(raw_config)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(path, f"invalid config: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ConfigError(path, "invalid config: root must be an object")
+
+    return BattleEstimatorConfig(
+        autosave_dir=_read_optional_path(data, "autosave_dir", path),
+        last_hero=_read_optional_text(data, "last_hero", path),
+    )
+
+
+def save_config(
+    config: BattleEstimatorConfig,
+    config_path: str | Path = CONFIG_PATH,
+) -> None:
+    """Persist user configuration to JSON."""
+
+    path = Path(config_path)
+    data = _config_to_json(config)
+    temp_path = path.with_name(f".{path.name}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path.write_text(
+            json.dumps(data, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temp_path.replace(path)
+    except OSError as exc:
+        raise ConfigError(path, f"write failed: {exc}") from exc
+
+
+def set_config_autosave_dir(
+    autosave_dir: str | Path,
+    config_path: str | Path = CONFIG_PATH,
+) -> BattleEstimatorConfig:
+    """Save an autosave directory while preserving other config values."""
+
+    if isinstance(autosave_dir, str) and not autosave_dir.strip():
+        raise ConfigError(config_path, "invalid autosave_dir: value must not be blank")
+    autosave_path = Path(autosave_dir)
+    current = load_config(config_path)
+    updated = BattleEstimatorConfig(
+        autosave_dir=autosave_path,
+        last_hero=current.last_hero,
+    )
+    save_config(updated, config_path)
+    return updated
+
+
+def clear_config_autosave_dir(
+    config_path: str | Path = CONFIG_PATH,
+) -> BattleEstimatorConfig:
+    """Clear the saved autosave directory while preserving other values."""
+
+    current = load_config(config_path)
+    updated = BattleEstimatorConfig(
+        autosave_dir=None,
+        last_hero=current.last_hero,
+    )
+    save_config(updated, config_path)
+    return updated
+
+
+def set_config_last_hero(
+    last_hero: str | None,
+    config_path: str | Path = CONFIG_PATH,
+) -> BattleEstimatorConfig:
+    """Save the last interactive hero name while preserving other values."""
+
+    current = load_config(config_path)
+    normalized_hero = last_hero.strip() if last_hero else ""
+    updated = BattleEstimatorConfig(
+        autosave_dir=current.autosave_dir,
+        last_hero=normalized_hero or None,
+    )
+    save_config(updated, config_path)
+    return updated
 
 
 def load_save(path: str | Path) -> LoadedSave:
@@ -282,3 +396,34 @@ def _decompress_save_bytes(compressed: bytes, path: Path) -> bytes:
         raise SaveLoadError(
             f"{path}: {gzip_reason}; raw deflate fallback failed: {raw_exc}"
         ) from raw_exc
+
+
+def _read_optional_path(data: dict, key: str, path: Path) -> Path | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ConfigError(path, f"invalid config: {key} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return Path(normalized)
+
+
+def _read_optional_text(data: dict, key: str, path: Path) -> str | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ConfigError(path, f"invalid config: {key} must be a string")
+    normalized = value.strip()
+    return normalized or None
+
+
+def _config_to_json(config: BattleEstimatorConfig) -> dict:
+    data = {}
+    if config.autosave_dir is not None:
+        data["autosave_dir"] = str(config.autosave_dir)
+    if config.last_hero is not None:
+        data["last_hero"] = config.last_hero
+    return data

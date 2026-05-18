@@ -1,5 +1,6 @@
 import importlib
 import gzip
+import json
 import os
 import tempfile
 import unittest
@@ -308,6 +309,190 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(context.autosave_root, root)
         self.assertEqual(context.game_dir, game_dir)
         self.assertEqual(context.save_file, latest_save)
+
+    def test_load_config_missing_file_returns_default_without_creating_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "missing" / "config.json"
+
+            config = h3_save_parser.load_config(config_path)
+
+            self.assertEqual(config, h3_save_parser.BattleEstimatorConfig())
+            self.assertFalse(config_path.exists())
+
+    def test_set_config_autosave_dir_saves_and_loads_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "nested" / "config.json"
+            autosave_dir = Path(temp_dir) / "game"
+
+            updated = h3_save_parser.set_config_autosave_dir(
+                autosave_dir,
+                config_path,
+            )
+            loaded = h3_save_parser.load_config(config_path)
+
+        self.assertEqual(updated.autosave_dir, autosave_dir)
+        self.assertEqual(loaded.autosave_dir, autosave_dir)
+        self.assertIsNone(loaded.last_hero)
+
+    def test_clear_config_autosave_dir_removes_key_and_preserves_last_hero(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    autosave_dir=Path(temp_dir) / "game",
+                    last_hero="Isra",
+                ),
+                config_path,
+            )
+
+            updated = h3_save_parser.clear_config_autosave_dir(config_path)
+            loaded = h3_save_parser.load_config(config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertIsNone(updated.autosave_dir)
+        self.assertIsNone(loaded.autosave_dir)
+        self.assertEqual(loaded.last_hero, "Isra")
+        self.assertNotIn("autosave_dir", raw_config)
+        self.assertEqual(raw_config["last_hero"], "Isra")
+
+    def test_set_config_last_hero_saves_stripped_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    autosave_dir=Path(temp_dir) / "game",
+                ),
+                config_path,
+            )
+
+            updated = h3_save_parser.set_config_last_hero("  Isra  ", config_path)
+            loaded = h3_save_parser.load_config(config_path)
+
+        self.assertEqual(updated.last_hero, "Isra")
+        self.assertEqual(loaded.last_hero, "Isra")
+        self.assertEqual(loaded.autosave_dir, Path(temp_dir) / "game")
+
+    def test_set_config_last_hero_blank_clears_value(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(last_hero="Isra"),
+                config_path,
+            )
+
+            updated = h3_save_parser.set_config_last_hero("   ", config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertIsNone(updated.last_hero)
+        self.assertNotIn("last_hero", raw_config)
+
+    def test_save_config_creates_parent_directories(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "a" / "b" / "config.json"
+
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(last_hero="Isra"),
+                config_path,
+            )
+
+            self.assertTrue(config_path.exists())
+            self.assertFalse((config_path.parent / ".config.json.tmp").exists())
+
+    def test_load_config_reports_malformed_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text("{bad", encoding="utf-8")
+
+            with self.assertRaises(h3_save_parser.ConfigError) as raised:
+                h3_save_parser.load_config(config_path)
+
+        self.assertEqual(raised.exception.path, config_path)
+        self.assertIn("invalid config", raised.exception.reason)
+
+    def test_load_config_reports_invalid_utf8(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_bytes(b"\xff")
+
+            with self.assertRaises(h3_save_parser.ConfigError) as raised:
+                h3_save_parser.load_config(config_path)
+
+        self.assertEqual(raised.exception.path, config_path)
+        self.assertIn("invalid config encoding", raised.exception.reason)
+
+    def test_load_config_reports_non_object_json(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text("[]", encoding="utf-8")
+
+            with self.assertRaises(h3_save_parser.ConfigError) as raised:
+                h3_save_parser.load_config(config_path)
+
+        self.assertEqual(raised.exception.path, config_path)
+        self.assertIn("root must be an object", raised.exception.reason)
+
+    def test_load_config_reports_invalid_field_types(self):
+        cases = (
+            {"autosave_dir": 123},
+            {"last_hero": []},
+        )
+        for data in cases:
+            with self.subTest(data=data):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    config_path = Path(temp_dir) / "config.json"
+                    config_path.write_text(json.dumps(data), encoding="utf-8")
+
+                    with self.assertRaises(h3_save_parser.ConfigError) as raised:
+                        h3_save_parser.load_config(config_path)
+
+                self.assertEqual(raised.exception.path, config_path)
+                self.assertIn("must be a string", raised.exception.reason)
+
+    def test_load_config_treats_null_and_blank_values_as_unset(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps({"autosave_dir": "  ", "last_hero": None}),
+                encoding="utf-8",
+            )
+
+            config = h3_save_parser.load_config(config_path)
+
+        self.assertIsNone(config.autosave_dir)
+        self.assertIsNone(config.last_hero)
+
+    def test_load_config_ignores_unknown_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps({"future": True, "last_hero": "Isra"}),
+                encoding="utf-8",
+            )
+
+            config = h3_save_parser.load_config(config_path)
+            h3_save_parser.save_config(config, config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(config.last_hero, "Isra")
+        self.assertNotIn("future", raw_config)
+
+    def test_config_path_is_user_global_not_repo_local(self):
+        self.assertEqual(
+            h3_save_parser.CONFIG_PATH,
+            Path.home() / ".config" / "vcmi-battle-estimator" / "config.json",
+        )
+        with self.assertRaises(ValueError):
+            h3_save_parser.CONFIG_PATH.relative_to(Path.cwd())
+
+    def test_set_config_autosave_dir_rejects_blank_string(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+
+            with self.assertRaises(h3_save_parser.ConfigError) as raised:
+                h3_save_parser.set_config_autosave_dir("  ", config_path)
+
+        self.assertEqual(raised.exception.path, config_path)
+        self.assertIn("must not be blank", raised.exception.reason)
 
 
 if __name__ == "__main__":

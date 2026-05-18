@@ -223,6 +223,12 @@ CLI dispatch should wait until the parser contracts are stable.
 1. Unit tests with temporary `HOME` or injected config path.
 2. Malformed config returns a clear error or safe failure, not a traceback.
 
+**Completion Notes:**
+- Added `BattleEstimatorConfig`, `ConfigError`, config load/save helpers, and convenience setters/clearers in `tools/h3_save_parser.py`.
+- Config uses the user-global `~/.config/vcmi-battle-estimator/config.json`, supports injected paths for tests, creates parent directories on write, and writes atomically through a temporary file.
+- Added tests for missing/default config, autosave_dir save/load/clear, last_hero save/load/clear, malformed JSON, invalid UTF-8, invalid field types, parent creation, and user-global path placement.
+- Verification passed: `python3 -m unittest tests.test_h3_save_parser`; `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### BE-T05: XOR 0x01 Hero Army Scanner
@@ -568,7 +574,7 @@ Deferred questions for later phases:
 | BE-T01 | Parser Data Model + Constants | done | -- | foundation | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T02 | Save Loading + H3SVG Detection | done | BE-T01 | foundation | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T03 | Latest Folder + Latest Save Selection | done | BE-T01 | foundation | M | `tools/h3_save_parser.py`, parser tests |
-| BE-T04 | Config Store | todo | BE-T01 | foundation | S | `tools/h3_save_parser.py`, config tests |
+| BE-T04 | Config Store | done | BE-T01 | foundation | S | `tools/h3_save_parser.py`, config tests |
 | BE-T05 | XOR 0x01 Hero Army Scanner | todo | BE-T01, BE-T02 | parsing | M | `tools/h3_save_parser.py`, parser tests |
 | BE-T06 | Hero Filtering + Selection | blocked | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T07 | Autosave-First CLI Dispatch | blocked | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
