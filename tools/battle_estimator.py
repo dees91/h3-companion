@@ -765,6 +765,7 @@ def _print_usage_examples():
     print("\nPrzyklady:")
     print('  python3 tools/battle_estimator.py Isra vs "horde of ancient behemoth"')
     print('  python3 tools/battle_estimator.py --hero Isra vs "1 pikeman"')
+    print("  python3 tools/battle_estimator.py --list-save-heroes")
     print('  python3 tools/battle_estimator.py "10 pikeman, 2 griffin" vs "lot of boar"')
     print('  python3 tools/battle_estimator.py --list')
 
@@ -788,6 +789,56 @@ def _handle_config_command(args: argparse.Namespace) -> bool:
         return True
 
     return False
+
+
+def _format_hero_army_summary(hero_army: h3_save_parser.HeroArmy) -> str:
+    return ", ".join(
+        f"{stack.count}x {stack.creature.name}"
+        for stack in hero_army.stacks
+    )
+
+
+def _sort_hero_armies(heroes) -> List[h3_save_parser.HeroArmy]:
+    return sorted(
+        heroes,
+        key=lambda hero: (
+            -hero.ai_value,
+            hero.hero_name.casefold(),
+            hero.source_offset if hero.source_offset is not None else -1,
+        ),
+    )
+
+
+def _list_save_heroes(args: argparse.Namespace):
+    context = _resolve_cli_save(args)
+    detected_heroes = h3_save_parser.load_hero_armies_from_save(context.save_file)
+    listed_heroes = h3_save_parser.filter_relevant_heroes(
+        detected_heroes,
+        all_heroes=args.all_heroes,
+    )
+
+    print("=" * 65)
+    print("  VCMI Save Heroes")
+    print(f"  Folder zapisu: {context.game_dir}")
+    print(f"  Plik zapisu:   {context.save_file}")
+    print("  Parser mode: XOR 0x01 hero army scanner")
+    print("=" * 65)
+
+    if not listed_heroes:
+        if detected_heroes and not args.all_heroes:
+            print(f"  No relevant hero armies found ({len(detected_heroes)} detected).")
+            print("  Use --all-heroes to include small armies.")
+        else:
+            print("  No hero armies found in selected save.")
+        return
+
+    print(f"  {'Hero':<16} {'AIValue':>8} {'Total':>7}  Army")
+    print(f"  {'-' * 16} {'-' * 8} {'-' * 7}  {'-' * 32}")
+    for hero in _sort_hero_armies(listed_heroes):
+        print(
+            f"  {hero.hero_name:<16} {hero.ai_value:>8} "
+            f"{hero.total_creatures:>7}  {_format_hero_army_summary(hero)}"
+        )
 
 
 def run_analysis(
@@ -928,6 +979,8 @@ def main():
                         help='Armie rozdzielone słowem "vs"')
     parser.add_argument("--list", nargs="?", const="", default=None,
                         help="Wyświetl listę stworzeń (opcjonalnie: nazwa frakcji)")
+    parser.add_argument("--list-save-heroes", action="store_true",
+                        help="Wyświetl bohaterów wykrytych w wybranym zapisie")
     parser.add_argument("--hero",
                         help='Nazwa bohatera z zapisu (użyj cudzysłowu dla nazw ze spacją)')
     parser.add_argument("--save",
@@ -961,6 +1014,18 @@ def main():
     except h3_save_parser.ConfigError as exc:
         _print_cli_error(exc)
         sys.exit(1)
+
+    if args.list_save_heroes:
+        try:
+            _list_save_heroes(args)
+        except (
+            h3_save_parser.SaveSelectionError,
+            h3_save_parser.SaveLoadError,
+            h3_save_parser.ConfigError,
+        ) as exc:
+            _print_cli_error(exc)
+            sys.exit(1)
+        return
 
     vs_parts = _split_vs_args(args.army_specs)
     if vs_parts is None:

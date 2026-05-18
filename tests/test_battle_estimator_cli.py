@@ -22,13 +22,13 @@ def _xor_encode(raw: bytes) -> bytes:
     return bytes(byte ^ h3_save_parser.HERO_ARMY_XOR_KEY for byte in raw)
 
 
-def _build_xor_hero_fixture(
+def _write_xor_hero_window(
+    data: bytearray,
     hero_name="Isra",
     creature_ids=ISRA_CREATURE_IDS,
     counts=ISRA_COUNTS,
     name_offset=256,
 ):
-    data = bytearray(name_offset + h3_save_parser.HERO_NAME_SIZE + 32)
     ids_offset = name_offset + h3_save_parser.HERO_ARMY_TYPES_FROM_NAME_OFFSET
     counts_offset = name_offset + h3_save_parser.HERO_ARMY_COUNTS_FROM_NAME_OFFSET
 
@@ -46,7 +46,38 @@ def _build_xor_hero_fixture(
     data[name_offset:name_offset + h3_save_parser.HERO_NAME_SIZE] = _xor_encode(
         padded_name
     )
+
+
+def _build_xor_hero_fixture(
+    hero_name="Isra",
+    creature_ids=ISRA_CREATURE_IDS,
+    counts=ISRA_COUNTS,
+    name_offset=256,
+):
+    data = bytearray(name_offset + h3_save_parser.HERO_NAME_SIZE + 32)
     data[0:len(h3_save_parser.H3SVG_SIGNATURE)] = h3_save_parser.H3SVG_SIGNATURE
+    _write_xor_hero_window(
+        data,
+        hero_name=hero_name,
+        creature_ids=creature_ids,
+        counts=counts,
+        name_offset=name_offset,
+    )
+    return bytes(data)
+
+
+def _build_multi_hero_fixture(hero_specs):
+    max_name_offset = max(spec["name_offset"] for spec in hero_specs)
+    data = bytearray(max_name_offset + h3_save_parser.HERO_NAME_SIZE + 32)
+    data[0:len(h3_save_parser.H3SVG_SIGNATURE)] = h3_save_parser.H3SVG_SIGNATURE
+    for spec in hero_specs:
+        _write_xor_hero_window(
+            data,
+            hero_name=spec["hero_name"],
+            creature_ids=spec.get("creature_ids", ISRA_CREATURE_IDS),
+            counts=spec.get("counts", ISRA_COUNTS),
+            name_offset=spec["name_offset"],
+        )
     return bytes(data)
 
 
@@ -54,10 +85,28 @@ def _compressed_save(hero_name="Isra", counts=ISRA_COUNTS):
     return gzip.compress(_build_xor_hero_fixture(hero_name=hero_name, counts=counts))
 
 
+def _compressed_multi_hero_save(hero_specs):
+    return gzip.compress(_build_multi_hero_fixture(hero_specs))
+
+
 def _write_save(game_dir: Path, name: str, hero_name="Isra", counts=ISRA_COUNTS):
     game_dir.mkdir(parents=True, exist_ok=True)
     save_path = game_dir / name
     save_path.write_bytes(_compressed_save(hero_name=hero_name, counts=counts))
+    return save_path
+
+
+def _write_multi_hero_save(game_dir: Path, name: str, hero_specs):
+    game_dir.mkdir(parents=True, exist_ok=True)
+    save_path = game_dir / name
+    save_path.write_bytes(_compressed_multi_hero_save(hero_specs))
+    return save_path
+
+
+def _write_empty_save(game_dir: Path, name: str):
+    game_dir.mkdir(parents=True, exist_ok=True)
+    save_path = game_dir / name
+    save_path.write_bytes(gzip.compress(h3_save_parser.H3SVG_SIGNATURE))
     return save_path
 
 
@@ -286,6 +335,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             result = _run_cli([
                 "--list",
                 "castle",
+                "--list-save-heroes",
                 "--autosave-dir",
                 str(game_dir),
                 "Isra",
@@ -296,6 +346,149 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("CASTLE", result.stdout)
         self.assertNotIn("VCMI Battle Estimator", result.stdout)
+        self.assertNotIn("VCMI Save Heroes", result.stdout)
+
+    def test_list_save_heroes_lists_context_and_relevant_rows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            _write_multi_hero_save(game_dir, "415.GM2", [
+                {
+                    "hero_name": "Isra",
+                    "counts": ISRA_COUNTS,
+                    "name_offset": 256,
+                },
+                {
+                    "hero_name": "Tiny",
+                    "counts": (1, 0, 0, 0, 0, 0, 0),
+                    "name_offset": 512,
+                },
+            ])
+
+            result = _run_cli([
+                "--list-save-heroes",
+                "--autosave-dir",
+                str(game_dir),
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("VCMI Save Heroes", result.stdout)
+        self.assertIn(str(game_dir), result.stdout)
+        self.assertIn("415.GM2", result.stdout)
+        self.assertIn("Parser mode: XOR 0x01 hero army scanner", result.stdout)
+        self.assertIn("Hero", result.stdout)
+        self.assertIn("AIValue", result.stdout)
+        self.assertIn("Army", result.stdout)
+        self.assertIn("Isra", result.stdout)
+        self.assertIn("731x Skeleton Warrior", result.stdout)
+        self.assertNotIn("Tiny", result.stdout)
+        self.assertNotIn("SYMULACJA MONTE CARLO", result.stdout)
+        self.assertNotIn("ANALIZA STATYCZNA", result.stdout)
+
+    def test_list_save_heroes_all_heroes_includes_filtered_small_armies(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            _write_multi_hero_save(game_dir, "415.GM2", [
+                {
+                    "hero_name": "Tiny",
+                    "counts": (1, 0, 0, 0, 0, 0, 0),
+                    "name_offset": 256,
+                },
+            ])
+
+            default_result = _run_cli([
+                "--list-save-heroes",
+                "--autosave-dir",
+                str(game_dir),
+            ])
+            all_result = _run_cli([
+                "--list-save-heroes",
+                "--all-heroes",
+                "--autosave-dir",
+                str(game_dir),
+            ])
+
+        self.assertEqual(default_result.returncode, 0, default_result.stderr)
+        self.assertIn("No relevant hero armies found", default_result.stdout)
+        self.assertIn("Use --all-heroes", default_result.stdout)
+        self.assertNotIn("Tiny", default_result.stdout)
+        self.assertEqual(all_result.returncode, 0, all_result.stderr)
+        self.assertIn("Tiny", all_result.stdout)
+        self.assertIn("1x Skeleton Warrior", all_result.stdout)
+
+    def test_list_save_heroes_empty_save_reports_context_and_parser_mode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            save_file = _write_empty_save(game_dir, "415.GM2")
+
+            result = _run_cli([
+                "--list-save-heroes",
+                "--autosave-dir",
+                str(game_dir),
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(save_file), result.stdout)
+        self.assertIn("Parser mode: XOR 0x01 hero army scanner", result.stdout)
+        self.assertIn("No hero armies found in selected save.", result.stdout)
+
+    def test_list_save_heroes_save_number_uses_requested_gm2(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            _write_save(game_dir, "415.GM1", hero_name="Tiny", counts=(1, 0, 0, 0, 0, 0, 0))
+            _write_save(game_dir, "415.GM2", hero_name="Isra", counts=ISRA_COUNTS)
+            _write_save(game_dir, "999.GM2", hero_name="Newer", counts=ISRA_COUNTS)
+
+            result = _run_cli([
+                "--list-save-heroes",
+                "--save",
+                "415",
+                "--autosave-dir",
+                str(game_dir),
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("415.GM2", result.stdout)
+        self.assertIn("Isra", result.stdout)
+        self.assertNotIn("Newer", result.stdout)
+
+    def test_list_save_heroes_autosave_dir_bypasses_malformed_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
+            root = Path(temp_dir)
+            home = Path(temp_home)
+            good_dir = root / "good"
+            _write_save(good_dir, "415.GM2")
+            config_path = home / ".config" / "vcmi-battle-estimator" / "config.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text("{not json", encoding="utf-8")
+
+            result = _run_cli([
+                "--list-save-heroes",
+                "--autosave-dir",
+                str(good_dir),
+            ], home=home)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Isra", result.stdout)
+
+    def test_list_save_heroes_save_file_ignores_bad_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
+            root = Path(temp_dir)
+            home = Path(temp_home)
+            good_dir = root / "good"
+            bad_dir = root / "bad"
+            bad_dir.mkdir()
+            save_file = _write_save(good_dir, "415.GM2")
+            _write_config(home, bad_dir)
+
+            result = _run_cli([
+                "--list-save-heroes",
+                "--save-file",
+                str(save_file),
+            ], home=home)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(save_file), result.stdout)
+        self.assertIn("Isra", result.stdout)
 
 
 if __name__ == "__main__":

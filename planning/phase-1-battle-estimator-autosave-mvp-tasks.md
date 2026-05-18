@@ -374,6 +374,13 @@ CLI dispatch should wait until the parser contracts are stable.
 1. CLI test or smoke run for default listing.
 2. CLI test or smoke run for `--all-heroes`.
 
+**Completion Notes:**
+- Added `--list-save-heroes` as a non-simulation command that resolves the selected save through the same `--save-file`, `--autosave-dir`, config, default-root, and `--save` precedence as autosave simulation.
+- Listing output prints selected game folder, selected save file, parser mode, and a fixed-width table with hero name, AI value, total creatures, and compact army summary.
+- Default listing uses relevant-hero filtering; `--all-heroes` includes small filtered armies. Empty detected saves and filtered-empty saves produce distinct messages while still showing selected save context.
+- Added CLI tests for default listing, `--all-heroes`, empty saves, explicit save number selection, malformed config bypass with `--autosave-dir`, `--save-file` bypass, and `--list` precedence.
+- Verification passed: `python3 -m unittest tests.test_battle_estimator_cli tests.test_h3_save_parser`; `python3 -m unittest discover`; `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### BE-T09: Interactive Wizard
@@ -598,7 +605,7 @@ Deferred questions for later phases:
 | BE-T05 | XOR 0x01 Hero Army Scanner | done | BE-T01, BE-T02 | parsing | M | `tools/h3_save_parser.py`, parser tests |
 | BE-T06 | Hero Filtering + Selection | done | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T07 | Autosave-First CLI Dispatch | done | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
-| BE-T08 | List Save Heroes Command | todo | BE-T07 | CLI | S | `tools/battle_estimator.py` |
+| BE-T08 | List Save Heroes Command | done | BE-T07 | CLI | S | `tools/battle_estimator.py` |
 | BE-T09 | Interactive Wizard | todo | BE-T07 | CLI | M | `tools/battle_estimator.py`, config helper |
 | BE-T10 | Simulation Output Context | todo | BE-T07 | CLI | S | `tools/battle_estimator.py` |
 | BE-T11 | Parser Unit Tests | todo | BE-T01, BE-T03, BE-T05, BE-T06 | quality | M | parser tests |
