@@ -150,6 +150,12 @@ CLI dispatch should wait until the parser contracts are stable.
 2. Unit test with synthetic gzip data containing prefix bytes before `H3SVG`.
 3. Unit test for non-gzip or missing file error behavior.
 
+**Completion Notes:**
+- Added `LoadedSave`, `SaveLoadError`, `load_save()`, and `find_h3svg_offset()` to `tools/h3_save_parser.py`.
+- Loader supports gzip payloads, raw deflate fallback via `zlib.decompress(compressed[10:-8], -zlib.MAX_WBITS)`, path-aware load errors, and non-mutating reads.
+- Added synthetic tests for H3SVG offsets `0` and `65`, fallback decompression, missing/unreadable/unsupported files, missing signatures, truncated gzip wrapping, and file immutability.
+- Verification passed: `python3 -m unittest tests.test_h3_save_parser`; `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### BE-T03: Latest Folder + Latest Save Selection
@@ -554,10 +560,10 @@ Deferred questions for later phases:
 | ID | Task | Status | Blocked By | Wave | Effort | Files Likely Touched |
 |---|---|---|---|---|---|---|
 | BE-T01 | Parser Data Model + Constants | done | -- | foundation | S | `tools/h3_save_parser.py`, parser tests |
-| BE-T02 | Save Loading + H3SVG Detection | todo | BE-T01 | foundation | S | `tools/h3_save_parser.py`, parser tests |
+| BE-T02 | Save Loading + H3SVG Detection | done | BE-T01 | foundation | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T03 | Latest Folder + Latest Save Selection | todo | BE-T01 | foundation | M | `tools/h3_save_parser.py`, parser tests |
 | BE-T04 | Config Store | todo | BE-T01 | foundation | S | `tools/h3_save_parser.py`, config tests |
-| BE-T05 | XOR 0x01 Hero Army Scanner | blocked | BE-T01, BE-T02 | parsing | M | `tools/h3_save_parser.py`, parser tests |
+| BE-T05 | XOR 0x01 Hero Army Scanner | todo | BE-T01, BE-T02 | parsing | M | `tools/h3_save_parser.py`, parser tests |
 | BE-T06 | Hero Filtering + Selection | blocked | BE-T05 | parsing | S | `tools/h3_save_parser.py`, parser tests |
 | BE-T07 | Autosave-First CLI Dispatch | blocked | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
 | BE-T08 | List Save Heroes Command | blocked | BE-T07 | CLI | S | `tools/battle_estimator.py` |

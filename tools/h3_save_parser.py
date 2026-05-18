@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import gzip
+import zlib
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -61,6 +63,15 @@ class SaveContext:
 
 
 @dataclass(frozen=True)
+class LoadedSave:
+    """Decompressed save bytes with the located H3SVG signature offset."""
+
+    path: Path
+    data: bytes
+    h3svg_offset: int
+
+
+@dataclass(frozen=True)
 class HeroStack:
     """One non-empty hero army slot."""
 
@@ -94,6 +105,35 @@ class HeroArmy:
         return sum(stack.creature.ai_value * stack.count for stack in self.stacks)
 
 
+class SaveLoadError(ValueError):
+    """Raised when a Heroes III save cannot be loaded or identified."""
+
+
+def load_save(path: str | Path) -> LoadedSave:
+    """Read and decompress a Heroes III save file."""
+
+    save_path = Path(path)
+    try:
+        compressed = save_path.read_bytes()
+    except OSError as exc:
+        raise SaveLoadError(f"{save_path}: read failed: {exc}") from exc
+
+    raw = _decompress_save_bytes(compressed, save_path)
+    h3svg_offset = find_h3svg_offset(raw)
+    if h3svg_offset is None:
+        raise SaveLoadError(f"{save_path}: missing H3SVG signature")
+    return LoadedSave(path=save_path, data=raw, h3svg_offset=h3svg_offset)
+
+
+def find_h3svg_offset(data: bytes) -> int | None:
+    """Return the offset of the H3SVG signature, if present."""
+
+    offset = data.find(H3SVG_SIGNATURE)
+    if offset == -1:
+        return None
+    return offset
+
+
 def creature_by_id(creature_id: int) -> Creature:
     """Return the existing battle-estimator creature for a Heroes III ID."""
 
@@ -111,3 +151,19 @@ def _battle_estimator_creatures() -> tuple[Creature, ...]:
             raise
         module = import_module("battle_estimator")
     return tuple(module.CREATURES)
+
+
+def _decompress_save_bytes(compressed: bytes, path: Path) -> bytes:
+    try:
+        return gzip.decompress(compressed)
+    except (OSError, EOFError, zlib.error) as gzip_exc:
+        gzip_reason = f"gzip decompress failed: {gzip_exc}"
+
+    try:
+        if len(compressed) <= 18:
+            raise ValueError("input too short for gzip raw deflate slice")
+        return zlib.decompress(compressed[10:-8], -zlib.MAX_WBITS)
+    except (OSError, ValueError, zlib.error) as raw_exc:
+        raise SaveLoadError(
+            f"{path}: {gzip_reason}; raw deflate fallback failed: {raw_exc}"
+        ) from raw_exc
