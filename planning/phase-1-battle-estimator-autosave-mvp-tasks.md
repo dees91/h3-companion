@@ -521,6 +521,14 @@ CLI dispatch should wait until the parser contracts are stable.
 1. Run focused CLI tests.
 2. Run at least one manual smoke command against local saves if available.
 
+**Completion Notes:**
+- Completed BE-T12 by auditing the CLI/wizard coverage added during BE-T07 through BE-T10 and filling the remaining gaps.
+- Added direct `--clear-autosave-dir` coverage that verifies the command does not simulate, removes `autosave_dir`, and preserves `last_hero`.
+- Added ambiguous hero CLI coverage with synthetic `Isra`/`Israfel` candidates and `ambiguous_prefix` assertions; missing hero errors were already covered.
+- Existing deterministic subprocess tests cover short-form autosave dispatch, `--list-save-heroes`, config set/show behavior, save-file/save-number/autosave-dir precedence, wizard number/name selection, `last_hero` defaults, invalid-selection reprompting, and no-relevant-heroes exits.
+- Verification passed: `python3 -m unittest tests.test_battle_estimator_cli`; `python3 -m unittest discover`; `python3 tools/battle_estimator.py --help`; `find . -type f \( -iname '*.GM1' -o -iname '*.GM2' \) -print`.
+- Real local save smoke was not recorded for this task; subprocess coverage uses synthetic saves only so no private save data is committed.
+
 ---
 
 ### BE-T13: Documentation Verification Pass
@@ -630,5 +638,5 @@ Deferred questions for later phases:
 | BE-T09 | Interactive Wizard | done | BE-T07 | CLI | M | `tools/battle_estimator.py`, config helper |
 | BE-T10 | Simulation Output Context | done | BE-T07 | CLI | S | `tools/battle_estimator.py` |
 | BE-T11 | Parser Unit Tests | done | BE-T01, BE-T03, BE-T05, BE-T06 | quality | M | parser tests |
-| BE-T12 | CLI/Wizard Tests | todo | BE-T07, BE-T08, BE-T09 | quality | M | CLI tests, `tools/battle_estimator.py` |
-| BE-T13 | Documentation Verification Pass | blocked | BE-T10, BE-T11, BE-T12 | quality | S | planning docs, checkpoint, usage docs |
+| BE-T12 | CLI/Wizard Tests | done | BE-T07, BE-T08, BE-T09 | quality | M | CLI tests, `tools/battle_estimator.py` |
+| BE-T13 | Documentation Verification Pass | todo | BE-T10, BE-T11, BE-T12 | quality | S | planning docs, checkpoint, usage docs |

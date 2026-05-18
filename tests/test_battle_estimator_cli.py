@@ -317,6 +317,22 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("last_hero: (not set)", result.stdout)
         self.assertNotIn("VCMI Battle Estimator", result.stdout)
 
+    def test_clear_autosave_dir_preserves_last_hero_and_does_not_simulate(self):
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
+            game_dir = Path(temp_dir)
+            home = Path(temp_home)
+            _write_config(home, game_dir, last_hero="Isra")
+
+            result = _run_cli(["--clear-autosave-dir"], home=home)
+            config_path = home / ".config" / "vcmi-battle-estimator" / "config.json"
+            saved_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Autosave dir cleared", result.stdout)
+        self.assertNotIn("autosave_dir", saved_config)
+        self.assertEqual(saved_config["last_hero"], "Isra")
+        self.assertNotIn("VCMI Battle Estimator", result.stdout)
+
     def test_missing_hero_error_lists_candidates(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             game_dir = Path(temp_dir)
@@ -335,6 +351,37 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Sorsha", result.stderr)
         self.assertIn("Isra", result.stderr)
+
+    def test_ambiguous_hero_error_lists_matching_candidates(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            _write_multi_hero_save(game_dir, "415.GM2", [
+                {
+                    "hero_name": "Isra",
+                    "counts": ISRA_COUNTS,
+                    "name_offset": 256,
+                },
+                {
+                    "hero_name": "Israfel",
+                    "counts": ISRA_COUNTS,
+                    "name_offset": 512,
+                },
+            ])
+
+            result = _run_cli([
+                "Is",
+                "vs",
+                "1 pikeman",
+                "--autosave-dir",
+                str(game_dir),
+                "-n",
+                "1",
+            ])
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ambiguous_prefix", result.stderr)
+        self.assertIn("Isra", result.stderr)
+        self.assertIn("Israfel", result.stderr)
 
     def test_list_command_takes_precedence_over_simulation_flags(self):
         with tempfile.TemporaryDirectory() as temp_dir:
