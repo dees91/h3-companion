@@ -145,6 +145,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("Gracz: 10x Pikeman", result.stdout)
         self.assertIn("Wrog: 20x Boar", result.stdout)
         self.assertNotIn("Folder zapisu:", result.stdout)
+        self.assertNotIn("hero stats, skills, artifacts", result.stdout)
 
     def test_short_hero_form_loads_from_explicit_autosave_dir(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -162,8 +163,12 @@ class BattleEstimatorCliTests(unittest.TestCase):
             ])
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(game_dir), result.stdout)
+        self.assertIn("415.GM2", result.stdout)
         self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
+        self.assertIn("Wrog: 1x Pikeman", result.stdout)
         self.assertIn("Plik zapisu:", result.stdout)
+        self.assertIn("hero stats, skills, artifacts", result.stdout)
 
     def test_explicit_hero_flag_accepts_empty_left_side(self):
         with tempfile.TemporaryDirectory() as temp_dir:

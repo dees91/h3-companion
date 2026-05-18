@@ -37,6 +37,11 @@ ATTACK_POINT_DAMAGE_FACTOR_CAP = 4.0
 DEFENSE_POINT_DAMAGE_FACTOR = 0.025
 DEFENSE_POINT_DAMAGE_FACTOR_CAP = 0.7
 
+AUTOSAVE_MODELING_LIMITATION = (
+    "Modeling note: hero stats, skills, artifacts, spells, morale, and luck "
+    "are not modeled; Phase 1 uses creature stacks only."
+)
+
 
 # ---------------------------------------------------------------------------
 # Progi ilościowe z CCreatureHandler.cpp (linie 237-257)
@@ -1000,6 +1005,7 @@ def run_analysis(
     if save_context is not None:
         print(f"  Folder zapisu: {save_context.game_dir}")
         print(f"  Plik zapisu:   {save_context.save_file}")
+        print(f"  {AUTOSAVE_MODELING_LIMITATION}")
     print("=" * 65)
 
     if not has_ranges:

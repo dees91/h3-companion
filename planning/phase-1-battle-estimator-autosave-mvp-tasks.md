@@ -449,6 +449,13 @@ CLI dispatch should wait until the parser contracts are stable.
 1. Smoke run with autosave-based hero selection.
 2. Confirm old Polish output remains understandable and no line wrapping is obviously broken.
 
+**Completion Notes:**
+- Added an autosave modeling limitation note to save-based simulation output: hero stats, skills, artifacts, spells, morale, and luck are not modeled; Phase 1 uses creature stacks only.
+- The note prints next to selected folder/save context only when `run_analysis()` receives a save context, so manual army mode remains unchanged.
+- Existing autosave paths continue to label the player army with the selected hero name and the enemy army as `Wrog`.
+- Added CLI assertions for selected folder, selected save, hero label, enemy label, limitation note, and absence of the note in manual mode.
+- Verification passed: `python3 -m unittest tests.test_battle_estimator_cli tests.test_h3_save_parser`; `python3 -m unittest discover`; `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### BE-T11: Parser Unit Tests
@@ -615,7 +622,7 @@ Deferred questions for later phases:
 | BE-T07 | Autosave-First CLI Dispatch | done | BE-T03, BE-T04, BE-T06 | CLI | M | `tools/battle_estimator.py`, `tools/h3_save_parser.py`, CLI tests |
 | BE-T08 | List Save Heroes Command | done | BE-T07 | CLI | S | `tools/battle_estimator.py` |
 | BE-T09 | Interactive Wizard | done | BE-T07 | CLI | M | `tools/battle_estimator.py`, config helper |
-| BE-T10 | Simulation Output Context | todo | BE-T07 | CLI | S | `tools/battle_estimator.py` |
+| BE-T10 | Simulation Output Context | done | BE-T07 | CLI | S | `tools/battle_estimator.py` |
 | BE-T11 | Parser Unit Tests | todo | BE-T01, BE-T03, BE-T05, BE-T06 | quality | M | parser tests |
 | BE-T12 | CLI/Wizard Tests | todo | BE-T07, BE-T08, BE-T09 | quality | M | CLI tests, `tools/battle_estimator.py` |
 | BE-T13 | Documentation Verification Pass | blocked | BE-T10, BE-T11, BE-T12 | quality | S | planning docs, checkpoint, usage docs |
