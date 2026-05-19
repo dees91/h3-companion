@@ -68,12 +68,18 @@
             <p id="map-summary" class="panel-subtitle">Waiting for snapshot</p>
           </div>
           <div class="toolbar-metrics" aria-label="Map metrics">
+            <div id="map-level-control" class="segmented-control" role="group" aria-label="Map level"></div>
+            <label class="toggle-control" for="show-removed-toggle">
+              <input id="show-removed-toggle" type="checkbox">
+              <span>Show Removed</span>
+            </label>
             <span id="zoom-status">Zoom 100%</span>
             <span id="object-count">0 targets</span>
           </div>
         </div>
-        <div class="map-stage">
+        <div id="map-stage" class="map-stage">
           <canvas id="battle-map" width="960" height="640"></canvas>
+          <div id="map-tooltip" class="map-tooltip" role="tooltip" hidden></div>
           <div class="map-overlay" aria-live="polite">
             <strong id="map-overlay-title">Map shell ready</strong>
             <span id="map-overlay-detail">Grid rendering starts in the next task.</span>

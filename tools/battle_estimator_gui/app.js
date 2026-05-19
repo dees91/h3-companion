@@ -16,6 +16,10 @@
     heroList: document.getElementById("hero-list"),
     mapSummary: document.getElementById("map-summary"),
     objectCount: document.getElementById("object-count"),
+    mapLevelControl: document.getElementById("map-level-control"),
+    showRemovedToggle: document.getElementById("show-removed-toggle"),
+    mapStage: document.getElementById("map-stage"),
+    mapTooltip: document.getElementById("map-tooltip"),
     mapOverlayTitle: document.getElementById("map-overlay-title"),
     mapOverlayDetail: document.getElementById("map-overlay-detail"),
     targetState: document.getElementById("target-state"),
@@ -34,6 +38,8 @@
     minZoom: 0.35,
     maxZoom: 5,
     pan: { x: 0, y: 0 },
+    level: 0,
+    showRemovedNeutrals: false,
     markers: [],
     hoveredMarkerId: null,
     activeMarkerId: null,
@@ -206,14 +212,101 @@
     return clamp(720 / largest, 6, 28);
   }
 
-  function buildMarkerCache(snapshot, tileSize) {
+  function mapLevelCount(snapshot) {
+    const levels = snapshot && snapshot.map && snapshot.map.levels
+      ? Number(snapshot.map.levels)
+      : 1;
+    return Math.max(1, Number.isInteger(levels) ? levels : 1);
+  }
+
+  function positionLevel(position) {
+    if (!position) {
+      return 0;
+    }
+    const level = Number(position.z);
+    return Number.isInteger(level) ? level : 0;
+  }
+
+  function normalizeLevelForSnapshot(level, snapshot) {
+    const numeric = Number(level);
+    const requested = Number.isInteger(numeric) ? numeric : 0;
+    return clamp(requested, 0, mapLevelCount(snapshot) - 1);
+  }
+
+  function heroById(snapshot, heroId) {
+    if (!snapshot || !heroId) {
+      return null;
+    }
+    return (snapshot.heroes || []).find((hero) => hero.id === heroId) || null;
+  }
+
+  function defaultLevelForSnapshot(snapshot, selectedHeroId) {
+    const hero = heroById(snapshot, selectedHeroId);
+    if (hero && hero.position) {
+      return normalizeLevelForSnapshot(positionLevel(hero.position), snapshot);
+    }
+    return 0;
+  }
+
+  function sameMapGeometry(previous, next) {
+    const previousMap = previous && previous.map ? previous.map : null;
+    const nextMap = next && next.map ? next.map : null;
+    if (!previousMap || !nextMap) {
+      return false;
+    }
+    return (
+      previousMap.width === nextMap.width
+      && previousMap.height === nextMap.height
+      && mapLevelCount(previous) === mapLevelCount(next)
+    );
+  }
+
+  function truncateText(value, maxLength) {
+    const text = String(value || "").trim();
+    if (!text || text.length <= maxLength) {
+      return text;
+    }
+    return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}...`;
+  }
+
+  function markerTooltipText(marker) {
+    if (!marker) {
+      return "";
+    }
+    if (marker.type === "hero") {
+      return [
+        marker.label,
+        positionText(marker.position),
+        `${marker.creatureCount || 0} creatures`,
+        truncateText(marker.summary, 90)
+      ].filter(Boolean).join(" | ");
+    }
+
+    const flags = [];
+    if (marker.removed) {
+      flags.push("removed");
+    }
+    if (marker.unsupported) {
+      flags.push("unsupported");
+    }
+    return [
+      marker.label,
+      positionText(marker.position),
+      flags.join(", "),
+      truncateText(marker.summary, 90)
+    ].filter(Boolean).join(" | ");
+  }
+
+  function buildMarkerCache(snapshot, tileSize, level, showRemovedNeutrals) {
     if (!snapshot) {
       return [];
     }
 
     const selectedHeroId = snapshot.selected_hero_id;
+    const activeLevel = normalizeLevelForSnapshot(level, snapshot);
     const heroMarkers = (snapshot.heroes || [])
       .filter((hero) => hero.position)
+      .filter((hero) => positionLevel(hero.position) === activeLevel)
       .map((hero) => ({
         type: "hero",
         id: hero.id,
@@ -227,11 +320,14 @@
         selected: hero.id === selectedHeroId,
         removed: false,
         unsupported: false,
-        summary: hero.army_summary || `${hero.total_creatures || 0} creatures`
+        creatureCount: hero.total_creatures || 0,
+        summary: hero.army_summary || ""
       }));
 
     const neutralMarkers = (snapshot.neutral_targets || [])
       .filter((target) => target.position)
+      .filter((target) => positionLevel(target.position) === activeLevel)
+      .filter((target) => showRemovedNeutrals || !target.removed)
       .map((target) => ({
         type: "neutral",
         id: target.id,
@@ -334,6 +430,102 @@
     };
   }
 
+  function rebuildMarkerCache(snapshot) {
+    const current = snapshot || mapView.snapshot;
+    const tileSize = tileSizeForMap((current && current.map) || {});
+    mapView.level = normalizeLevelForSnapshot(mapView.level, current);
+    mapView.markers = buildMarkerCache(
+      current,
+      tileSize,
+      mapView.level,
+      mapView.showRemovedNeutrals
+    );
+  }
+
+  function markerCounts(markers) {
+    return (markers || []).reduce((counts, marker) => {
+      if (marker.type === "hero") {
+        counts.heroes += 1;
+      } else if (marker.type === "neutral") {
+        counts.neutrals += 1;
+      }
+      return counts;
+    }, { heroes: 0, neutrals: 0 });
+  }
+
+  function snapshotDimensions(snapshot) {
+    const map = snapshot && snapshot.map ? snapshot.map : {};
+    return map.width && map.height
+      ? `${map.width} x ${map.height} x ${map.levels || 1}`
+      : "No map";
+  }
+
+  function updateMapMetrics(snapshot) {
+    const current = snapshot || mapView.snapshot;
+    const counts = markerCounts(mapView.markers);
+    const dimensions = snapshotDimensions(current);
+    setText(elements.mapSummary, `${dimensions} | Level ${mapView.level}`);
+    setText(elements.objectCount, `${counts.neutrals} targets`);
+    setText(elements.mapOverlayTitle, dimensions);
+    setText(
+      elements.mapOverlayDetail,
+      `Level ${mapView.level} | ${counts.heroes} heroes | ${counts.neutrals} neutrals`
+    );
+  }
+
+  function updateLevelControls(snapshot) {
+    const current = snapshot || mapView.snapshot;
+    clearNode(elements.mapLevelControl);
+    if (!current || !current.map) {
+      return;
+    }
+
+    for (let level = 0; level < mapLevelCount(current); level += 1) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = String(level);
+      button.className = level === mapView.level ? "active" : "";
+      button.setAttribute("aria-pressed", level === mapView.level ? "true" : "false");
+      button.addEventListener("click", () => setMapLevel(level));
+      elements.mapLevelControl.appendChild(button);
+    }
+  }
+
+  function setMapLevel(level) {
+    mapView.level = normalizeLevelForSnapshot(level, mapView.snapshot);
+    mapView.hoveredMarkerId = null;
+    elements.canvas.classList.remove("has-marker-hover");
+    hideMapTooltip();
+    rebuildMarkerCache(mapView.snapshot);
+    if (!mapView.markers.some((marker) => marker.id === mapView.activeMarkerId)) {
+      mapView.activeMarkerId = null;
+      setTargetDetails(null);
+    }
+    updateLevelControls(mapView.snapshot);
+    updateMapMetrics(mapView.snapshot);
+    drawMap();
+  }
+
+  function hideMapTooltip() {
+    elements.mapTooltip.hidden = true;
+    elements.mapTooltip.textContent = "";
+  }
+
+  function showMapTooltip(marker, event) {
+    const text = markerTooltipText(marker);
+    if (!text) {
+      hideMapTooltip();
+      return;
+    }
+    const stageRect = elements.mapStage.getBoundingClientRect();
+    const x = clamp(event.clientX - stageRect.left + 12, 8, Math.max(8, stageRect.width - 24));
+    const y = clamp(event.clientY - stageRect.top + 12, 8, Math.max(8, stageRect.height - 24));
+    elements.mapTooltip.textContent = text;
+    elements.mapTooltip.style.left = `${x}px`;
+    elements.mapTooltip.style.top = `${y}px`;
+    elements.mapTooltip.hidden = false;
+  }
+
   function centerOnHero(heroId) {
     const marker = mapView.markers.find((candidate) => (
       candidate.type === "hero" && candidate.id === heroId
@@ -342,11 +534,33 @@
   }
 
   function centerOnMarkerId(targetId) {
-    const marker = mapView.markers.find((candidate) => candidate.id === targetId);
+    let marker = mapView.markers.find((candidate) => candidate.id === targetId);
+    if (!marker) {
+      const targetPosition = positionForTargetId(mapView.snapshot, targetId);
+      if (targetPosition) {
+        mapView.level = normalizeLevelForSnapshot(positionLevel(targetPosition), mapView.snapshot);
+        rebuildMarkerCache(mapView.snapshot);
+        updateLevelControls(mapView.snapshot);
+        updateMapMetrics(mapView.snapshot);
+        marker = mapView.markers.find((candidate) => candidate.id === targetId);
+      }
+    }
     if (centerOnMarker(marker)) {
       return marker;
     }
     return null;
+  }
+
+  function positionForTargetId(snapshot, targetId) {
+    if (!snapshot || !targetId) {
+      return null;
+    }
+    const hero = (snapshot.heroes || []).find((candidate) => candidate.id === targetId);
+    if (hero && hero.position) {
+      return hero.position;
+    }
+    const neutral = (snapshot.neutral_targets || []).find((candidate) => candidate.id === targetId);
+    return neutral && neutral.position ? neutral.position : null;
   }
 
   function centerOnMarker(marker) {
@@ -491,7 +705,7 @@
     }
     const suffix = flags.length ? ` | ${flags.join(", ")}` : "";
     elements.targetState.textContent = `${marker.type} ${marker.id} | ${marker.label} | ${positionText(marker.position)}${suffix}`;
-    elements.targetState.title = marker.summary || marker.label;
+    elements.targetState.title = markerTooltipText(marker) || marker.label;
   }
 
   function clearNode(node) {
@@ -1228,6 +1442,34 @@
     });
   }
 
+  function resolveSelectedHeroId(snapshot, previousSelectedHeroId) {
+    if (heroById(snapshot, previousSelectedHeroId)) {
+      return previousSelectedHeroId;
+    }
+    if (heroById(snapshot, snapshot && snapshot.selected_hero_id)) {
+      return snapshot.selected_hero_id;
+    }
+    return null;
+  }
+
+  function nextViewStateForSnapshot(snapshot, previous) {
+    const selectedHeroId = resolveSelectedHeroId(snapshot, previous.selectedHeroId);
+    const preserveView = sameMapGeometry(previous.snapshot, snapshot);
+    const level = selectedHeroId
+      ? defaultLevelForSnapshot(snapshot, selectedHeroId)
+      : (preserveView ? normalizeLevelForSnapshot(previous.level, snapshot) : 0);
+    return {
+      selectedHeroId,
+      preserveView,
+      level,
+      zoom: clampZoom(previous.zoom, previous.minZoom, previous.maxZoom),
+      pan: {
+        x: previous.pan && typeof previous.pan.x === "number" ? previous.pan.x : 0,
+        y: previous.pan && typeof previous.pan.y === "number" ? previous.pan.y : 0
+      }
+    };
+  }
+
   function applySelectedHero(heroId, recentHeroes) {
     invalidateEstimateRequests();
     heroState.selectedHeroId = heroId || null;
@@ -1236,8 +1478,10 @@
       mapView.snapshot.selected_hero_id = heroState.selectedHeroId;
       mapView.snapshot.recent_heroes = heroState.recentHeroes;
     }
-    const tileSize = tileSizeForMap((mapView.snapshot && mapView.snapshot.map) || {});
-    mapView.markers = buildMarkerCache(mapView.snapshot, tileSize);
+    mapView.level = defaultLevelForSnapshot(mapView.snapshot, heroState.selectedHeroId);
+    rebuildMarkerCache(mapView.snapshot);
+    updateLevelControls(mapView.snapshot);
+    updateMapMetrics(mapView.snapshot);
     renderRecentHeroes(heroState.recentHeroes);
     renderHeroes();
     if (!centerOnHero(heroState.selectedHeroId)) {
@@ -1278,37 +1522,48 @@
   }
 
   function renderSnapshot(snapshot) {
+    const nextViewState = nextViewStateForSnapshot(snapshot, {
+      snapshot: mapView.snapshot,
+      zoom: mapView.zoom,
+      minZoom: mapView.minZoom,
+      maxZoom: mapView.maxZoom,
+      pan: mapView.pan,
+      level: mapView.level,
+      selectedHeroId: heroState.selectedHeroId
+    });
     const heroes = snapshot.heroes || [];
-    const targets = snapshot.neutral_targets || [];
-    const map = snapshot.map || {};
-    const dimensions = map.width && map.height
-      ? `${map.width} x ${map.height} x ${map.levels || 1}`
-      : "No map";
+    const selectedHeroId = nextViewState.selectedHeroId;
+    snapshot.selected_hero_id = selectedHeroId;
 
     setText(elements.mode, modeLabel(snapshot.mode));
     setText(elements.save, fileName(snapshot.save_file));
     setText(elements.map, fileName(snapshot.map_file));
     setText(elements.refresh, "Loaded");
     setText(elements.heroCount, `${heroes.length} heroes detected`);
-    setText(elements.mapSummary, dimensions);
-    setText(elements.objectCount, `${targets.length} targets`);
-    setText(elements.mapOverlayTitle, dimensions);
-    setText(elements.mapOverlayDetail, `${heroes.length} heroes | ${targets.length} neutrals`);
 
     heroState.heroes = heroes;
     heroState.recentHeroes = snapshot.recent_heroes || [];
-    heroState.selectedHeroId = snapshot.selected_hero_id || null;
+    heroState.selectedHeroId = selectedHeroId;
     elements.heroSearch.disabled = false;
     renderRecentHeroes(heroState.recentHeroes);
     renderHeroes();
     mapView.snapshot = snapshot;
-    const tileSize = tileSizeForMap(snapshot.map || {});
-    mapView.markers = buildMarkerCache(snapshot, tileSize);
+    mapView.level = nextViewState.level;
+    rebuildMarkerCache(snapshot);
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
+    elements.canvas.classList.remove("has-marker-hover");
+    hideMapTooltip();
     invalidateEstimateRequests();
     setTargetDetails(null);
-    fitMapToCanvas(snapshot);
+    if (nextViewState.preserveView) {
+      mapView.zoom = nextViewState.zoom;
+      mapView.pan = nextViewState.pan;
+    } else {
+      fitMapToCanvas(snapshot);
+    }
+    updateLevelControls(snapshot);
+    updateMapMetrics(snapshot);
     drawMap();
 
     setEstimateMessage("No simulation run.");
@@ -1333,10 +1588,14 @@
     setText(elements.objectCount, "0 targets");
     setText(elements.mapOverlayTitle, "Snapshot unavailable");
     setText(elements.mapOverlayDetail, message);
+    clearNode(elements.mapLevelControl);
     mapView.snapshot = null;
     mapView.markers = [];
+    mapView.level = 0;
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
+    elements.canvas.classList.remove("has-marker-hover");
+    hideMapTooltip();
     invalidateEstimateRequests();
     setTargetDetails(null);
     setEstimateMessage("No simulation run.");
@@ -1412,6 +1671,20 @@
     renderHeroes();
   });
 
+  elements.showRemovedToggle.addEventListener("change", () => {
+    mapView.showRemovedNeutrals = elements.showRemovedToggle.checked;
+    mapView.hoveredMarkerId = null;
+    elements.canvas.classList.remove("has-marker-hover");
+    hideMapTooltip();
+    rebuildMarkerCache(mapView.snapshot);
+    if (!mapView.markers.some((marker) => marker.id === mapView.activeMarkerId)) {
+      mapView.activeMarkerId = null;
+      setTargetDetails(null);
+    }
+    updateMapMetrics(mapView.snapshot);
+    drawMap();
+  });
+
   elements.scanButton.addEventListener("click", () => {
     runRadiusScan();
   });
@@ -1425,6 +1698,7 @@
   });
 
   elements.canvas.addEventListener("pointerdown", (event) => {
+    hideMapTooltip();
     elements.canvas.setPointerCapture(event.pointerId);
     mapView.drag = {
       pointerId: event.pointerId,
@@ -1446,6 +1720,7 @@
         x: mapView.drag.pan.x + dx,
         y: mapView.drag.pan.y + dy
       };
+      hideMapTooltip();
       drawMap();
       return;
     }
@@ -1453,6 +1728,11 @@
     const marker = hitTestMarker(mapView.markers, point, mapView);
     mapView.hoveredMarkerId = marker ? marker.id : null;
     elements.canvas.classList.toggle("has-marker-hover", Boolean(marker));
+    if (marker) {
+      showMapTooltip(marker, event);
+    } else {
+      hideMapTooltip();
+    }
     if (marker && !mapView.activeMarkerId) {
       setTargetDetails(marker);
     } else if (!marker && !mapView.activeMarkerId) {
@@ -1479,6 +1759,7 @@
   elements.canvas.addEventListener("pointerleave", () => {
     mapView.hoveredMarkerId = null;
     elements.canvas.classList.remove("has-marker-hover");
+    hideMapTooltip();
     drawMap();
   });
 
@@ -1507,16 +1788,21 @@
   window.__battleEstimatorGuiTest = {
     buildMarkerCache,
     clampZoom,
+    defaultLevelForSnapshot,
     estimateTargetLabel,
     filterHeroesForQuery,
     formatWinPct,
     hitTestMarker,
+    markerTooltipText,
     matchRecentHeroName,
     markerContainsScreenPoint,
     markerScreenRadius,
+    nextViewStateForSnapshot,
     recentHeroChipState,
+    resolveSelectedHeroId,
     scanClassForWinPct,
     scanResultLookup,
+    sameMapGeometry,
     sortedScanResults,
     screenToWorld,
     centerOnHero,
@@ -1528,6 +1814,7 @@
     zoomAtPoint
   };
 
+  elements.showRemovedToggle.checked = mapView.showRemovedNeutrals;
   startAutoRefresh();
   checkHealth().finally(refreshStateAndSaves);
 }());

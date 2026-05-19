@@ -177,12 +177,17 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
         for expected in (
             "__battleEstimatorGuiTest",
             "buildMarkerCache",
+            "defaultLevelForSnapshot",
             "worldToScreen",
             "screenToWorld",
             "zoomAtPoint",
             "hitTestMarker",
             "markerContainsScreenPoint",
             "markerScreenRadius",
+            "markerTooltipText",
+            "nextViewStateForSnapshot",
+            "resolveSelectedHeroId",
+            "sameMapGeometry",
             "pointerdown",
             "pointermove",
             "pointerup",
@@ -232,6 +237,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="hero-list"',
             'id="save-picker"',
             'id="follow-latest-button"',
+            'id="map-level-control"',
+            'id="show-removed-toggle"',
+            'id="map-stage"',
+            'id="map-tooltip"',
             'id="scan-radius"',
             'id="scan-target-type"',
             'id="scan-button"',
@@ -249,6 +258,11 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".scan-result",
             ".scan-result.strong",
             ".top-actions",
+            ".segmented-control",
+            ".toggle-control",
+            ".map-tooltip",
+            "#battle-map",
+            "width: 100%;",
             "height: calc(100vh - 73px);",
             ".detected-heroes-section",
             "align-content: start;",
@@ -292,6 +306,9 @@ class Element {{
     this.dataset = {{}};
     this.disabled = false;
     this.height = 640;
+    this.hidden = false;
+    this.checked = false;
+    this.style = {{}};
     this.textContent = "";
     this.title = "";
     this.width = 960;
@@ -358,7 +375,7 @@ const snapshot = {{
   save_fingerprint: null,
   map_file: null,
   map_fingerprint: null,
-  map: {{ width: 1, height: 1, levels: 1 }},
+  map: {{ width: 4, height: 4, levels: 2 }},
   heroes: [],
   neutral_targets: [],
   recent_heroes: [],
@@ -371,6 +388,105 @@ global.fetch = (path) => Promise.resolve({{
 require({json.dumps(app_js_path)});
 const helpers = window.__battleEstimatorGuiTest;
 assert.strictEqual(autoRefreshIntervalCalls, 0);
+const markerSnapshot = {{
+  map: {{ width: 4, height: 4, levels: 2 }},
+  selected_hero_id: "hero:0",
+  heroes: [
+    {{
+      id: "hero:0",
+      name: "Isra",
+      position: {{ x: 1, y: 2, z: 0 }},
+      total_creatures: 12,
+      army_summary: "12x Skeleton"
+    }},
+    {{
+      id: "hero:1",
+      name: "Fafner",
+      position: {{ x: 2, y: 3, z: 1 }},
+      total_creatures: 292,
+      army_summary: "1x Devil, 72x Master Gremlin"
+    }}
+  ],
+  neutral_targets: [
+    {{
+      id: "neutral:0",
+      position: {{ x: 1, y: 3, z: 0 }},
+      count: 8,
+      creature_name: "Gnoll",
+      h3m_subid: 1,
+      estimator_creature_id: 1,
+      removed: false
+    }},
+    {{
+      id: "neutral:removed",
+      position: {{ x: 2, y: 3, z: 0 }},
+      count: 9,
+      creature_name: "Pikeman",
+      h3m_subid: 2,
+      estimator_creature_id: 2,
+      removed: true,
+      removal_note: "removed in save"
+    }},
+    {{
+      id: "neutral:1",
+      position: {{ x: 3, y: 1, z: 1 }},
+      count: 10,
+      creature_name: "Archer",
+      h3m_subid: 3,
+      estimator_creature_id: null,
+      removed: false
+    }}
+  ]
+}};
+const level0Markers = helpers.buildMarkerCache(markerSnapshot, 10, 0, false);
+assert.deepStrictEqual(level0Markers.map((marker) => marker.id), ["hero:0", "neutral:0"]);
+const level0WithRemoved = helpers.buildMarkerCache(markerSnapshot, 10, 0, true);
+assert.deepStrictEqual(
+  level0WithRemoved.map((marker) => marker.id),
+  ["hero:0", "neutral:0", "neutral:removed"]
+);
+assert.strictEqual(level0WithRemoved.find((marker) => marker.id === "neutral:removed").removed, true);
+const level1Markers = helpers.buildMarkerCache(markerSnapshot, 10, 1, false);
+assert.deepStrictEqual(level1Markers.map((marker) => marker.id), ["hero:1", "neutral:1"]);
+assert.strictEqual(helpers.defaultLevelForSnapshot(markerSnapshot, "hero:1"), 1);
+assert.strictEqual(helpers.resolveSelectedHeroId(markerSnapshot, "hero:1"), "hero:1");
+assert.strictEqual(helpers.resolveSelectedHeroId(markerSnapshot, "hero:missing"), "hero:0");
+assert.strictEqual(
+  helpers.sameMapGeometry(
+    {{ map: {{ width: 4, height: 4, levels: 2 }} }},
+    markerSnapshot
+  ),
+  true
+);
+assert.strictEqual(
+  helpers.sameMapGeometry(
+    {{ map: {{ width: 5, height: 4, levels: 2 }} }},
+    markerSnapshot
+  ),
+  false
+);
+assert.deepStrictEqual(
+  helpers.nextViewStateForSnapshot(markerSnapshot, {{
+    snapshot: {{ map: {{ width: 4, height: 4, levels: 2 }} }},
+    selectedHeroId: "hero:1",
+    level: 0,
+    zoom: 1.7,
+    minZoom: 0.35,
+    maxZoom: 5,
+    pan: {{ x: 22, y: -9 }}
+  }}),
+  {{
+    selectedHeroId: "hero:1",
+    preserveView: true,
+    level: 1,
+    zoom: 1.7,
+    pan: {{ x: 22, y: -9 }}
+  }}
+);
+const tooltip = helpers.markerTooltipText(level1Markers[0]);
+assert.ok(tooltip.includes("Fafner"));
+assert.ok(tooltip.includes("2,3,1"));
+assert.ok(!tooltip.includes("<"));
 assert.strictEqual(helpers.formatWinPct(null), "not available");
 assert.strictEqual(helpers.formatWinPct(0), "0.0%");
 assert.strictEqual(helpers.verdictForWinPct(null), "Unsupported target");

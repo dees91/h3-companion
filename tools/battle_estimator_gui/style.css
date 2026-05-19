@@ -346,7 +346,9 @@ select:disabled {
   min-width: 0;
 }
 
-.toolbar-metrics span {
+.toolbar-metrics > span,
+.segmented-control button,
+.toggle-control {
   min-height: 24px;
   padding: 4px 7px;
   border: 1px solid #c7ced8;
@@ -354,6 +356,51 @@ select:disabled {
   color: #334155;
   font-size: 12px;
   white-space: nowrap;
+}
+
+.segmented-control {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.segmented-control button {
+  min-width: 28px;
+  border-radius: 0;
+  background: #f7f8fa;
+  cursor: pointer;
+}
+
+.segmented-control button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.segmented-control button:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.segmented-control button + button {
+  margin-left: -1px;
+}
+
+.segmented-control button.active {
+  border-color: #758195;
+  background: #dce6f2;
+  color: #143a75;
+  font-weight: 700;
+}
+
+.toggle-control {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  background: #f7f8fa;
+  cursor: pointer;
+}
+
+.toggle-control input {
+  width: auto;
+  min-height: 0;
+  margin: 0;
 }
 
 .map-stage {
@@ -366,9 +413,9 @@ select:disabled {
   background: #e7ebf0;
 }
 
-canvas {
+#battle-map {
   display: block;
-  width: min(100%, 960px);
+  width: 100%;
   height: min(100%, 640px);
   max-height: calc(100vh - 150px);
   border: 1px solid #b9c1cc;
@@ -381,12 +428,31 @@ canvas {
   touch-action: none;
 }
 
-canvas:active {
+#battle-map:active {
   cursor: grabbing;
 }
 
-canvas.has-marker-hover {
+#battle-map.has-marker-hover {
   cursor: pointer;
+}
+
+.map-tooltip {
+  position: absolute;
+  z-index: 2;
+  max-width: min(340px, calc(100% - 24px));
+  padding: 7px 9px;
+  overflow-wrap: anywhere;
+  border: 1px solid #758195;
+  border-radius: 4px;
+  background: rgba(17, 24, 39, 0.92);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.map-tooltip[hidden] {
+  display: none;
 }
 
 .map-overlay {
@@ -613,8 +679,7 @@ canvas.has-marker-hover {
     grid-row: 4;
   }
 
-  canvas {
-    width: calc(100vw - 24px);
+  #battle-map {
     height: 360px;
   }
 }
