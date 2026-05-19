@@ -434,5 +434,8 @@ Implemented Phase 1 facts:
 - The production parser module exists at `tools/h3_save_parser.py`.
 - The CLI supports autosave-first simulation, hero listing, config commands,
   and the no-argument wizard.
+- The local browser GUI entrypoint exists at `tools/battle_estimator_gui.py`;
+  it serves a read-only map, hero selection, single-target estimates, radius
+  scan visualization, save picker, and follow-latest refresh on `127.0.0.1`.
 - Tests use synthetic byte buffers and temporary directories; real local save
   paths above are investigation notes, not required repo fixtures.

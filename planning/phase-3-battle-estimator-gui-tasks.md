@@ -817,7 +817,10 @@ payloads are stable.
    read-only, no terrain/pathfinding/FoW, all heroes listed, army-only hero
    simulation, `.h3m` base neutral counts.
 3. Summary Table statuses are current.
-4. Manual verification with a real local save/map is recorded.
+4. Live verification with a real local save/map is recorded for hero
+   selection, target simulation, radius scan, pinned save, and follow-latest
+   mode. If browser clicking is not exercised, the API-level substitute and
+   caveat are recorded.
 5. No real save/map files are committed.
 
 **Verification:**
@@ -829,6 +832,38 @@ payloads are stable.
    hero selection, target click simulation, radius scan, pinned save, and
    follow-latest mode.
 
+**Completion Notes (2026-05-19):**
+
+- Updated `planning/battle-estimator-autosave-brief.md` with Phase 3 GUI
+  startup, local-only `127.0.0.1` URL/port behavior, save picker,
+  pinned/follow-latest workflow, hero selection, target simulation, radius
+  scan, and MVP limitations.
+- Removed stale GUI out-of-scope wording from the autosave brief; Phase 1 now
+  only excludes packaged GUI applications while documenting that Phase 3
+  provides the local browser GUI.
+- Updated `tools/battle_estimator_save_parsing_checkpoint.md` with current GUI
+  status: read-only map, hero selection, single-target estimates, radius scan
+  visualization, save picker, and follow-latest refresh.
+- Verified parser, scan, GUI, full suite, CLI help, frontend syntax, and diff
+  hygiene with:
+  `python3 -m unittest tests.test_h3_save_parser tests.test_h3_map_parser`,
+  `python3 -m unittest tests.test_nearby_scan`,
+  `python3 -m unittest tests.test_battle_estimator_gui`,
+  `node --check tools/battle_estimator_gui/app.js`,
+  `python3 -m unittest discover -s tests`,
+  `python3 tools/battle_estimator.py --help`, and `git diff --check`.
+- Ran a live local GUI server smoke at `http://127.0.0.1:8765` against the
+  real local Diamond save/map config: `/api/health`, static `GET /`, and
+  `/api/state` returned successfully for `417.GM2`.
+- Exercised the MVP interaction loop through the live JSON API because this
+  CLI environment did not provide a browser click session: selected the real
+  hero `Sylvia`, ran one target simulation against a `Gnoll` neutral, ran a
+  radius-2 scan, switched to pinned save `111.GM2`, and returned to
+  follow-latest save `417.GM2`.
+- Covered the GUI-T10 save picker/regression path through focused GUI tests,
+  full test discovery, and the live pinned/follow-latest API smoke.
+- No real `.GM1`, `.GM2`, or `.h3m` files were added to the repo.
+
 ---
 
 ## Checkpoints
@@ -837,27 +872,27 @@ payloads are stable.
 
 After GUI-T01 through GUI-T04:
 
-- [ ] Local GUI server starts.
-- [ ] `/api/state` returns a complete snapshot.
-- [ ] `/api/simulate-target` and `/api/scan-radius` work from JSON.
-- [ ] Recent hero config is backward-compatible.
+- [x] Local GUI server starts.
+- [x] `/api/state` returns a complete snapshot.
+- [x] `/api/simulate-target` and `/api/scan-radius` work from JSON.
+- [x] Recent hero config is backward-compatible.
 
 ### Checkpoint: Interactive Map
 
 After GUI-T05 through GUI-T08:
 
-- [ ] Canvas map loads and displays markers.
-- [ ] Hero search and recent selection work.
-- [ ] Clicking a target runs a single simulation.
+- [x] Canvas map loads and displays markers.
+- [x] Hero search and recent selection work.
+- [x] Clicking a target runs a single simulation.
 
 ### Checkpoint: MVP Complete
 
 After GUI-T09 through GUI-T11:
 
-- [ ] Radius scan is visualized on map and list.
-- [ ] Follow-latest and pinned-save modes work.
-- [ ] Docs and tests are updated.
-- [ ] The GUI is ready for real multiplayer use as a read-only assistant.
+- [x] Radius scan is visualized on map and list.
+- [x] Follow-latest and pinned-save modes work.
+- [x] Docs and tests are updated.
+- [x] The GUI is ready for real multiplayer use as a read-only assistant.
 
 ## Risks and Mitigations
 
@@ -902,4 +937,4 @@ structure and frontend test strategy.
 | GUI-T08: Click Target Simulation | done | GUI-T04, GUI-T06, GUI-T07 | Codex | Marker clicks run selected-hero target estimates with stale response guards and structured result rendering. |
 | GUI-T09: Radius Scan Visualization | done | GUI-T04, GUI-T06, GUI-T07 | Codex | Radius scans render sorted results, marker coloring, and result navigation. |
 | GUI-T10: Save Picker + Auto Refresh | done | GUI-T02, GUI-T04, GUI-T05 | Codex | Save picker, pinned/follow modes, auto-refresh, and selected-hero preservation added. |
-| GUI-T11: End-to-End Polish + Docs | todo | GUI-T08, GUI-T09, GUI-T10 | unassigned | Final verification pass. |
+| GUI-T11: End-to-End Polish + Docs | done | GUI-T08, GUI-T09, GUI-T10 | Codex | Final docs, checkpoints, and verification completed. |

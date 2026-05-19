@@ -153,8 +153,49 @@ Known scan limitations:
 - unsupported H3M DEF/template mappings are listed with an unsupported note
   instead of being silently mapped to the wrong creature.
 
-This terminal wizard is the Phase 1 substitute for GUI. A separate GUI is out
-of scope until the parser and CLI behavior are stable.
+### Local GUI Extension
+
+Phase 3 adds a local browser GUI over the same save, map, scan, and battle
+estimation services:
+
+```bash
+python3 tools/battle_estimator_gui.py
+```
+
+The server binds to `127.0.0.1` by default and prints the local URL to open,
+for example:
+
+```text
+http://127.0.0.1:8765
+```
+
+The GUI is a read-only assistant for the current local game files:
+
+- the status bar shows follow-latest or pinned-save mode, active save, active
+  map, and refresh state;
+- the save picker loads numeric saves from `/api/saves`;
+- choosing a save switches to pinned mode with `/api/save-mode`;
+- "Follow Latest" returns to follow-latest mode and auto-refreshes every
+  5 seconds when the latest numeric save changes;
+- hero search lists all detected heroes without owner/team filtering;
+- recent hero selections persist to config as `last_hero` and
+  `recent_heroes`;
+- clicking a neutral monster or another hero runs one estimate for the selected
+  hero without changing that selected hero;
+- radius scan reuses the CLI scan model and colors map markers by win
+  percentage or unsupported status.
+
+GUI limitations intentionally match the MVP scope:
+
+- `.GM1`, `.GM2`, and `.h3m` files are never edited;
+- terrain, roads, obstacles, passability, movement points, and fog of war are
+  not rendered or modeled;
+- all detected heroes are listed; owner/team detection is not implemented;
+- hero-vs-hero estimates are army-only and ignore hero stats, skills,
+  artifacts, spells, morale, luck, terrain, and tactics;
+- neutral monster counts come from the static `.h3m` base object count;
+- removed neutrals are filtered from scan results by default because the GUI
+  does not expose the CLI `--include-removed` debug option.
 
 ### Autosave Folder Selection
 
@@ -394,7 +435,7 @@ Note: hero stats, skills, artifacts, spells, morale, and luck are not modeled.
 
 ## Non-Goals For Phase 1
 
-- GUI
+- packaged GUI applications; Phase 3 provides a local browser GUI instead
 - owner/team detection
 - map object or neutral stack parsing
 - enemy hero parsing
