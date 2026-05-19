@@ -404,6 +404,11 @@ select:disabled {
   margin: 0;
 }
 
+.toggle-control:has(input:disabled) {
+  cursor: default;
+  opacity: 0.62;
+}
+
 .map-stage {
   position: relative;
   display: grid;
@@ -454,6 +459,53 @@ select:disabled {
 
 .map-tooltip[hidden] {
   display: none;
+}
+
+.target-context-menu {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  min-width: 168px;
+  max-width: min(260px, calc(100% - 16px));
+  padding: 5px;
+  border: 1px solid #9aa5b3;
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(24, 36, 52, 0.2);
+}
+
+.target-context-menu[hidden] {
+  display: none;
+}
+
+.target-context-menu button {
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #1f2937;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.target-context-menu button:hover,
+.target-context-menu button:focus-visible {
+  background: #e7eef7;
+  outline: none;
+}
+
+.context-menu-title {
+  max-width: 100%;
+  padding: 6px 9px;
+  overflow: hidden;
+  border-bottom: 1px solid #e0e5ec;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .map-overlay {

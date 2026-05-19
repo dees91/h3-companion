@@ -9,7 +9,7 @@ import json
 import re
 import threading
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from importlib import import_module
 from pathlib import Path
@@ -48,6 +48,7 @@ GAME_FOLDER_DATE_PATTERN = re.compile(
     r"(?P<hour>\d{2})[;:](?P<minute>\d{2})(?:\b|$)"
 )
 NUMERIC_SAVE_PATTERN = re.compile(r"^(?P<number>\d+)\.(?P<ext>gm[12])$", re.I)
+HIDDEN_NEUTRAL_TARGET_PATTERN = re.compile(r"^neutral:(?P<object_index>\d+)$")
 HERO_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9 '\-]{0,12}$")
 HERO_NAME_FIRST_CHARS = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 HERO_NAME_REST_CHARS = HERO_NAME_FIRST_CHARS + b"0123456789 '-"
@@ -115,6 +116,9 @@ class BattleEstimatorConfig:
     autosave_dir: Path | None = None
     last_hero: str | None = None
     recent_heroes: tuple[str, ...] = ()
+    hidden_neutral_targets_by_map: dict[str, tuple[str, ...]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True)
@@ -409,6 +413,10 @@ def load_config(config_path: str | Path = CONFIG_PATH) -> BattleEstimatorConfig:
         autosave_dir=_read_optional_path(data, "autosave_dir", path),
         last_hero=_read_optional_text(data, "last_hero", path),
         recent_heroes=_read_recent_heroes(data, path),
+        hidden_neutral_targets_by_map=_read_hidden_neutral_targets_by_map(
+            data,
+            path,
+        ),
     )
 
 
@@ -446,6 +454,7 @@ def set_config_autosave_dir(
         autosave_dir=autosave_path,
         last_hero=current.last_hero,
         recent_heroes=current.recent_heroes,
+        hidden_neutral_targets_by_map=current.hidden_neutral_targets_by_map,
     )
     save_config(updated, config_path)
     return updated
@@ -461,6 +470,7 @@ def clear_config_autosave_dir(
         autosave_dir=None,
         last_hero=current.last_hero,
         recent_heroes=current.recent_heroes,
+        hidden_neutral_targets_by_map=current.hidden_neutral_targets_by_map,
     )
     save_config(updated, config_path)
     return updated
@@ -478,6 +488,7 @@ def set_config_last_hero(
         autosave_dir=current.autosave_dir,
         last_hero=normalized_hero or None,
         recent_heroes=current.recent_heroes,
+        hidden_neutral_targets_by_map=current.hidden_neutral_targets_by_map,
     )
     save_config(updated, config_path)
     return updated
@@ -506,6 +517,58 @@ def set_config_selected_hero(
         autosave_dir=current.autosave_dir,
         last_hero=normalized_hero or None,
         recent_heroes=recent_heroes,
+        hidden_neutral_targets_by_map=current.hidden_neutral_targets_by_map,
+    )
+    save_config(updated, config_path)
+    return updated
+
+
+def set_config_hidden_neutral_target(
+    map_key: str,
+    target_id: str,
+    hidden: bool,
+    config_path: str | Path = CONFIG_PATH,
+) -> BattleEstimatorConfig:
+    """Persist one hidden-neutral setting while preserving other config values."""
+
+    normalized_map_key = map_key.strip() if isinstance(map_key, str) else ""
+    if not normalized_map_key:
+        raise ConfigError(config_path, "invalid map_key: value must not be blank")
+
+    normalized_target_id = _normalize_hidden_neutral_target_id(target_id)
+    if normalized_target_id is None:
+        raise ConfigError(
+            config_path,
+            "invalid target_id: expected neutral:<object_index>",
+        )
+
+    current = load_config(config_path)
+    hidden_by_map = {
+        key: tuple(values)
+        for key, values in current.hidden_neutral_targets_by_map.items()
+    }
+    current_targets = list(hidden_by_map.get(normalized_map_key, ()))
+    if hidden:
+        if normalized_target_id not in current_targets:
+            current_targets.append(normalized_target_id)
+    else:
+        current_targets = [
+            candidate
+            for candidate in current_targets
+            if candidate != normalized_target_id
+        ]
+
+    normalized_targets = _normalize_hidden_neutral_target_ids(current_targets)
+    if normalized_targets:
+        hidden_by_map[normalized_map_key] = normalized_targets
+    else:
+        hidden_by_map.pop(normalized_map_key, None)
+
+    updated = BattleEstimatorConfig(
+        autosave_dir=current.autosave_dir,
+        last_hero=current.last_hero,
+        recent_heroes=current.recent_heroes,
+        hidden_neutral_targets_by_map=hidden_by_map,
     )
     save_config(updated, config_path)
     return updated
@@ -1372,6 +1435,79 @@ def _read_recent_heroes(data: dict, path: Path) -> tuple[str, ...]:
     return tuple(recent_heroes)
 
 
+def _read_hidden_neutral_targets_by_map(data: dict, path: Path) -> dict[str, tuple[str, ...]]:
+    value = data.get("hidden_neutral_targets_by_map")
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError(
+            path,
+            "invalid config: hidden_neutral_targets_by_map must be an object",
+        )
+
+    hidden_by_map = {}
+    for raw_map_key, raw_targets in value.items():
+        if not isinstance(raw_map_key, str):
+            raise ConfigError(
+                path,
+                "invalid config: hidden_neutral_targets_by_map keys must be strings",
+            )
+        map_key = raw_map_key.strip()
+        if not map_key:
+            continue
+        if not isinstance(raw_targets, list):
+            raise ConfigError(
+                path,
+                f"invalid config: hidden_neutral_targets_by_map[{raw_map_key!r}] must be a list",
+            )
+        for index, item in enumerate(raw_targets):
+            if not isinstance(item, str):
+                raise ConfigError(
+                    path,
+                    "invalid config: "
+                    f"hidden_neutral_targets_by_map[{raw_map_key!r}][{index}] "
+                    "must be a string",
+                )
+        normalized_targets = _normalize_hidden_neutral_target_ids(raw_targets)
+        if normalized_targets:
+            hidden_by_map[map_key] = normalized_targets
+    return hidden_by_map
+
+
+def _normalize_hidden_neutral_target_ids(values) -> tuple[str, ...]:
+    normalized = {}
+    for item in values:
+        if not isinstance(item, str):
+            continue
+        target_id = _normalize_hidden_neutral_target_id(item)
+        if target_id is not None:
+            normalized[target_id] = _hidden_neutral_target_sort_key(target_id)
+    return tuple(
+        target_id
+        for target_id, _ in sorted(
+            normalized.items(),
+            key=lambda item: item[1],
+        )
+    )
+
+
+def _normalize_hidden_neutral_target_id(value: str) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    match = HIDDEN_NEUTRAL_TARGET_PATTERN.fullmatch(normalized)
+    if match is None:
+        return None
+    return f"neutral:{int(match.group('object_index'))}"
+
+
+def _hidden_neutral_target_sort_key(target_id: str) -> tuple[int, str]:
+    match = HIDDEN_NEUTRAL_TARGET_PATTERN.fullmatch(target_id)
+    if match is None:
+        return (MAX_REMOVED_NEUTRAL_OBJECT_INDEX + 1, target_id)
+    return (int(match.group("object_index")), target_id)
+
+
 def _prepend_recent_hero(
     hero_name: str,
     recent_heroes,
@@ -1398,4 +1534,13 @@ def _config_to_json(config: BattleEstimatorConfig) -> dict:
         data["last_hero"] = config.last_hero
     if config.recent_heroes:
         data["recent_heroes"] = list(config.recent_heroes)
+    hidden_neutral_targets_by_map = {
+        map_key: list(target_ids)
+        for map_key, target_ids in sorted(
+            config.hidden_neutral_targets_by_map.items()
+        )
+        if target_ids
+    }
+    if hidden_neutral_targets_by_map:
+        data["hidden_neutral_targets_by_map"] = hidden_neutral_targets_by_map
     return data

@@ -21,8 +21,10 @@
     objectCount: document.getElementById("object-count"),
     mapLevelControl: document.getElementById("map-level-control"),
     showRemovedToggle: document.getElementById("show-removed-toggle"),
+    showHiddenToggle: document.getElementById("show-hidden-toggle"),
     mapStage: document.getElementById("map-stage"),
     mapTooltip: document.getElementById("map-tooltip"),
+    targetContextMenu: document.getElementById("target-context-menu"),
     mapOverlayTitle: document.getElementById("map-overlay-title"),
     mapOverlayDetail: document.getElementById("map-overlay-detail"),
     targetState: document.getElementById("target-state"),
@@ -47,6 +49,7 @@
     pan: { x: 0, y: 0 },
     level: 0,
     showRemovedNeutrals: false,
+    showHiddenNeutrals: false,
     markers: [],
     hoveredMarkerId: null,
     activeMarkerId: null,
@@ -82,6 +85,8 @@
     gameFolderListRequestId: 0,
     gameFolderRequestId: 0,
     gameFolderInFlight: false,
+    hiddenTargetInFlight: false,
+    showHiddenInFlight: false,
     saveModeInFlight: false,
     autoRefreshRunning: false,
     autoRefreshTimer: null
@@ -167,6 +172,7 @@
       || current.map_file !== next.map_file
       || current.map_fingerprint !== next.map_fingerprint
       || current.selected_hero_id !== next.selected_hero_id
+      || current.show_hidden !== next.show_hidden
     );
   }
 
@@ -296,6 +302,9 @@
     if (marker.removed) {
       flags.push("removed");
     }
+    if (marker.hidden) {
+      flags.push("hidden");
+    }
     if (marker.unsupported) {
       flags.push("unsupported");
     }
@@ -350,6 +359,7 @@
         radius: 7,
         selected: false,
         removed: Boolean(target.removed),
+        hidden: Boolean(target.hidden),
         unsupported: target.estimator_creature_id === null,
         summary: target.removal_note || `subid ${target.h3m_subid}`
       }));
@@ -536,6 +546,56 @@
     elements.mapTooltip.hidden = false;
   }
 
+  function hideTargetContextMenu() {
+    elements.targetContextMenu.hidden = true;
+    clearNode(elements.targetContextMenu);
+  }
+
+  function showTargetContextMenu(marker, event) {
+    if (!marker || marker.type !== "neutral") {
+      hideTargetContextMenu();
+      return;
+    }
+
+    clearNode(elements.targetContextMenu);
+    const title = document.createElement("div");
+    title.className = "context-menu-title";
+    title.textContent = marker.label || marker.id;
+    title.title = markerTooltipText(marker);
+    elements.targetContextMenu.appendChild(title);
+
+    if (!marker.hidden) {
+      elements.targetContextMenu.appendChild(
+        contextMenuButton("Simulate", () => simulateTarget(marker))
+      );
+      elements.targetContextMenu.appendChild(
+        contextMenuButton("Hide", () => setHiddenNeutralTarget(marker, true))
+      );
+    } else {
+      elements.targetContextMenu.appendChild(
+        contextMenuButton("Unhide", () => setHiddenNeutralTarget(marker, false))
+      );
+    }
+
+    const stageRect = elements.mapStage.getBoundingClientRect();
+    const x = clamp(event.clientX - stageRect.left, 8, Math.max(8, stageRect.width - 180));
+    const y = clamp(event.clientY - stageRect.top, 8, Math.max(8, stageRect.height - 120));
+    elements.targetContextMenu.style.left = `${x}px`;
+    elements.targetContextMenu.style.top = `${y}px`;
+    elements.targetContextMenu.hidden = false;
+  }
+
+  function contextMenuButton(label, onClick) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      hideTargetContextMenu();
+      onClick();
+    });
+    return button;
+  }
+
   function centerOnHero(heroId) {
     const marker = mapView.markers.find((candidate) => (
       candidate.type === "hero" && candidate.id === heroId
@@ -644,7 +704,7 @@
       const scanColors = scanColorsForMarker(marker);
 
       canvasContext.save();
-      canvasContext.globalAlpha = marker.removed ? 0.45 : 1;
+      canvasContext.globalAlpha = marker.hidden ? 0.32 : (marker.removed ? 0.45 : 1);
       if (marker.type === "hero") {
         canvasContext.translate(screen.x, screen.y);
         canvasContext.rotate(Math.PI / 4);
@@ -670,11 +730,11 @@
         canvasContext.beginPath();
         canvasContext.fillStyle = scanColors
           ? scanColors.fill
-          : (marker.unsupported ? "#8b95a3" : "#c2413d");
+          : (marker.hidden ? "#64748b" : (marker.unsupported ? "#8b95a3" : "#c2413d"));
         canvasContext.strokeStyle = scanColors
           ? scanColors.stroke
-          : (marker.removed ? "#4b5563" : "#7a1f1c");
-        canvasContext.lineWidth = marker.unsupported || marker.removed ? 3 : 2;
+          : (marker.hidden ? "#334155" : (marker.removed ? "#4b5563" : "#7a1f1c"));
+        canvasContext.lineWidth = marker.unsupported || marker.removed || marker.hidden ? 3 : 2;
         canvasContext.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
         canvasContext.fill();
         canvasContext.stroke();
@@ -709,6 +769,9 @@
     }
     if (marker.removed) {
       flags.push("removed");
+    }
+    if (marker.hidden) {
+      flags.push("hidden");
     }
     if (marker.unsupported) {
       flags.push("unsupported");
@@ -863,6 +926,9 @@
     if (!selectedHeroId) {
       return { simulate: false, message: "Select a hero before simulating." };
     }
+    if (marker.hidden) {
+      return { simulate: false, message: "Hidden target is ignored." };
+    }
     if (marker.type === "hero" && marker.id === selectedHeroId) {
       return { simulate: false, message: "Selected hero is not a simulation target." };
     }
@@ -958,6 +1024,61 @@
         if (requestId === estimateState.requestId) {
           estimateState.runningTargetId = null;
         }
+      });
+  }
+
+  function setHiddenNeutralTarget(marker, hidden) {
+    if (!marker || marker.type !== "neutral" || stateRequests.hiddenTargetInFlight) {
+      return Promise.resolve();
+    }
+    stateRequests.hiddenTargetInFlight = true;
+    invalidateEstimateRequests();
+    clearScanResults("No scan results.");
+    setText(elements.refresh, hidden ? "Hiding target" : "Restoring target");
+
+    return postJson(
+      "/api/hidden-target",
+      { target_id: marker.id, hidden },
+      "hidden target update failed"
+    )
+      .then(() => loadState())
+      .catch((error) => {
+        setText(elements.refresh, `Hidden target error: ${error.message}`);
+      })
+      .finally(() => {
+        stateRequests.hiddenTargetInFlight = false;
+        syncSaveControls(mapView.snapshot);
+        syncGameFolderControls();
+      });
+  }
+
+  function setShowHiddenNeutrals(showHidden) {
+    if (stateRequests.showHiddenInFlight) {
+      return Promise.resolve();
+    }
+    stateRequests.showHiddenInFlight = true;
+    invalidateEstimateRequests();
+    clearScanResults("No scan results.");
+    setText(elements.refresh, showHidden ? "Showing hidden" : "Hiding hidden");
+    elements.showHiddenToggle.disabled = true;
+
+    return postJson(
+      "/api/show-hidden",
+      { show_hidden: showHidden },
+      "show hidden update failed"
+    )
+      .then((snapshot) => {
+        renderSnapshot(snapshot, { preserveView: true });
+      })
+      .catch((error) => {
+        elements.showHiddenToggle.checked = mapView.showHiddenNeutrals;
+        setText(elements.refresh, `Show hidden error: ${error.message}`);
+      })
+      .finally(() => {
+        stateRequests.showHiddenInFlight = false;
+        elements.showHiddenToggle.disabled = !mapView.snapshot;
+        syncSaveControls(mapView.snapshot);
+        syncGameFolderControls();
       });
   }
 
@@ -1174,6 +1295,8 @@
     return (
       stateRequests.saveModeInFlight
       || stateRequests.gameFolderInFlight
+      || stateRequests.hiddenTargetInFlight
+      || stateRequests.showHiddenInFlight
       || stateRequests.loading
     );
   }
@@ -1684,11 +1807,15 @@
     renderHeroes();
     mapView.snapshot = snapshot;
     mapView.level = nextViewState.level;
+    mapView.showHiddenNeutrals = Boolean(snapshot.show_hidden);
+    elements.showHiddenToggle.checked = mapView.showHiddenNeutrals;
+    elements.showHiddenToggle.disabled = false;
     rebuildMarkerCache(snapshot);
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
     elements.canvas.classList.remove("has-marker-hover");
     hideMapTooltip();
+    hideTargetContextMenu();
     invalidateEstimateRequests();
     setTargetDetails(null);
     if (nextViewState.preserveView) {
@@ -1732,7 +1859,10 @@
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
     elements.canvas.classList.remove("has-marker-hover");
+    elements.showHiddenToggle.checked = false;
+    elements.showHiddenToggle.disabled = true;
     hideMapTooltip();
+    hideTargetContextMenu();
     invalidateEstimateRequests();
     setTargetDetails(null);
     setEstimateMessage("No simulation run.");
@@ -1854,6 +1984,7 @@
     mapView.hoveredMarkerId = null;
     elements.canvas.classList.remove("has-marker-hover");
     hideMapTooltip();
+    hideTargetContextMenu();
     rebuildMarkerCache(mapView.snapshot);
     if (!mapView.markers.some((marker) => marker.id === mapView.activeMarkerId)) {
       mapView.activeMarkerId = null;
@@ -1861,6 +1992,10 @@
     }
     updateMapMetrics(mapView.snapshot);
     drawMap();
+  });
+
+  elements.showHiddenToggle.addEventListener("change", () => {
+    setShowHiddenNeutrals(elements.showHiddenToggle.checked);
   });
 
   elements.scanButton.addEventListener("click", () => {
@@ -1876,7 +2011,11 @@
   });
 
   elements.canvas.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
     hideMapTooltip();
+    hideTargetContextMenu();
     elements.canvas.setPointerCapture(event.pointerId);
     mapView.drag = {
       pointerId: event.pointerId,
@@ -1920,6 +2059,9 @@
   });
 
   elements.canvas.addEventListener("pointerup", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
     const point = canvasPoint(event);
     const didDrag = mapView.movedDuringDrag;
     mapView.drag = null;
@@ -1931,6 +2073,22 @@
     mapView.activeMarkerId = marker ? marker.id : null;
     setTargetDetails(marker);
     simulateTarget(marker);
+    drawMap();
+  });
+
+  elements.canvas.addEventListener("contextmenu", (event) => {
+    const point = canvasPoint(event);
+    const marker = hitTestMarker(mapView.markers, point, mapView);
+    if (!marker || marker.type !== "neutral") {
+      hideTargetContextMenu();
+      return;
+    }
+
+    event.preventDefault();
+    mapView.activeMarkerId = marker.id;
+    setTargetDetails(marker);
+    hideMapTooltip();
+    showTargetContextMenu(marker, event);
     drawMap();
   });
 
@@ -1993,6 +2151,17 @@
   };
 
   elements.showRemovedToggle.checked = mapView.showRemovedNeutrals;
+  elements.showHiddenToggle.checked = mapView.showHiddenNeutrals;
+  elements.showHiddenToggle.disabled = true;
+  elements.targetContextMenu.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  window.addEventListener("click", hideTargetContextMenu);
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      hideTargetContextMenu();
+    }
+  });
   startAutoRefresh();
   checkHealth().finally(refreshStateAndSaves);
 }());

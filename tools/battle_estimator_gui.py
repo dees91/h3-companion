@@ -78,6 +78,7 @@ class GuiAppState:
     save_file: Path | None = None
     map_file: Path | None = None
     selected_hero_id: str | None = None
+    show_hidden_neutrals: bool = False
     config_path: Path = h3_save_parser.CONFIG_PATH
     snapshot_cache: GuiDomainSnapshotCache = field(
         default_factory=GuiDomainSnapshotCache
@@ -165,6 +166,8 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             "/api/select-hero": self._api_select_hero,
             "/api/save-mode": self._api_save_mode,
             "/api/game-folder": self._api_game_folder,
+            "/api/hidden-target": self._api_hidden_target,
+            "/api/show-hidden": self._api_show_hidden,
             "/api/simulate-target": self._api_simulate_target,
             "/api/scan-radius": self._api_scan_radius,
         }
@@ -313,6 +316,38 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             self.app_state.save_file = candidate.save_file
         return _state_payload_for_app(self.app_state, domain_snapshot)
 
+    def _api_hidden_target(self, payload: dict) -> dict:
+        target_id = _required_text(payload, "target_id")
+        hidden = _optional_bool(payload, "hidden", True)
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
+        _validate_hidden_neutral_target(domain_snapshot, target_id)
+        map_key = _hidden_neutral_map_key(domain_snapshot)
+
+        with self.app_state.lock:
+            config_path = self.app_state.config_path
+        with self.app_state.config_lock:
+            config = h3_save_parser.set_config_hidden_neutral_target(
+                map_key,
+                target_id,
+                hidden,
+                config_path,
+            )
+
+        hidden_ids = config.hidden_neutral_targets_by_map.get(map_key, ())
+        return {
+            "map_key": map_key,
+            "target_id": target_id,
+            "hidden": target_id in hidden_ids,
+            "hidden_neutral_target_ids": list(hidden_ids),
+        }
+
+    def _api_show_hidden(self, payload: dict) -> dict:
+        show_hidden = _optional_bool(payload, "show_hidden", False)
+        with self.app_state.lock:
+            self.app_state.show_hidden_neutrals = show_hidden
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
+        return _state_payload_for_app(self.app_state, domain_snapshot)
+
     def _api_simulate_target(self, payload: dict) -> dict:
         hero_id = _required_text(payload, "hero_id")
         target_id = _required_text(payload, "target_id")
@@ -325,10 +360,16 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         )
         domain_snapshot = _domain_snapshot_for_app(self.app_state)
         selected_hero = _request_hero_by_id(self.app_state, domain_snapshot, hero_id)
+        hidden_ids = _hidden_neutral_target_ids_for_snapshot(
+            self.app_state,
+            domain_snapshot,
+        )
         scan_target, resolved_target_id = _single_scan_target(
             domain_snapshot,
             selected_hero,
             target_id,
+            hidden_neutral_target_ids=hidden_ids,
+            include_hidden_neutrals=_show_hidden_neutrals_for_app(self.app_state),
         )
         estimate = battle_estimator.estimate_nearby_scan_targets(
             selected_hero,
@@ -362,6 +403,10 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         include_removed = _optional_bool(payload, "include_removed", False)
         domain_snapshot = _domain_snapshot_for_app(self.app_state)
         selected_hero = _request_hero_by_id(self.app_state, domain_snapshot, hero_id)
+        hidden_ids = _hidden_neutral_target_ids_for_snapshot(
+            self.app_state,
+            domain_snapshot,
+        )
         hero_targets = h3_save_parser.build_other_hero_targets(
             domain_snapshot.heroes,
             selected_hero,
@@ -369,7 +414,10 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         )
         scan_targets = battle_estimator.build_nearby_scan_targets(
             selected_hero,
-            neutral_targets=domain_snapshot.neutral_targets,
+            neutral_targets=_filter_hidden_neutral_targets(
+                domain_snapshot.neutral_targets,
+                hidden_ids,
+            ),
             hero_targets=hero_targets,
             removed_records=domain_snapshot.removed_records,
             radius=radius,
@@ -413,6 +461,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
                 save_file=self.app_state.save_file,
                 map_file=self.app_state.map_file,
                 selected_hero_id=self.app_state.selected_hero_id,
+                show_hidden_neutrals=self.app_state.show_hidden_neutrals,
                 config_path=self.app_state.config_path,
                 snapshot_cache=self.app_state.snapshot_cache,
                 removed_neutral_cache=self.app_state.removed_neutral_cache,
@@ -804,7 +853,7 @@ def _serialize_hero_stack(stack) -> dict:
     }
 
 
-def _serialize_neutral_target(target) -> dict:
+def _serialize_neutral_target(target, hidden: bool = False) -> dict:
     return {
         "id": _neutral_target_id(target),
         "object_index": target.object_index,
@@ -819,6 +868,7 @@ def _serialize_neutral_target(target) -> dict:
         "estimator_creature_id": target.estimator_creature_id,
         "removed": target.removed,
         "removal_note": target.removal_note,
+        "hidden": hidden,
     }
 
 
@@ -852,15 +902,89 @@ def _state_payload_for_app(
     domain_snapshot: DomainSnapshot,
 ) -> dict:
     config = h3_save_parser.load_config(_snapshot_kwargs_for_state(app_state)["config_path"])
+    show_hidden = _show_hidden_neutrals_for_app(app_state)
+    hidden_ids = _hidden_neutral_target_ids_for_config(config, domain_snapshot)
     selected_hero_id = _resolve_selected_hero_id_for_app(
         app_state,
         domain_snapshot,
         config.last_hero,
     )
     payload = dict(domain_snapshot.state)
+    payload["neutral_targets"] = _serialize_visible_neutral_targets(
+        domain_snapshot.visible_neutral_targets,
+        hidden_ids,
+        include_hidden=show_hidden,
+    )
     payload["selected_hero_id"] = selected_hero_id
     payload["recent_heroes"] = list(config.recent_heroes)
+    payload["show_hidden"] = show_hidden
+    payload["hidden_neutral_target_ids"] = list(hidden_ids)
     return payload
+
+
+def _serialize_visible_neutral_targets(
+    neutral_targets,
+    hidden_ids,
+    include_hidden: bool,
+) -> list[dict]:
+    hidden_id_set = set(hidden_ids)
+    serialized = []
+    for target in neutral_targets:
+        target_id = _neutral_target_id(target)
+        hidden = target_id in hidden_id_set
+        if hidden and not include_hidden:
+            continue
+        serialized.append(_serialize_neutral_target(target, hidden=hidden))
+    return serialized
+
+
+def _hidden_neutral_target_ids_for_snapshot(
+    app_state: GuiAppState,
+    domain_snapshot: DomainSnapshot,
+) -> tuple[str, ...]:
+    with app_state.lock:
+        config_path = app_state.config_path
+    config = h3_save_parser.load_config(config_path)
+    return _hidden_neutral_target_ids_for_config(config, domain_snapshot)
+
+
+def _hidden_neutral_target_ids_for_config(
+    config: h3_save_parser.BattleEstimatorConfig,
+    domain_snapshot: DomainSnapshot,
+) -> tuple[str, ...]:
+    map_key = _hidden_neutral_map_key(domain_snapshot)
+    known_ids = {
+        _neutral_target_id(target)
+        for target in domain_snapshot.neutral_targets
+    }
+    return tuple(
+        target_id
+        for target_id in config.hidden_neutral_targets_by_map.get(map_key, ())
+        if target_id in known_ids
+    )
+
+
+def _hidden_neutral_map_key(domain_snapshot: DomainSnapshot) -> str:
+    fingerprint = domain_snapshot.state.get("map_fingerprint") or {}
+    return "|".join((
+        str(domain_snapshot.map_file),
+        str(fingerprint.get("size", "")),
+        str(fingerprint.get("mtime_ns", "")),
+    ))
+
+
+def _show_hidden_neutrals_for_app(app_state: GuiAppState) -> bool:
+    with app_state.lock:
+        return app_state.show_hidden_neutrals
+
+
+def _filter_hidden_neutral_targets(neutral_targets, hidden_ids) -> tuple:
+    hidden_id_set = set(hidden_ids)
+    return tuple(
+        target
+        for target in neutral_targets
+        if _neutral_target_id(target) not in hidden_id_set
+    )
 
 
 def _resolve_selected_hero_id_for_app(
@@ -1089,6 +1213,23 @@ def _required_text(payload: dict, key: str) -> str:
     return value.strip()
 
 
+def _validate_hidden_neutral_target(
+    domain_snapshot: DomainSnapshot,
+    target_id: str,
+) -> None:
+    if not re.fullmatch(r"neutral:\d+", target_id):
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            "target_id must be neutral:<object_index>",
+        )
+    known_target_ids = {
+        _neutral_target_id(target)
+        for target in domain_snapshot.neutral_targets
+    }
+    if target_id not in known_target_ids:
+        raise ApiError(HTTPStatus.NOT_FOUND, f"unknown target_id: {target_id}")
+
+
 def _bounded_int(
     payload: dict,
     key: str,
@@ -1144,9 +1285,13 @@ def _single_scan_target(
     domain_snapshot: DomainSnapshot,
     selected_hero,
     target_id: str,
+    hidden_neutral_target_ids=(),
+    include_hidden_neutrals: bool = False,
 ):
     neutral = domain_snapshot.neutral_by_id.get(target_id)
     if neutral is not None:
+        if target_id in set(hidden_neutral_target_ids) and not include_hidden_neutrals:
+            raise ApiError(HTTPStatus.NOT_FOUND, f"unknown target_id: {target_id}")
         return _scan_target_for_raw_target("neutral", selected_hero, neutral), target_id
 
     hero_target = _hero_target_by_id(

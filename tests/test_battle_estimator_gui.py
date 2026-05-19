@@ -196,6 +196,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "selected_hero_id",
             "estimator_creature_id",
             "removed",
+            "hidden",
             "heroSearch",
             "filterHeroesForQuery",
             "matchRecentHeroName",
@@ -212,11 +213,15 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "ambiguous in this snapshot",
             "is not in this snapshot",
             "Selected hero is not a simulation target.",
+            "Hidden target is ignored.",
             "Scan response did not match the current request.",
             'addEventListener("input"',
+            'addEventListener("contextmenu"',
             '"/api/select-hero"',
             '"/api/simulate-target"',
             '"/api/scan-radius"',
+            '"/api/hidden-target"',
+            '"/api/show-hidden"',
             '"/api/saves"',
             '"/api/save-mode"',
             '"/api/game-folders"',
@@ -224,6 +229,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "gameFolderPath",
             "gameFolderInFlight",
             "showFollowLatestDialog",
+            "showHiddenToggle",
+            "targetContextMenu",
+            "hiddenTargetInFlight",
+            "showHiddenInFlight",
             "use_latest_game_folder",
             "AUTO_REFRESH_MS = 5000",
             "AUTO_REFRESH_ENABLED = false",
@@ -252,8 +261,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="follow-cancel-button"',
             'id="map-level-control"',
             'id="show-removed-toggle"',
+            'id="show-hidden-toggle"',
             'id="map-stage"',
             'id="map-tooltip"',
+            'id="target-context-menu"',
             'id="scan-radius"',
             'id="scan-target-type"',
             'id="scan-button"',
@@ -277,6 +288,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".segmented-control",
             ".toggle-control",
             ".map-tooltip",
+            ".target-context-menu",
+            ".context-menu-title",
             "#battle-map",
             "width: 100%;",
             "height: calc(100vh - 73px);",
@@ -537,6 +550,10 @@ assert.deepStrictEqual(
 assert.deepStrictEqual(
   helpers.simulationClickDecision({{ type: "neutral", id: "neutral:0" }}, "hero:256"),
   {{ simulate: true, message: "" }}
+);
+assert.deepStrictEqual(
+  helpers.simulationClickDecision({{ type: "neutral", id: "neutral:0", hidden: true }}, "hero:256"),
+  {{ simulate: false, message: "Hidden target is ignored." }}
 );
 assert.strictEqual(
   helpers.isFreshEstimatePayload({{ hero_id: "hero:256" }}, 7, 7, "hero:256"),
@@ -1183,6 +1200,114 @@ assert.strictEqual(
 
             self._with_server(check, app_state=app_state)
 
+    def test_hidden_neutral_target_api_filters_state_and_scan_per_map(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra", position=(39, 69, 1))
+            map_path = _write_h3m_map(temp_path / "map.h3m", position=(39, 70, 1))
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, state = self._get_json(base_url, "/api/state")
+                self.assertEqual(status, 200)
+                self.assertEqual([target["id"] for target in state["neutral_targets"]], ["neutral:0"])
+                self.assertFalse(state["neutral_targets"][0]["hidden"])
+                self.assertFalse(state["show_hidden"])
+                self.assertEqual(state["hidden_neutral_target_ids"], [])
+
+                status, _, hidden_payload = self._post_json(
+                    base_url,
+                    "/api/hidden-target",
+                    {"target_id": "neutral:0", "hidden": True},
+                )
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+                map_key = hidden_payload["map_key"]
+
+                self.assertEqual(status, 200)
+                self.assertTrue(hidden_payload["hidden"])
+                self.assertEqual(hidden_payload["hidden_neutral_target_ids"], ["neutral:0"])
+                self.assertEqual(
+                    config.hidden_neutral_targets_by_map[map_key],
+                    ("neutral:0",),
+                )
+
+                _, state = self._get_json(base_url, "/api/state")
+                self.assertEqual(state["neutral_targets"], [])
+                self.assertFalse(state["show_hidden"])
+                self.assertEqual(state["hidden_neutral_target_ids"], ["neutral:0"])
+
+                with self.assertRaises(HTTPError) as hidden_simulation:
+                    self._post_json(
+                        base_url,
+                        "/api/simulate-target",
+                        {"hero_id": "hero:256", "target_id": "neutral:0"},
+                    )
+                self.assertEqual(hidden_simulation.exception.code, 404)
+
+                with patch.object(
+                    battle_estimator_gui.battle_estimator,
+                    "run_simulations",
+                    return_value=91.5,
+                ) as run_mock:
+                    _, _, scan_payload = self._post_json(
+                        base_url,
+                        "/api/scan-radius",
+                        {
+                            "hero_id": "hero:256",
+                            "radius": 2,
+                            "target_type": "neutral",
+                            "simulations": 7,
+                        },
+                    )
+                self.assertEqual(scan_payload["results"], [])
+                run_mock.assert_not_called()
+
+                status, _, shown_state = self._post_json(
+                    base_url,
+                    "/api/show-hidden",
+                    {"show_hidden": True},
+                )
+                self.assertEqual(status, 200)
+                self.assertTrue(shown_state["show_hidden"])
+                self.assertEqual([target["id"] for target in shown_state["neutral_targets"]], ["neutral:0"])
+                self.assertTrue(shown_state["neutral_targets"][0]["hidden"])
+
+                with patch.object(
+                    battle_estimator_gui.battle_estimator,
+                    "run_simulations",
+                    return_value=91.5,
+                ) as run_mock:
+                    _, _, scan_payload = self._post_json(
+                        base_url,
+                        "/api/scan-radius",
+                        {
+                            "hero_id": "hero:256",
+                            "radius": 2,
+                            "target_type": "neutral",
+                            "simulations": 7,
+                        },
+                    )
+                self.assertEqual(scan_payload["results"], [])
+                run_mock.assert_not_called()
+
+                status, _, unhidden_payload = self._post_json(
+                    base_url,
+                    "/api/hidden-target",
+                    {"target_id": "neutral:0", "hidden": False},
+                )
+                self.assertEqual(status, 200)
+                self.assertFalse(unhidden_payload["hidden"])
+                self.assertEqual(unhidden_payload["hidden_neutral_target_ids"], [])
+
+            self._with_server(check, app_state=app_state)
+
     def test_simulate_target_endpoint_supports_hero_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -1359,6 +1484,17 @@ assert.strictEqual(
                         },
                     )
                 self.assertEqual(invalid_simulations.exception.code, 400)
+
+                with self.assertRaises(HTTPError) as invalid_hidden_target:
+                    self._post_json(
+                        base_url,
+                        "/api/hidden-target",
+                        {
+                            "target_id": "hero:256",
+                            "hidden": True,
+                        },
+                    )
+                self.assertEqual(invalid_hidden_target.exception.code, 400)
 
             self._with_server(check, app_state=app_state)
 

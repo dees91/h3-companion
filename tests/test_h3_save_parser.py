@@ -813,6 +813,7 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(loaded.autosave_dir, autosave_dir)
         self.assertIsNone(loaded.last_hero)
         self.assertEqual(loaded.recent_heroes, ())
+        self.assertEqual(loaded.hidden_neutral_targets_by_map, {})
 
     def test_clear_config_autosave_dir_removes_key_and_preserves_last_hero(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -845,6 +846,9 @@ class H3SaveParserContractTests(unittest.TestCase):
                 h3_save_parser.BattleEstimatorConfig(
                     autosave_dir=Path(temp_dir) / "game",
                     recent_heroes=("Marius",),
+                    hidden_neutral_targets_by_map={
+                        "map-key": ("neutral:1",),
+                    },
                 ),
                 config_path,
             )
@@ -856,6 +860,93 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(loaded.last_hero, "Isra")
         self.assertEqual(loaded.autosave_dir, Path(temp_dir) / "game")
         self.assertEqual(loaded.recent_heroes, ("Marius",))
+        self.assertEqual(
+            updated.hidden_neutral_targets_by_map,
+            {"map-key": ("neutral:1",)},
+        )
+
+    def test_config_hidden_neutral_targets_round_trip_and_normalize(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "hidden_neutral_targets_by_map": {
+                        " map-key ": [
+                            "neutral:10",
+                            " neutral:2 ",
+                            "neutral:2",
+                            "hero:1",
+                            "",
+                            "neutral:001",
+                        ],
+                        "blank-after-normalize": ["hero:9", " "],
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            config = h3_save_parser.load_config(config_path)
+            h3_save_parser.save_config(config, config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            config.hidden_neutral_targets_by_map,
+            {"map-key": ("neutral:1", "neutral:2", "neutral:10")},
+        )
+        self.assertEqual(
+            raw_config["hidden_neutral_targets_by_map"]["map-key"],
+            ["neutral:1", "neutral:2", "neutral:10"],
+        )
+        self.assertNotIn(
+            "blank-after-normalize",
+            raw_config["hidden_neutral_targets_by_map"],
+        )
+
+    def test_set_config_hidden_neutral_target_updates_one_map(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    autosave_dir=Path(temp_dir) / "game",
+                    last_hero="Isra",
+                    recent_heroes=("Isra",),
+                    hidden_neutral_targets_by_map={
+                        "other-map": ("neutral:9",),
+                    },
+                ),
+                config_path,
+            )
+
+            first = h3_save_parser.set_config_hidden_neutral_target(
+                " map-key ",
+                " neutral:002 ",
+                True,
+                config_path,
+            )
+            second = h3_save_parser.set_config_hidden_neutral_target(
+                "map-key",
+                "neutral:1",
+                True,
+                config_path,
+            )
+            cleared = h3_save_parser.set_config_hidden_neutral_target(
+                "map-key",
+                "neutral:2",
+                False,
+                config_path,
+            )
+            loaded = h3_save_parser.load_config(config_path)
+
+        self.assertEqual(first.hidden_neutral_targets_by_map["map-key"], ("neutral:2",))
+        self.assertEqual(
+            second.hidden_neutral_targets_by_map["map-key"],
+            ("neutral:1", "neutral:2"),
+        )
+        self.assertEqual(cleared.hidden_neutral_targets_by_map["map-key"], ("neutral:1",))
+        self.assertEqual(loaded.autosave_dir, Path(temp_dir) / "game")
+        self.assertEqual(loaded.last_hero, "Isra")
+        self.assertEqual(loaded.recent_heroes, ("Isra",))
+        self.assertEqual(loaded.hidden_neutral_targets_by_map["other-map"], ("neutral:9",))
 
     def test_set_config_last_hero_blank_clears_value(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1049,6 +1140,18 @@ class H3SaveParserContractTests(unittest.TestCase):
             ({"last_hero": []}, "must be a string"),
             ({"recent_heroes": "Isra"}, "must be a list"),
             ({"recent_heroes": ["Isra", 42]}, "recent_heroes[1] must be a string"),
+            (
+                {"hidden_neutral_targets_by_map": []},
+                "hidden_neutral_targets_by_map must be an object",
+            ),
+            (
+                {"hidden_neutral_targets_by_map": {"map": "neutral:1"}},
+                "hidden_neutral_targets_by_map['map'] must be a list",
+            ),
+            (
+                {"hidden_neutral_targets_by_map": {"map": ["neutral:1", 2]}},
+                "hidden_neutral_targets_by_map['map'][1] must be a string",
+            ),
         )
         for data, expected_reason in cases:
             with self.subTest(data=data):
