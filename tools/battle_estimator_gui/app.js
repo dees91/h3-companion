@@ -7,6 +7,9 @@
     save: document.getElementById("save-status"),
     map: document.getElementById("map-status"),
     refresh: document.getElementById("refresh-status"),
+    gameFolderPicker: document.getElementById("game-folder-picker"),
+    gameFolderPath: document.getElementById("game-folder-path"),
+    useGameFolderButton: document.getElementById("use-game-folder-button"),
     savePicker: document.getElementById("save-picker"),
     followLatestButton: document.getElementById("follow-latest-button"),
     refreshButton: document.getElementById("refresh-button"),
@@ -29,7 +32,11 @@
     scanButton: document.getElementById("scan-button"),
     scanState: document.getElementById("scan-state"),
     canvas: document.getElementById("battle-map"),
-    zoom: document.getElementById("zoom-status")
+    zoom: document.getElementById("zoom-status"),
+    followLatestDialog: document.getElementById("follow-latest-dialog"),
+    followCurrentFolderButton: document.getElementById("follow-current-folder-button"),
+    followLatestFolderButton: document.getElementById("follow-latest-folder-button"),
+    followCancelButton: document.getElementById("follow-cancel-button")
   };
   const canvasContext = elements.canvas.getContext("2d");
   const mapView = {
@@ -72,6 +79,9 @@
     loadingEpoch: 0,
     saveListRequestId: 0,
     saveModeRequestId: 0,
+    gameFolderListRequestId: 0,
+    gameFolderRequestId: 0,
+    gameFolderInFlight: false,
     saveModeInFlight: false,
     autoRefreshRunning: false,
     autoRefreshTimer: null
@@ -1153,23 +1163,36 @@
     return option;
   }
 
+  function gameFolderOption(value, text) {
+    const option = document.createElement("option");
+    option.value = value || "";
+    option.textContent = text;
+    return option;
+  }
+
+  function controlsBusy() {
+    return (
+      stateRequests.saveModeInFlight
+      || stateRequests.gameFolderInFlight
+      || stateRequests.loading
+    );
+  }
+
   function syncSaveControls(snapshot) {
     const current = snapshot || mapView.snapshot;
     const mode = current ? current.mode : null;
     const hasSaveOptions = elements.savePicker.options.length > 1;
+    const busy = controlsBusy();
     elements.followLatestButton.disabled = (
       !current
-      || mode === FOLLOW_LATEST_MODE
-      || stateRequests.saveModeInFlight
-      || stateRequests.loading
+      || busy
     );
     elements.savePicker.disabled = (
       !current
       || !hasSaveOptions
-      || stateRequests.saveModeInFlight
-      || stateRequests.loading
+      || busy
     );
-    elements.refreshButton.disabled = stateRequests.saveModeInFlight || stateRequests.loading;
+    elements.refreshButton.disabled = busy;
     if (!current) {
       elements.savePicker.value = "";
       return;
@@ -1187,6 +1210,14 @@
       return;
     }
     elements.savePicker.value = "";
+  }
+
+  function syncGameFolderControls() {
+    const busy = controlsBusy();
+    const path = String(elements.gameFolderPath.value || "").trim();
+    elements.gameFolderPicker.disabled = busy || elements.gameFolderPicker.options.length <= 1;
+    elements.gameFolderPath.disabled = busy;
+    elements.useGameFolderButton.disabled = busy || !path;
   }
 
   function renderSaveOptions(payload) {
@@ -1207,6 +1238,30 @@
       elements.savePicker.appendChild(savePickerOption(save.path, label));
     });
     syncSaveControls(mapView.snapshot);
+  }
+
+  function renderGameFolderOptions(payload) {
+    const folders = payload && payload.game_folders ? payload.game_folders : [];
+    const activePath = payload && payload.active_autosave_dir ? payload.active_autosave_dir : "";
+    clearNode(elements.gameFolderPicker);
+    if (activePath) {
+      elements.gameFolderPath.value = activePath;
+    }
+    if (folders.length === 0) {
+      elements.gameFolderPicker.appendChild(gameFolderOption("", "No game folders"));
+      syncGameFolderControls();
+      return;
+    }
+
+    elements.gameFolderPicker.appendChild(gameFolderOption("", "Detected folders..."));
+    folders.forEach((folder) => {
+      const label = folder.path === activePath
+        ? `${folder.name} (${folder.save_count} saves, active)`
+        : `${folder.name} (${folder.save_count} saves)`;
+      elements.gameFolderPicker.appendChild(gameFolderOption(folder.path, label));
+    });
+    elements.gameFolderPicker.value = activePath;
+    syncGameFolderControls();
   }
 
   function loadSaves() {
@@ -1230,15 +1285,45 @@
       });
   }
 
+  function loadGameFolders() {
+    const requestId = stateRequests.gameFolderListRequestId + 1;
+    stateRequests.gameFolderListRequestId = requestId;
+    return getJson("/api/game-folders", "game folders request failed")
+      .then((payload) => {
+        if (requestId !== stateRequests.gameFolderListRequestId) {
+          return;
+        }
+        renderGameFolderOptions(payload);
+      })
+      .catch((error) => {
+        if (requestId !== stateRequests.gameFolderListRequestId) {
+          return;
+        }
+        clearNode(elements.gameFolderPicker);
+        elements.gameFolderPicker.appendChild(gameFolderOption("", "Unable to load folders"));
+        elements.gameFolderPicker.disabled = true;
+        setText(elements.refresh, `Game folder list error: ${error.message}`);
+        syncGameFolderControls();
+      });
+  }
+
+  function refreshLists() {
+    return Promise.all([loadSaves(), loadGameFolders()]);
+  }
+
   function switchSaveMode(mode, saveFile) {
     if (mode === PINNED_MODE && !saveFile) {
       return;
+    }
+    if (stateRequests.gameFolderInFlight) {
+      return Promise.resolve();
     }
     const requestId = stateRequests.saveModeRequestId + 1;
     const epoch = nextStateEpoch();
     stateRequests.saveModeRequestId = requestId;
     stateRequests.saveModeInFlight = true;
     syncSaveControls(mapView.snapshot);
+    syncGameFolderControls();
     setText(elements.refresh, mode === PINNED_MODE ? "Pinning save" : "Following latest");
 
     const payload = mode === PINNED_MODE
@@ -1254,7 +1339,7 @@
         }
         renderSnapshot(snapshot);
         setText(elements.refresh, "Loaded");
-        return loadSaves();
+        return refreshLists();
       })
       .catch((error) => {
         if (requestId === stateRequests.saveModeRequestId) {
@@ -1265,15 +1350,54 @@
         if (requestId === stateRequests.saveModeRequestId) {
           stateRequests.saveModeInFlight = false;
           syncSaveControls(mapView.snapshot);
+          syncGameFolderControls();
+        }
+      });
+  }
+
+  function switchGameFolder(payload, statusText) {
+    if (stateRequests.saveModeInFlight || stateRequests.gameFolderInFlight) {
+      return Promise.resolve();
+    }
+    const requestId = stateRequests.gameFolderRequestId + 1;
+    const epoch = nextStateEpoch();
+    stateRequests.gameFolderRequestId = requestId;
+    stateRequests.gameFolderInFlight = true;
+    syncSaveControls(mapView.snapshot);
+    syncGameFolderControls();
+    setText(elements.refresh, statusText || "Changing game folder");
+
+    return postJson("/api/game-folder", payload, "game folder request failed")
+      .then((snapshot) => {
+        if (
+          requestId !== stateRequests.gameFolderRequestId
+          || epoch !== stateRequests.epoch
+        ) {
+          return;
+        }
+        renderSnapshot(snapshot, { preserveView: false });
+        setText(elements.refresh, "Loaded");
+        return refreshLists();
+      })
+      .catch((error) => {
+        if (requestId === stateRequests.gameFolderRequestId) {
+          setText(elements.refresh, `Game folder error: ${error.message}`);
+        }
+      })
+      .finally(() => {
+        if (requestId === stateRequests.gameFolderRequestId) {
+          stateRequests.gameFolderInFlight = false;
+          syncSaveControls(mapView.snapshot);
+          syncGameFolderControls();
         }
       });
   }
 
   function refreshStateAndSaves() {
-    if (stateRequests.saveModeInFlight) {
+    if (stateRequests.saveModeInFlight || stateRequests.gameFolderInFlight) {
       return Promise.resolve();
     }
-    return loadState().then(() => loadSaves());
+    return loadState().then(() => refreshLists());
   }
 
   function autoRefreshState() {
@@ -1326,6 +1450,14 @@
       autoRefreshState,
       AUTO_REFRESH_MS
     );
+  }
+
+  function showFollowLatestDialog() {
+    elements.followLatestDialog.hidden = false;
+  }
+
+  function hideFollowLatestDialog() {
+    elements.followLatestDialog.hidden = true;
   }
 
   function matchRecentHeroName(heroes, name) {
@@ -1454,7 +1586,8 @@
 
   function nextViewStateForSnapshot(snapshot, previous) {
     const selectedHeroId = resolveSelectedHeroId(snapshot, previous.selectedHeroId);
-    const preserveView = sameMapGeometry(previous.snapshot, snapshot);
+    const preserveView = previous.preserveView !== false
+      && sameMapGeometry(previous.snapshot, snapshot);
     const level = selectedHeroId
       ? defaultLevelForSnapshot(snapshot, selectedHeroId)
       : (preserveView ? normalizeLevelForSnapshot(previous.level, snapshot) : 0);
@@ -1521,7 +1654,7 @@
       });
   }
 
-  function renderSnapshot(snapshot) {
+  function renderSnapshot(snapshot, options) {
     const nextViewState = nextViewStateForSnapshot(snapshot, {
       snapshot: mapView.snapshot,
       zoom: mapView.zoom,
@@ -1529,7 +1662,8 @@
       maxZoom: mapView.maxZoom,
       pan: mapView.pan,
       level: mapView.level,
-      selectedHeroId: heroState.selectedHeroId
+      selectedHeroId: heroState.selectedHeroId,
+      preserveView: !options || options.preserveView !== false
     });
     const heroes = snapshot.heroes || [];
     const selectedHeroId = nextViewState.selectedHeroId;
@@ -1540,6 +1674,7 @@
     setText(elements.map, fileName(snapshot.map_file));
     setText(elements.refresh, "Loaded");
     setText(elements.heroCount, `${heroes.length} heroes detected`);
+    elements.gameFolderPath.value = snapshot.autosave_dir || elements.gameFolderPath.value || "";
 
     heroState.heroes = heroes;
     heroState.recentHeroes = snapshot.recent_heroes || [];
@@ -1569,6 +1704,7 @@
     setEstimateMessage("No simulation run.");
     clearScanResults("No scan results.");
     syncSaveControls(snapshot);
+    syncGameFolderControls();
   }
 
   function renderError(message) {
@@ -1582,6 +1718,7 @@
     heroState.selectedHeroId = null;
     heroState.selectingHeroId = null;
     elements.heroSearch.disabled = true;
+    elements.gameFolderPath.value = "";
     renderRecentHeroes([]);
     appendEmpty(elements.heroList, "Unable to load heroes.");
     setText(elements.mapSummary, "Snapshot unavailable");
@@ -1601,6 +1738,7 @@
     setEstimateMessage("No simulation run.");
     clearScanResults("No scan results.");
     syncSaveControls(null);
+    syncGameFolderControls();
     drawMap();
   }
 
@@ -1613,6 +1751,7 @@
     setText(elements.refresh, "Loading");
     elements.refreshButton.disabled = true;
     syncSaveControls(mapView.snapshot);
+    syncGameFolderControls();
 
     return getJson("/api/state", "state request failed")
       .then((snapshot) => {
@@ -1631,6 +1770,7 @@
           stateRequests.loading = false;
           elements.refreshButton.disabled = false;
           syncSaveControls(mapView.snapshot);
+          syncGameFolderControls();
         }
       });
   }
@@ -1655,6 +1795,24 @@
     refreshStateAndSaves();
   });
 
+  elements.gameFolderPicker.addEventListener("change", () => {
+    if (elements.gameFolderPicker.value) {
+      elements.gameFolderPath.value = elements.gameFolderPicker.value;
+      syncGameFolderControls();
+    }
+  });
+
+  elements.gameFolderPath.addEventListener("input", () => {
+    syncGameFolderControls();
+  });
+
+  elements.useGameFolderButton.addEventListener("click", () => {
+    const autosaveDir = String(elements.gameFolderPath.value || "").trim();
+    if (autosaveDir) {
+      switchGameFolder({ autosave_dir: autosaveDir }, "Changing game folder");
+    }
+  });
+
   elements.savePicker.addEventListener("change", () => {
     const saveFile = elements.savePicker.value;
     if (saveFile) {
@@ -1663,7 +1821,27 @@
   });
 
   elements.followLatestButton.addEventListener("click", () => {
+    showFollowLatestDialog();
+  });
+
+  elements.followCurrentFolderButton.addEventListener("click", () => {
+    hideFollowLatestDialog();
     switchSaveMode(FOLLOW_LATEST_MODE);
+  });
+
+  elements.followLatestFolderButton.addEventListener("click", () => {
+    hideFollowLatestDialog();
+    switchGameFolder({ use_latest_game_folder: true }, "Switching to latest game folder");
+  });
+
+  elements.followCancelButton.addEventListener("click", () => {
+    hideFollowLatestDialog();
+  });
+
+  elements.followLatestDialog.addEventListener("click", (event) => {
+    if (event.target === elements.followLatestDialog) {
+      hideFollowLatestDialog();
+    }
   });
 
   elements.heroSearch.addEventListener("input", () => {

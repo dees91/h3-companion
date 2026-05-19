@@ -30,7 +30,12 @@
           <dd id="refresh-status">Loading</dd>
         </div>
       </dl>
-      <div class="top-actions" aria-label="Save controls">
+      <div class="top-actions" aria-label="Game and save controls">
+        <select id="game-folder-picker" aria-label="Detected game folder" disabled>
+          <option value="">Loading folders</option>
+        </select>
+        <input id="game-folder-path" type="text" aria-label="Game folder path" placeholder="Game folder path" disabled>
+        <button id="use-game-folder-button" class="secondary-button" type="button" disabled>Use Folder</button>
         <select id="save-picker" aria-label="Pinned save" disabled>
           <option value="">Loading saves</option>
         </select>
@@ -119,6 +124,18 @@
         </section>
       </aside>
     </main>
+
+    <div id="follow-latest-dialog" class="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="follow-latest-title" hidden>
+      <div class="dialog-panel">
+        <h2 id="follow-latest-title">Follow Latest</h2>
+        <p>Choose whether to follow the latest save in the current folder or switch to the newest detected game folder.</p>
+        <div class="dialog-actions">
+          <button id="follow-current-folder-button" class="secondary-button" type="button">Current Folder</button>
+          <button id="follow-latest-folder-button" class="secondary-button" type="button">Latest Game Folder</button>
+          <button id="follow-cancel-button" class="secondary-button" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
 
     <script src="/app.js"></script>
   </body>

@@ -141,6 +141,9 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         if path == "/api/saves":
             self._handle_api(lambda: self._api_saves(), send_body=send_body)
             return
+        if path == "/api/game-folders":
+            self._handle_api(lambda: self._api_game_folders(), send_body=send_body)
+            return
         if path.startswith("/api/"):
             self._send_json_error(
                 HTTPStatus.NOT_FOUND,
@@ -161,6 +164,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         routes = {
             "/api/select-hero": self._api_select_hero,
             "/api/save-mode": self._api_save_mode,
+            "/api/game-folder": self._api_game_folder,
             "/api/simulate-target": self._api_simulate_target,
             "/api/scan-radius": self._api_scan_radius,
         }
@@ -235,6 +239,36 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             "latest_save_file": latest_save,
             "saves": saves,
         }
+
+    def _api_game_folders(self) -> dict:
+        active_game_dir = _active_game_dir_for_app(self.app_state)
+        return _game_folders_payload(active_game_dir)
+
+    def _api_game_folder(self, payload: dict) -> dict:
+        if _optional_bool(payload, "use_latest_game_folder", False):
+            active_game_dir = _active_game_dir_for_app(self.app_state)
+            game_dir = _select_latest_game_folder(active_game_dir.parent)
+        else:
+            game_dir = _validate_game_dir_for_api(_required_text(payload, "autosave_dir"))
+
+        candidate = self._app_state_copy()
+        candidate.mode = FOLLOW_LATEST_MODE
+        candidate.autosave_dir = game_dir
+        candidate.save_file = None
+        candidate.selected_hero_id = None
+        domain_snapshot = _domain_snapshot_for_app(candidate)
+
+        with self.app_state.lock:
+            config_path = self.app_state.config_path
+        with self.app_state.config_lock:
+            h3_save_parser.set_config_autosave_dir(game_dir, config_path)
+        with self.app_state.lock:
+            self.app_state.mode = FOLLOW_LATEST_MODE
+            self.app_state.autosave_dir = game_dir
+            self.app_state.save_file = None
+            self.app_state.selected_hero_id = None
+        _clear_snapshot_cache(self.app_state)
+        return _state_payload_for_app(self.app_state, domain_snapshot)
 
     def _api_select_hero(self, payload: dict) -> dict:
         hero_id = _required_text(payload, "hero_id")
@@ -878,6 +912,92 @@ def _active_game_dir_for_app(app_state: GuiAppState) -> Path:
     return h3_save_parser.select_game_dir(
         autosave_root=h3_save_parser.DEFAULT_AUTOSAVE_ROOT,
     )
+
+
+def _clear_snapshot_cache(app_state: GuiAppState) -> None:
+    with app_state.snapshot_cache.lock:
+        app_state.snapshot_cache.key = None
+        app_state.snapshot_cache.snapshot = None
+
+
+def _game_folders_payload(active_game_dir: Path) -> dict:
+    autosave_root = active_game_dir.parent
+    game_folders = _list_game_folders(autosave_root)
+    return {
+        "autosave_root": str(autosave_root),
+        "active_autosave_dir": str(active_game_dir),
+        "latest_game_folder": game_folders[0]["path"] if game_folders else None,
+        "game_folders": game_folders,
+    }
+
+
+def _select_latest_game_folder(autosave_root: str | Path) -> Path:
+    game_folders = _list_game_folders(autosave_root)
+    if not game_folders:
+        root = Path(autosave_root)
+        raise h3_save_parser.SaveSelectionError(
+            root,
+            "no game folders with numeric non-symlink GM1/GM2 saves found",
+        )
+    return Path(game_folders[0]["path"])
+
+
+def _list_game_folders(autosave_root: str | Path) -> list[dict]:
+    root = Path(autosave_root).expanduser()
+    if not root.is_dir():
+        raise h3_save_parser.SaveSelectionError(
+            root,
+            "autosave root is not a directory",
+        )
+    try:
+        children = list(root.iterdir())
+    except OSError as exc:
+        raise h3_save_parser.SaveSelectionError(
+            root,
+            f"failed to list autosave root: {exc}",
+        ) from exc
+
+    dated_folders = []
+    other_folders = []
+    for child in children:
+        if child.is_symlink() or not child.is_dir():
+            continue
+        saves = _list_numeric_saves(child)
+        if not saves:
+            continue
+        latest_save = saves[-1]
+        entry = {
+            "path": str(child),
+            "name": child.name,
+            "save_count": len(saves),
+            "latest_save_file": latest_save["path"],
+        }
+        folder_date = h3_save_parser.parse_game_folder_datetime(child.name)
+        if folder_date is None:
+            other_folders.append((child.name.casefold(), entry))
+        else:
+            dated_folders.append((folder_date, child.name, entry))
+
+    dated_folders.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    other_folders.sort(key=lambda item: item[0])
+    return [item[2] for item in dated_folders] + [item[1] for item in other_folders]
+
+
+def _validate_game_dir_for_api(game_dir: str) -> Path:
+    folder = Path(game_dir).expanduser()
+    try:
+        resolved_folder = folder.resolve(strict=True)
+    except OSError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"autosave_dir is not a directory: {exc}") from exc
+    if not resolved_folder.is_dir():
+        raise ApiError(HTTPStatus.BAD_REQUEST, "autosave_dir is not a directory")
+    saves = _list_numeric_save_paths(resolved_folder)
+    if not saves:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            "autosave_dir has no numeric non-symlink GM1/GM2 saves",
+        )
+    return resolved_folder
 
 
 def _select_latest_gui_save(game_dir: str | Path) -> Path:

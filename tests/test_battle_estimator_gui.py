@@ -219,6 +219,12 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             '"/api/scan-radius"',
             '"/api/saves"',
             '"/api/save-mode"',
+            '"/api/game-folders"',
+            '"/api/game-folder"',
+            "gameFolderPath",
+            "gameFolderInFlight",
+            "showFollowLatestDialog",
+            "use_latest_game_folder",
             "AUTO_REFRESH_MS = 5000",
             "AUTO_REFRESH_ENABLED = false",
             "require manual Refresh until UX settles",
@@ -227,16 +233,23 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "FOLLOW_LATEST_MODE",
             "PINNED_MODE",
             "return Promise.resolve();",
-            "elements.refreshButton.disabled = stateRequests.saveModeInFlight || stateRequests.loading;"
+            "elements.refreshButton.disabled = busy;"
         ):
             self.assertIn(expected, app_js)
         for expected in (
+            'id="game-folder-picker"',
+            'id="game-folder-path"',
+            'id="use-game-folder-button"',
             'id="hero-search"',
             'id="recent-heroes"',
             'class="panel-section detected-heroes-section"',
             'id="hero-list"',
             'id="save-picker"',
             'id="follow-latest-button"',
+            'id="follow-latest-dialog"',
+            'id="follow-current-folder-button"',
+            'id="follow-latest-folder-button"',
+            'id="follow-cancel-button"',
             'id="map-level-control"',
             'id="show-removed-toggle"',
             'id="map-stage"',
@@ -258,6 +271,9 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".scan-result",
             ".scan-result.strong",
             ".top-actions",
+            ".dialog-backdrop",
+            ".dialog-panel",
+            ".dialog-actions",
             ".segmented-control",
             ".toggle-control",
             ".map-tooltip",
@@ -311,6 +327,7 @@ class Element {{
     this.style = {{}};
     this.textContent = "";
     this.title = "";
+    this.value = "";
     this.width = 960;
     this.classList = {{
       add() {{}},
@@ -479,6 +496,25 @@ assert.deepStrictEqual(
     selectedHeroId: "hero:1",
     preserveView: true,
     level: 1,
+    zoom: 1.7,
+    pan: {{ x: 22, y: -9 }}
+  }}
+);
+assert.deepStrictEqual(
+  helpers.nextViewStateForSnapshot(markerSnapshot, {{
+    snapshot: {{ map: {{ width: 4, height: 4, levels: 2 }} }},
+    selectedHeroId: null,
+    level: 1,
+    zoom: 1.7,
+    minZoom: 0.35,
+    maxZoom: 5,
+    pan: {{ x: 22, y: -9 }},
+    preserveView: false
+  }}),
+  {{
+    selectedHeroId: "hero:0",
+    preserveView: false,
+    level: 0,
     zoom: 1.7,
     pan: {{ x: 22, y: -9 }}
   }}
@@ -802,6 +838,179 @@ assert.strictEqual(
                 self.assertEqual(status, 200)
                 self.assertEqual(state_payload["save_file"], str(real_save))
                 self.assertNotEqual(state_payload["save_file"], str(symlink_save))
+
+            self._with_server(check, app_state=app_state)
+
+    def test_game_folders_endpoint_lists_folders_with_numeric_saves(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            root = temp_path / "autosaves"
+            root.mkdir()
+            active_dir = root / "2026.05.18 10;00 Active"
+            newer_dir = root / "2026.05.19 11;00 Newer"
+            manual_dir = root / "Manual"
+            empty_dir = root / "2026.05.20 12;00 Empty"
+            active_dir.mkdir()
+            newer_dir.mkdir()
+            manual_dir.mkdir()
+            empty_dir.mkdir()
+            active_save = _write_gui_save(active_dir, "001.GM2", hero_name="Active")
+            newer_save = _write_gui_save(newer_dir, "003.GM1", hero_name="Newer")
+            manual_save = _write_gui_save(manual_dir, "002.GM2", hero_name="Manual")
+            (root / "not-a-game.txt").write_text("ignored", encoding="utf-8")
+            (empty_dir / "autosave.GM2").write_bytes(b"ignored")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=active_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/game-folders")
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["autosave_root"], str(root))
+                self.assertEqual(payload["active_autosave_dir"], str(active_dir))
+                self.assertEqual(payload["latest_game_folder"], str(newer_dir))
+                self.assertEqual(
+                    [folder["path"] for folder in payload["game_folders"]],
+                    [str(newer_dir), str(active_dir), str(manual_dir)],
+                )
+                self.assertEqual(
+                    [folder["latest_save_file"] for folder in payload["game_folders"]],
+                    [str(newer_save), str(active_save), str(manual_save)],
+                )
+                self.assertEqual(
+                    [folder["save_count"] for folder in payload["game_folders"]],
+                    [1, 1, 1],
+                )
+
+            self._with_server(check, app_state=app_state)
+
+    def test_game_folder_endpoint_switches_folder_and_persists_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            current_dir = temp_path / "current"
+            next_dir = temp_path / "next"
+            current_dir.mkdir()
+            next_dir.mkdir()
+            _write_gui_save(current_dir, "001.GM2", hero_name="Current")
+            next_save = _write_gui_save(next_dir, "004.GM2", hero_name="Next")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                mode=battle_estimator_gui.PINNED_MODE,
+                autosave_dir=current_dir,
+                save_file=current_dir / "001.GM2",
+                map_file=map_path,
+                selected_hero_id="hero:256",
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, _, payload = self._post_json(
+                    base_url,
+                    "/api/game-folder",
+                    {"autosave_dir": str(next_dir)},
+                )
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["mode"], battle_estimator_gui.FOLLOW_LATEST_MODE)
+                self.assertEqual(payload["autosave_dir"], str(next_dir.resolve()))
+                self.assertEqual(payload["save_file"], str(next_save.resolve()))
+                self.assertIsNone(payload["selected_hero_id"])
+                self.assertEqual(config.autosave_dir, next_dir.resolve())
+                self.assertEqual(app_state.mode, battle_estimator_gui.FOLLOW_LATEST_MODE)
+                self.assertEqual(app_state.autosave_dir, next_dir.resolve())
+                self.assertIsNone(app_state.save_file)
+                self.assertIsNone(app_state.selected_hero_id)
+
+                status, saves_payload = self._get_json(base_url, "/api/saves")
+                self.assertEqual(status, 200)
+                self.assertEqual(saves_payload["autosave_dir"], str(next_dir.resolve()))
+                self.assertEqual(
+                    [save["path"] for save in saves_payload["saves"]],
+                    [str(next_save.resolve())],
+                )
+
+            self._with_server(check, app_state=app_state)
+
+    def test_game_folder_endpoint_can_switch_to_latest_game_folder(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            root = temp_path / "autosaves"
+            root.mkdir()
+            older_dir = root / "2026.05.18 10;00 Older"
+            latest_dir = root / "2026.05.19 11;00 Latest"
+            older_dir.mkdir()
+            latest_dir.mkdir()
+            _write_gui_save(older_dir, "001.GM2", hero_name="Older")
+            latest_save = _write_gui_save(latest_dir, "002.GM2", hero_name="Latest")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=older_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, _, payload = self._post_json(
+                    base_url,
+                    "/api/game-folder",
+                    {"use_latest_game_folder": True},
+                )
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["autosave_dir"], str(latest_dir))
+                self.assertEqual(payload["save_file"], str(latest_save))
+                self.assertEqual(config.autosave_dir, latest_dir)
+                self.assertEqual(app_state.autosave_dir, latest_dir)
+
+            self._with_server(check, app_state=app_state)
+
+    def test_game_folder_endpoint_rejects_invalid_folder_without_mutating_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            empty_dir = temp_path / "empty"
+            game_dir.mkdir()
+            empty_dir.mkdir()
+            save_path = _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            bad_file = temp_path / "not-folder.txt"
+            bad_file.write_text("not a folder", encoding="utf-8")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            battle_estimator_gui.h3_save_parser.set_config_autosave_dir(
+                game_dir,
+                config_path,
+            )
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                for candidate in (bad_file, empty_dir, temp_path / "missing"):
+                    with self.subTest(candidate=candidate):
+                        with self.assertRaises(HTTPError) as raised:
+                            self._post_json(
+                                base_url,
+                                "/api/game-folder",
+                                {"autosave_dir": str(candidate)},
+                            )
+
+                        self.assertEqual(raised.exception.code, 400)
+
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+                self.assertEqual(app_state.autosave_dir, game_dir)
+                self.assertEqual(config.autosave_dir, game_dir)
+                status, payload = self._get_json(base_url, "/api/state")
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["save_file"], str(save_path))
 
             self._with_server(check, app_state=app_state)
 
