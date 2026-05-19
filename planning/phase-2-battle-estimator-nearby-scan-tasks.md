@@ -514,6 +514,20 @@ identity model.
 1. Synthetic multi-hero save test.
 2. Manual local check lists nearby heroes around a known Isra save.
 
+**Completion Notes (2026-05-19):**
+- Added `HeroTarget` records with flat `x/y/z` accessors and delegated
+  `ai_value`, `total_creatures`, and `army_summary` properties.
+- Added `build_other_hero_targets()` with selected-hero exclusion, non-empty
+  army and parsed-position guards, and optional same-level filtering.
+- Added a synthetic multi-hero encoded-save test that scans hero windows,
+  selects Isra, and extracts same-level other-hero targets.
+- Verified with `python3 -m unittest tests.test_h3_save_parser`,
+  `python3 -m unittest tests.test_battle_estimator_cli`,
+  `python3 tools/battle_estimator.py --help`, `git diff --check`, and
+  `python3 -m unittest discover -s tests`.
+- Manual `415.GM2` check selected Isra at `(40,87,1)` and listed 20
+  same-level other hero targets with summaries.
+
 ---
 
 ### NS-T06: Removed Neutral Detection
@@ -712,7 +726,7 @@ H3M-to-save object identity.
 | NS-T02: H3M Neutral Monster Parser | done | NS-T01 | Codex | Sequential H3M neutral parser implemented. |
 | NS-T03: H3M Map Auto-Detection | done | NS-T01 | Codex | Map-file override and random_maps resolver implemented. |
 | NS-T04: Hero Position Parsing | done | -- | Codex | Hero x,y,z parsing implemented. |
-| NS-T05: Other Hero Target Extraction | todo | NS-T04 | unassigned | Army-only hero targets. |
+| NS-T05: Other Hero Target Extraction | done | NS-T04 | Codex | Other-hero target records implemented. |
 | NS-T06: Removed Neutral Detection | todo | NS-T02 | unassigned | Needs neutral identity model. |
 | NS-T07: Nearby Target Scan Service | blocked | NS-T02, NS-T03, NS-T04, NS-T05, NS-T06 | unassigned | Combines all inputs. |
 | NS-T08: Per-Target Estimation Runner | blocked | NS-T07 | unassigned | Compact scan estimates. |

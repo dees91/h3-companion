@@ -64,6 +64,21 @@ def _build_xor_hero_fixture(
     return bytes(data), name_offset
 
 
+def _build_multi_xor_hero_fixture(hero_specs):
+    chunks = []
+    for spec in hero_specs:
+        chunk, _ = _build_xor_hero_fixture(
+            hero_name=spec["hero_name"],
+            creature_ids=spec.get("creature_ids", ISRA_CREATURE_IDS),
+            counts=spec.get("counts", ISRA_COUNTS),
+            name_offset=spec.get("name_offset", 256),
+            position=spec.get("position"),
+        )
+        chunks.append(chunk)
+        chunks.append(b"\x00" * 64)
+    return b"".join(chunks)
+
+
 def _hero_army(hero_name, stacks, source_offset=0):
     return h3_save_parser.HeroArmy(
         hero_name=hero_name,
@@ -72,6 +87,18 @@ def _hero_army(hero_name, stacks, source_offset=0):
             for creature_id, count in stacks
         ),
         source_offset=source_offset,
+    )
+
+
+def _positioned_hero_army(hero_name, stacks, position, source_offset=0):
+    return h3_save_parser.HeroArmy(
+        hero_name=hero_name,
+        stacks=tuple(
+            h3_save_parser.HeroStack.from_creature_id(creature_id, count)
+            for creature_id, count in stacks
+        ),
+        source_offset=source_offset,
+        position=h3_save_parser.HeroPosition(*position),
     )
 
 
@@ -790,6 +817,124 @@ class H3SaveParserContractTests(unittest.TestCase):
         )
 
         self.assertEqual(relevant, (low, by_ai))
+
+    def test_build_other_hero_targets_excludes_selected_and_summarizes_targets(self):
+        selected = _positioned_hero_army(
+            "Isra",
+            [(57, 10)],
+            position=(39, 69, 1),
+            source_offset=100,
+        )
+        enemy_same_level = _positioned_hero_army(
+            "Marius",
+            [(0, 5), (1, 2)],
+            position=(47, 70, 1),
+            source_offset=200,
+        )
+        enemy_other_level = _positioned_hero_army(
+            "Underground",
+            [(2, 3)],
+            position=(40, 70, 0),
+            source_offset=300,
+        )
+        no_position = _hero_army("NoPosition", [(3, 4)], source_offset=400)
+        empty_army = h3_save_parser.HeroArmy(
+            hero_name="Empty",
+            stacks=(),
+            source_offset=500,
+            position=h3_save_parser.HeroPosition(41, 70, 1),
+        )
+        duplicate_selected_offset = _positioned_hero_army(
+            "Isra Clone",
+            [(57, 10)],
+            position=(39, 69, 1),
+            source_offset=100,
+        )
+
+        targets = h3_save_parser.build_other_hero_targets(
+            (
+                selected,
+                enemy_same_level,
+                enemy_other_level,
+                no_position,
+                empty_army,
+                duplicate_selected_offset,
+            ),
+            selected,
+            same_level_z=1,
+        )
+
+        self.assertEqual(len(targets), 1)
+        target = targets[0]
+        self.assertEqual(target.hero_name, "Marius")
+        self.assertEqual(target.position, h3_save_parser.HeroPosition(47, 70, 1))
+        self.assertEqual((target.x, target.y, target.z), (47, 70, 1))
+        self.assertIs(target.army, enemy_same_level)
+        self.assertEqual(target.total_creatures, 7)
+        self.assertEqual(target.ai_value, 630)
+        self.assertEqual(target.army_summary, "5x Pikeman, 2x Halberdier")
+
+    def test_build_other_hero_targets_can_include_other_levels(self):
+        selected = _positioned_hero_army(
+            "Isra",
+            [(57, 10)],
+            position=(39, 69, 1),
+            source_offset=100,
+        )
+        enemy_other_level = _positioned_hero_army(
+            "Underground",
+            [(2, 3)],
+            position=(40, 70, 0),
+            source_offset=300,
+        )
+
+        targets = h3_save_parser.build_other_hero_targets(
+            (selected, enemy_other_level),
+            selected,
+        )
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].hero_name, "Underground")
+        self.assertEqual(targets[0].z, 0)
+
+    def test_build_other_hero_targets_from_synthetic_multi_hero_save(self):
+        data = _build_multi_xor_hero_fixture([
+            {
+                "hero_name": "Isra",
+                "counts": (10, 0, 0, 0, 0, 0, 0),
+                "position": (39, 69, 1),
+            },
+            {
+                "hero_name": "Marius",
+                "creature_ids": (0, 1, 63, 65, 67, 56, 69),
+                "counts": (5, 2, 0, 0, 0, 0, 0),
+                "position": (47, 70, 1),
+            },
+            {
+                "hero_name": "Dace",
+                "creature_ids": (2, 59, 63, 65, 67, 56, 69),
+                "counts": (3, 0, 0, 0, 0, 0, 0),
+                "position": (40, 70, 0),
+            },
+            {
+                "hero_name": "NoPos",
+                "creature_ids": (3, 59, 63, 65, 67, 56, 69),
+                "counts": (4, 0, 0, 0, 0, 0, 0),
+            },
+        ])
+
+        heroes = h3_save_parser.scan_xor01_hero_armies(data)
+        selected = h3_save_parser.select_hero(heroes, "Isra")
+        targets = h3_save_parser.build_other_hero_targets(
+            heroes,
+            selected,
+            same_level_z=selected.z,
+        )
+
+        self.assertEqual([target.hero_name for target in targets], ["Marius"])
+        self.assertEqual((targets[0].x, targets[0].y, targets[0].z), (47, 70, 1))
+        self.assertEqual(targets[0].total_creatures, 7)
+        self.assertEqual(targets[0].army_summary, "5x Pikeman, 2x Halberdier")
 
     def test_select_hero_exact_match_is_case_insensitive(self):
         isra = _hero_army("Isra", [(57, 1)])

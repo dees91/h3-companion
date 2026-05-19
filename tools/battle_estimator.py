@@ -841,10 +841,7 @@ def _handle_config_command(args: argparse.Namespace) -> bool:
 
 
 def _format_hero_army_summary(hero_army: h3_save_parser.HeroArmy) -> str:
-    return ", ".join(
-        f"{stack.count}x {stack.creature.name}"
-        for stack in hero_army.stacks
-    )
+    return hero_army.army_summary
 
 
 def _sort_hero_armies(heroes) -> List[h3_save_parser.HeroArmy]:

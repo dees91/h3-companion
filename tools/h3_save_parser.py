@@ -141,6 +141,13 @@ class HeroArmy:
         return sum(stack.creature.ai_value * stack.count for stack in self.stacks)
 
     @property
+    def army_summary(self) -> str:
+        return ", ".join(
+            f"{stack.count}x {stack.creature.name}"
+            for stack in self.stacks
+        )
+
+    @property
     def x(self) -> int | None:
         return None if self.position is None else self.position.x
 
@@ -151,6 +158,39 @@ class HeroArmy:
     @property
     def z(self) -> int | None:
         return None if self.position is None else self.position.z
+
+
+@dataclass(frozen=True)
+class HeroTarget:
+    """Army-only target record for another hero in the current save."""
+
+    hero_name: str
+    position: HeroPosition
+    army: HeroArmy
+
+    @property
+    def x(self) -> int:
+        return self.position.x
+
+    @property
+    def y(self) -> int:
+        return self.position.y
+
+    @property
+    def z(self) -> int:
+        return self.position.z
+
+    @property
+    def ai_value(self) -> int:
+        return self.army.ai_value
+
+    @property
+    def total_creatures(self) -> int:
+        return self.army.total_creatures
+
+    @property
+    def army_summary(self) -> str:
+        return self.army.army_summary
 
 
 class SaveLoadError(ValueError):
@@ -485,6 +525,41 @@ def select_hero(heroes, query: str) -> HeroArmy:
         raise HeroSelectionError(query, "ambiguous_prefix", prefix_matches)
 
     raise HeroSelectionError(query, "not_found", candidates)
+
+
+def build_other_hero_targets(
+    heroes,
+    selected_hero: HeroArmy,
+    same_level_z: int | None = None,
+) -> tuple[HeroTarget, ...]:
+    """Build army-only target records for positioned heroes other than selected."""
+
+    targets = []
+    for hero in heroes:
+        if _is_selected_hero(hero, selected_hero):
+            continue
+        if not hero.stacks:
+            continue
+        if hero.position is None:
+            continue
+        if same_level_z is not None and hero.position.z != same_level_z:
+            continue
+        targets.append(
+            HeroTarget(
+                hero_name=hero.hero_name,
+                position=hero.position,
+                army=hero,
+            )
+        )
+    return tuple(targets)
+
+
+def _is_selected_hero(hero: HeroArmy, selected_hero: HeroArmy) -> bool:
+    if hero is selected_hero:
+        return True
+    if hero.source_offset is not None and selected_hero.source_offset is not None:
+        return hero.source_offset == selected_hero.source_offset
+    return hero == selected_hero
 
 
 def parse_game_folder_datetime(name: str) -> datetime | None:
