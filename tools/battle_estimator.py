@@ -1341,7 +1341,8 @@ def _run_nearby_scan(args: argparse.Namespace) -> None:
         same_level_z=selected_hero.z,
     )
     removed_records = h3_save_parser.detect_removed_neutral_records(
-        loaded_save.data
+        loaded_save.data,
+        neutral_targets=neutral_targets,
     )
     scan_targets = build_nearby_scan_targets(
         selected_hero,

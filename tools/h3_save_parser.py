@@ -54,6 +54,7 @@ HERO_ARMY_XOR_KEY = 0x01
 MAX_HERO_ARMY_COUNT = 1_000_000
 DEFAULT_RELEVANT_HERO_AI_VALUE = 5_000
 DEFAULT_RELEVANT_HERO_TOTAL_CREATURES = 50
+REMOVED_NEUTRAL_RECORD_CORE_SIZE = 12
 REMOVED_NEUTRAL_RECORD_SIZE = 16
 REMOVED_NEUTRAL_SCAN_TAIL_BYTES = 64 * 1024
 REMOVED_NEUTRAL_RECORD_MARKER = 11
@@ -384,16 +385,29 @@ def find_h3svg_offset(data: bytes) -> int | None:
     return offset
 
 
-def detect_removed_neutral_records(data: bytes) -> tuple[RemovedNeutralRecord, ...]:
+def detect_removed_neutral_records(
+    data: bytes,
+    neutral_targets=None,
+) -> tuple[RemovedNeutralRecord, ...]:
     """Scan the late save log for removed neutral monster records."""
 
+    known_neutral_keys = _removed_neutral_target_keys(neutral_targets)
+    record_size = (
+        REMOVED_NEUTRAL_RECORD_CORE_SIZE
+        if known_neutral_keys is not None
+        else REMOVED_NEUTRAL_RECORD_SIZE
+    )
     tail_start = max(0, len(data) - REMOVED_NEUTRAL_SCAN_TAIL_BYTES)
-    last_offset = len(data) - REMOVED_NEUTRAL_RECORD_SIZE
+    last_offset = len(data) - record_size
     records = []
     seen_keys = set()
 
     for offset in range(tail_start, last_offset + 1):
-        record = _parse_removed_neutral_record_at(data, offset)
+        record = _parse_removed_neutral_record_at(
+            data,
+            offset,
+            known_neutral_keys=known_neutral_keys,
+        )
         if record is None:
             continue
         key = (record.object_index, record.h3m_subid)
@@ -405,24 +419,38 @@ def detect_removed_neutral_records(data: bytes) -> tuple[RemovedNeutralRecord, .
     return tuple(records)
 
 
+def _removed_neutral_target_keys(neutral_targets):
+    if neutral_targets is None:
+        return None
+    return {
+        (int(target.object_index), int(target.h3m_subid))
+        for target in neutral_targets
+    }
+
+
 def _parse_removed_neutral_record_at(
     data: bytes,
     offset: int,
+    known_neutral_keys=None,
 ) -> RemovedNeutralRecord | None:
-    end = offset + REMOVED_NEUTRAL_RECORD_SIZE
-    if offset < 0 or end > len(data):
+    core_end = offset + REMOVED_NEUTRAL_RECORD_CORE_SIZE
+    if offset < 0 or core_end > len(data):
         return None
 
     object_index = int.from_bytes(data[offset:offset + 4], "little")
     removal_flags = int.from_bytes(data[offset + 4:offset + 8], "little")
     h3m_subid = int.from_bytes(data[offset + 8:offset + 12], "little")
-    marker = int.from_bytes(data[offset + 12:end], "little")
+    marker_end = offset + REMOVED_NEUTRAL_RECORD_SIZE
+    marker = None
+    if marker_end <= len(data):
+        marker = int.from_bytes(data[offset + 12:marker_end], "little")
 
     if not _looks_like_removed_neutral_record(
         object_index,
         removal_flags,
         h3m_subid,
         marker,
+        known_neutral_keys=known_neutral_keys,
     ):
         return None
 
@@ -438,17 +466,24 @@ def _looks_like_removed_neutral_record(
     object_index: int,
     removal_flags: int,
     h3m_subid: int,
-    marker: int,
+    marker: int | None,
+    known_neutral_keys=None,
 ) -> bool:
-    if marker != REMOVED_NEUTRAL_RECORD_MARKER:
-        return False
-    if object_index <= 0 or object_index > MAX_REMOVED_NEUTRAL_OBJECT_INDEX:
+    if object_index > MAX_REMOVED_NEUTRAL_OBJECT_INDEX:
         return False
     if h3m_subid > MAX_REMOVED_NEUTRAL_SUBID:
         return False
     if removal_flags <= 0 or removal_flags > MAX_REMOVED_NEUTRAL_REMOVAL_FLAGS:
         return False
-    return removal_flags % REMOVED_NEUTRAL_REMOVAL_FLAG_GRANULARITY == 0
+    if removal_flags % REMOVED_NEUTRAL_REMOVAL_FLAG_GRANULARITY != 0:
+        return False
+
+    if known_neutral_keys is not None:
+        return (object_index, h3m_subid) in known_neutral_keys
+
+    if object_index <= 0:
+        return False
+    return marker == REMOVED_NEUTRAL_RECORD_MARKER
 
 
 def xor_decode_bytes(

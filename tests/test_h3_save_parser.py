@@ -7,6 +7,7 @@ import unittest
 import zlib
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tools import battle_estimator
@@ -33,6 +34,18 @@ def _removed_neutral_record_bytes(
         int(removal_flags).to_bytes(4, "little"),
         int(h3m_subid).to_bytes(4, "little"),
         h3_save_parser.REMOVED_NEUTRAL_RECORD_MARKER.to_bytes(4, "little"),
+    ))
+
+
+def _removed_neutral_record_core_bytes(
+    object_index,
+    h3m_subid,
+    removal_flags=0x8000,
+):
+    return b"".join((
+        int(object_index).to_bytes(4, "little"),
+        int(removal_flags).to_bytes(4, "little"),
+        int(h3m_subid).to_bytes(4, "little"),
     ))
 
 
@@ -267,6 +280,49 @@ class H3SaveParserContractTests(unittest.TestCase):
         )
         self.assertEqual(records[0].source_offset, 8)
         self.assertEqual(records[0].removal_flags, 0x8000)
+
+    def test_detect_removed_neutral_records_uses_known_targets_for_markerless_records(self):
+        payload = (
+            b"H3SVG"
+            + b"\x00" * 3
+            + _removed_neutral_record_core_bytes(2576, 71, 0x9000)
+            + b"\x01\x00\x45\x00"
+        )
+        neutral_targets = (
+            SimpleNamespace(object_index=2576, h3m_subid=71),
+            SimpleNamespace(object_index=2577, h3m_subid=72),
+        )
+
+        strict_records = h3_save_parser.detect_removed_neutral_records(payload)
+        map_aware_records = h3_save_parser.detect_removed_neutral_records(
+            payload,
+            neutral_targets=neutral_targets,
+        )
+
+        self.assertEqual(strict_records, ())
+        self.assertEqual(len(map_aware_records), 1)
+        self.assertEqual(map_aware_records[0].object_index, 2576)
+        self.assertEqual(map_aware_records[0].h3m_subid, 71)
+        self.assertEqual(map_aware_records[0].source_offset, 8)
+        self.assertEqual(map_aware_records[0].removal_flags, 0x9000)
+
+    def test_detect_removed_neutral_records_ignores_markerless_records_not_in_known_targets(self):
+        payload = (
+            b"H3SVG"
+            + b"\x00" * 3
+            + _removed_neutral_record_core_bytes(2576, 71, 0x9000)
+            + b"\x01\x00\x45\x00"
+        )
+        neutral_targets = (
+            SimpleNamespace(object_index=2576, h3m_subid=72),
+        )
+
+        records = h3_save_parser.detect_removed_neutral_records(
+            payload,
+            neutral_targets=neutral_targets,
+        )
+
+        self.assertEqual(records, ())
 
     def test_detect_removed_neutral_records_ignores_invalid_heuristic_records(self):
         payload = b"".join((

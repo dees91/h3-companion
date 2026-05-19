@@ -149,6 +149,18 @@ def _write_h3m_map(path: Path, **monster_kwargs):
     return path
 
 
+def _removed_neutral_record_core_bytes(
+    object_index,
+    h3m_subid,
+    removal_flags=0x8000,
+):
+    return b"".join((
+        int(object_index).to_bytes(4, "little"),
+        int(removal_flags).to_bytes(4, "little"),
+        int(h3m_subid).to_bytes(4, "little"),
+    ))
+
+
 def _run_cli(args, home: Path | None = None, input_text: str | None = None):
     env = os.environ.copy()
     if home is not None:
@@ -407,6 +419,45 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("(39,70,1)", result.stdout)
         self.assertIn("37x Gnoll", result.stdout)
         self.assertRegex(result.stdout, r"\s100\.0\s")
+
+    def test_scan_nearby_filters_markerless_removed_neutral_records(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir(parents=True, exist_ok=True)
+            save_path = game_dir / "415.GM2"
+            save_payload = (
+                _build_xor_hero_fixture(position=(39, 69, 1))
+                + b"\x00" * 3
+                + _removed_neutral_record_core_bytes(1, 98, 0x9000)
+                + b"\x01\x00\x45\x00"
+            )
+            save_path.write_bytes(gzip.compress(save_payload))
+            map_path = _write_h3m_map(
+                temp_path / "map.h3m",
+                position=(39, 70, 1),
+                count=37,
+                sign_before_monster=True,
+            )
+
+            result = _run_cli([
+                "--scan-nearby",
+                "2",
+                "--hero",
+                "Isra",
+                "--save-file",
+                str(save_path),
+                "--map-file",
+                str(map_path),
+                "--target-type",
+                "neutral",
+                "-n",
+                "1",
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("No nearby targets found.", result.stdout)
+        self.assertNotIn("37x Gnoll", result.stdout)
 
     def test_scan_nearby_uses_default_scan_simulations_without_override(self):
         with tempfile.TemporaryDirectory() as temp_dir:
