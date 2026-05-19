@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import gzip
 import json
+import shutil
+import subprocess
 import threading
 import tempfile
 import unittest
@@ -153,8 +155,16 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             app_js.index("function selectHero("):
             app_js.index("function renderSnapshot(")
         ]
+        simulate_target_body = app_js[
+            app_js.index("function simulateTarget("):
+            app_js.index("function matchRecentHeroName(")
+        ]
         self.assertNotIn("setHealth(", load_state_body)
         self.assertIn("renderRecentHeroes(heroState.recentHeroes);", select_hero_body)
+        self.assertNotIn("selectedHeroId =", simulate_target_body)
+        self.assertNotIn("/api/select-hero", simulate_target_body)
+        self.assertIn("estimateState.requestId", simulate_target_body)
+        self.assertIn("isFreshEstimatePayload(", simulate_target_body)
         self.assertIn('setText(elements.mode, "Snapshot unavailable")', app_js)
         self.assertIn('renderRecentHeroes([])', app_js)
         for expected in (
@@ -178,10 +188,17 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "filterHeroesForQuery",
             "matchRecentHeroName",
             "recentHeroChipState",
+            "formatWinPct",
+            "isFreshEstimatePayload",
+            "simulationClickDecision",
+            "verdictForWinPct",
+            "typeof winPct === \"number\"",
             "ambiguous in this snapshot",
             "is not in this snapshot",
+            "Selected hero is not a simulation target.",
             'addEventListener("input"',
-            'fetch("/api/select-hero"'
+            '"/api/select-hero"',
+            '"/api/simulate-target"'
         ):
             self.assertIn(expected, app_js)
         for expected in (
@@ -194,11 +211,152 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".chip-button",
             ".hero-item",
             ".hero-item.selected",
+            ".estimate-grid",
+            ".result-box.error",
         ):
             self.assertIn(expected, style_css)
-        self.assertNotIn("/api/simulate-target", app_js)
+        self.assertNotIn("/api/scan-radius", app_js)
         self.assertNotIn("owner_id", app_js)
         self.assertNotIn("team_id", app_js)
+
+    def test_frontend_estimate_helpers_cover_click_and_stale_edges(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is required for frontend helper smoke test")
+
+        app_js_path = str((Path("tools") / "battle_estimator_gui" / "app.js").resolve())
+        script = f"""
+const assert = require("assert");
+const context = new Proxy({{}}, {{
+  get(target, prop) {{
+    if (!(prop in target)) {{
+      target[prop] = function () {{}};
+    }}
+    return target[prop];
+  }},
+  set(target, prop, value) {{
+    target[prop] = value;
+    return true;
+  }}
+}});
+class Element {{
+  constructor(id) {{
+    this.id = id;
+    this.children = [];
+    this.className = "";
+    this.dataset = {{}};
+    this.disabled = false;
+    this.height = 640;
+    this.textContent = "";
+    this.title = "";
+    this.width = 960;
+    this.classList = {{
+      add() {{}},
+      remove() {{}},
+      toggle() {{}}
+    }};
+  }}
+  get firstChild() {{
+    return this.children[0] || null;
+  }}
+  appendChild(child) {{
+    this.children.push(child);
+    return child;
+  }}
+  getBoundingClientRect() {{
+    return {{ left: 0, top: 0, width: 960, height: 640 }};
+  }}
+  getContext() {{
+    return context;
+  }}
+  addEventListener() {{}}
+  removeChild(child) {{
+    const index = this.children.indexOf(child);
+    if (index >= 0) {{
+      this.children.splice(index, 1);
+    }}
+    return child;
+  }}
+  setAttribute(name, value) {{
+    this[name] = value;
+  }}
+  setPointerCapture() {{}}
+}}
+const elements = {{}};
+global.document = {{
+  createElement(tag) {{
+    return new Element(tag);
+  }},
+  getElementById(id) {{
+    if (!elements[id]) {{
+      elements[id] = new Element(id);
+    }}
+    return elements[id];
+  }}
+}};
+global.window = {{
+  addEventListener() {{}},
+  devicePixelRatio: 1,
+  ResizeObserver: null
+}};
+const snapshot = {{
+  mode: "follow_latest",
+  save_file: null,
+  map_file: null,
+  map: {{ width: 1, height: 1, levels: 1 }},
+  heroes: [],
+  neutral_targets: [],
+  recent_heroes: [],
+  selected_hero_id: null
+}};
+global.fetch = (path) => Promise.resolve({{
+  ok: true,
+  json: () => Promise.resolve(path === "/api/health" ? {{ ok: true }} : snapshot)
+}});
+require({json.dumps(app_js_path)});
+const helpers = window.__battleEstimatorGuiTest;
+assert.strictEqual(helpers.formatWinPct(null), "not available");
+assert.strictEqual(helpers.formatWinPct(0), "0.0%");
+assert.strictEqual(helpers.verdictForWinPct(null), "Unsupported target");
+assert.deepStrictEqual(
+  helpers.simulationClickDecision(null, "hero:256"),
+  {{ simulate: false, message: "No target selected." }}
+);
+assert.deepStrictEqual(
+  helpers.simulationClickDecision({{ type: "hero", id: "hero:256" }}, "hero:256"),
+  {{ simulate: false, message: "Selected hero is not a simulation target." }}
+);
+assert.deepStrictEqual(
+  helpers.simulationClickDecision({{ type: "neutral", id: "neutral:0" }}, "hero:256"),
+  {{ simulate: true, message: "" }}
+);
+assert.strictEqual(
+  helpers.isFreshEstimatePayload({{ hero_id: "hero:256" }}, 7, 7, "hero:256"),
+  true
+);
+assert.strictEqual(
+  helpers.isFreshEstimatePayload({{ hero_id: "hero:256" }}, 6, 7, "hero:256"),
+  false
+);
+assert.strictEqual(
+  helpers.isFreshEstimatePayload({{ hero_id: "hero:256" }}, 7, 7, "hero:512"),
+  false
+);
+assert.strictEqual(
+  helpers.estimateTargetLabel(
+    {{ target_type: "hero", target: {{ name: "Marius" }} }},
+    "hero:512"
+  ),
+  "Marius (hero:512)"
+);
+"""
+        completed = subprocess.run(
+            [node, "-e", script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
 
     def test_default_server_binds_to_localhost(self):
         server = battle_estimator_gui.create_server(port=0)
@@ -463,6 +621,53 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
                 self.assertEqual(payload["estimate"]["win_pct"], 91.5)
                 self.assertEqual(payload["estimate"]["target"]["creature_name"], "Gnoll")
                 self.assertEqual(run_mock.call_args.args[2], 12)
+
+            self._with_server(check, app_state=app_state)
+
+    def test_simulate_target_endpoint_supports_hero_target(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {"hero_name": "Isra", "name_offset": 256, "position": (39, 69, 1)},
+                    {"hero_name": "Marius", "name_offset": 512, "position": (39, 71, 1)},
+                ),
+            )
+            map_path = _write_h3m_map(temp_path / "map.h3m", position=(39, 70, 1))
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                with patch.object(
+                    battle_estimator_gui.battle_estimator,
+                    "run_simulations",
+                    return_value=72.0,
+                ):
+                    status, _, payload = self._post_json(
+                        base_url,
+                        "/api/simulate-target",
+                        {
+                            "hero_id": "hero:256",
+                            "target_id": "hero:512",
+                            "simulations": 9,
+                        },
+                    )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["hero_id"], "hero:256")
+                self.assertEqual(payload["target_id"], "hero:512")
+                self.assertEqual(payload["estimate"]["target_id"], "hero:512")
+                self.assertEqual(payload["estimate"]["target_type"], "hero")
+                self.assertEqual(payload["estimate"]["target"]["name"], "Marius")
+                self.assertEqual(payload["estimate"]["enemy_army"][0]["creature_name"], "Skeleton Warrior")
+                self.assertEqual(payload["estimate"]["win_pct"], 72.0)
+                self.assertEqual(payload["estimate"]["note"], "army-only")
 
             self._with_server(check, app_state=app_state)
 

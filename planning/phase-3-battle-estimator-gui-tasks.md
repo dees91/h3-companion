@@ -661,6 +661,26 @@ payloads are stable.
 1. API test for `/api/simulate-target`.
 2. Manual browser check clicking several targets in sequence.
 
+**Completion Notes (2026-05-19):**
+- Wired canvas marker clicks to `POST /api/simulate-target` for selected hero
+  versus clicked neutral or other-hero targets, while keeping hero selection
+  unchanged.
+- Added estimate rendering with target, distance, selected hero army, enemy
+  army, enemy AI value, win percentage, verdict, and note, including null
+  `win_pct` handling for unsupported targets.
+- Added request-id and returned-hero gating so stale estimates cannot overwrite
+  newer target clicks, hero-selection changes, or snapshot reloads.
+- Added no-marker and selected-hero click decisions that clear stale estimates
+  without calling the API.
+- Added CSS for running, error, and structured estimate result states.
+- Added backend coverage for hero-target simulation and a Node-backed frontend
+  helper smoke test for null win percentage, click decisions, stale response
+  gating, and target labels.
+- Verified with `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest discover -s tests`,
+  `node --check tools/battle_estimator_gui/app.js`,
+  `python3 tools/battle_estimator.py --help`, and `git diff --check`.
+
 ---
 
 ### GUI-T09: Radius Scan Visualization
@@ -834,7 +854,7 @@ structure and frontend test strategy.
 | GUI-T05: Frontend Layout Shell | done | GUI-T01 | Codex | Dense operational shell with status bar, hero panel, canvas stage, and result/scan panel. |
 | GUI-T06: Canvas Map Rendering | done | GUI-T04, GUI-T05 | Codex | Canvas grid, pan/zoom, marker drawing, hit testing, and target details added. |
 | GUI-T07: Hero Search + Recent Selection | done | GUI-T03, GUI-T04, GUI-T05 | Codex | Search, recent hero selection, persistence, selected highlighting, and map recentering added. |
-| GUI-T08: Click Target Simulation | todo | GUI-T04, GUI-T06, GUI-T07 | unassigned | Single target estimate. |
+| GUI-T08: Click Target Simulation | done | GUI-T04, GUI-T06, GUI-T07 | Codex | Marker clicks run selected-hero target estimates with stale response guards and structured result rendering. |
 | GUI-T09: Radius Scan Visualization | todo | GUI-T04, GUI-T06, GUI-T07 | unassigned | Scan overlay and result list. |
 | GUI-T10: Save Picker + Auto Refresh | todo | GUI-T02, GUI-T04, GUI-T05 | unassigned | Follow latest and pinned save. |
 | GUI-T11: End-to-End Polish + Docs | blocked | GUI-T08, GUI-T09, GUI-T10 | unassigned | Final verification pass. |

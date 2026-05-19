@@ -394,6 +394,58 @@ canvas.has-marker-hover {
   background: #fbfcfd;
 }
 
+.result-box.running {
+  border-color: #8aa0bd;
+  background: #f3f7fc;
+  color: #334155;
+}
+
+.result-box.error {
+  border-color: #c07171;
+  background: #fff5f5;
+  color: #8a2c2c;
+}
+
+.estimate-grid {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.estimate-row {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  align-items: start;
+}
+
+.estimate-label {
+  color: #697386;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.estimate-value {
+  overflow: hidden;
+  color: #202833;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.estimate-value.long-value {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.estimate-win {
+  font-weight: 700;
+}
+
 .scan-controls {
   display: grid;
   grid-template-columns: 90px minmax(0, 1fr);

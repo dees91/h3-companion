@@ -42,6 +42,10 @@
     selectedHeroId: null,
     selectingHeroId: null
   };
+  const estimateState = {
+    requestId: 0,
+    runningTargetId: null
+  };
 
   function setHealth(text, className) {
     elements.health.textContent = text;
@@ -51,6 +55,26 @@
   function setText(element, value) {
     element.textContent = value || "...";
     element.title = value || "";
+  }
+
+  function postJson(path, payload, fallbackMessage) {
+    return fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then((response) => {
+        if (!response.ok) {
+          return response.json().catch(() => ({})).then((errorPayload) => {
+            const error = new Error(
+              errorPayload.error || `${fallbackMessage}: ${response.status}`
+            );
+            error.status = response.status;
+            throw error;
+          });
+        }
+        return response.json();
+      });
   }
 
   function fileName(path) {
@@ -393,6 +417,192 @@
     node.appendChild(item);
   }
 
+  function invalidateEstimateRequests() {
+    estimateState.requestId += 1;
+    estimateState.runningTargetId = null;
+    return estimateState.requestId;
+  }
+
+  function nextEstimateRequestId(targetId) {
+    estimateState.requestId += 1;
+    estimateState.runningTargetId = targetId || null;
+    return estimateState.requestId;
+  }
+
+  function setEstimateMessage(text, className) {
+    clearNode(elements.estimateState);
+    elements.estimateState.className = `result-box ${className || "empty-state"}`.trim();
+    elements.estimateState.textContent = text;
+    elements.estimateState.title = text;
+  }
+
+  function selectedHero() {
+    return heroState.heroes.find((hero) => hero.id === heroState.selectedHeroId) || null;
+  }
+
+  function formatHeroArmy(hero) {
+    if (!hero) {
+      return "Selected hero is not in the current snapshot.";
+    }
+    if (hero.army_summary) {
+      return hero.army_summary;
+    }
+    return formatArmy(hero.army);
+  }
+
+  function formatArmy(army) {
+    const parts = (army || [])
+      .filter((stack) => stack.count > 0)
+      .map((stack) => `${stack.count}x ${stack.creature_name || "Unknown"}`);
+    return parts.length ? parts.join(", ") : "No army.";
+  }
+
+  function formatNumber(value) {
+    return typeof value === "number" ? String(value) : "not available";
+  }
+
+  function formatWinPct(winPct) {
+    return typeof winPct === "number" ? `${winPct.toFixed(1)}%` : "not available";
+  }
+
+  function verdictForWinPct(winPct) {
+    if (typeof winPct !== "number") {
+      return "Unsupported target";
+    }
+    if (winPct < 10) {
+      return "Very unlikely";
+    }
+    if (winPct < 30) {
+      return "Poor odds";
+    }
+    if (winPct < 50) {
+      return "Risky";
+    }
+    if (winPct < 70) {
+      return "Even fight";
+    }
+    if (winPct < 90) {
+      return "Likely win";
+    }
+    return "Strong advantage";
+  }
+
+  function estimateTargetLabel(estimate, targetId) {
+    const target = estimate.target || {};
+    if (estimate.target_type === "neutral") {
+      return `${target.count || 0}x ${target.creature_name || "Unknown"} (${targetId})`;
+    }
+    if (estimate.target_type === "hero") {
+      return `${target.name || "Hero"} (${targetId})`;
+    }
+    return targetId || "Unknown target";
+  }
+
+  function simulationClickDecision(marker, selectedHeroId) {
+    if (!marker) {
+      return { simulate: false, message: "No target selected." };
+    }
+    if (!selectedHeroId) {
+      return { simulate: false, message: "Select a hero before simulating." };
+    }
+    if (marker.type === "hero" && marker.id === selectedHeroId) {
+      return { simulate: false, message: "Selected hero is not a simulation target." };
+    }
+    return { simulate: true, message: "" };
+  }
+
+  function isFreshEstimatePayload(payload, requestId, currentRequestId, selectedHeroId) {
+    return (
+      requestId === currentRequestId
+      && payload.hero_id === selectedHeroId
+    );
+  }
+
+  function appendEstimateRow(parent, label, value, className) {
+    const row = document.createElement("div");
+    row.className = "estimate-row";
+
+    const labelNode = document.createElement("span");
+    labelNode.className = "estimate-label";
+    labelNode.textContent = label;
+
+    const valueNode = document.createElement("span");
+    valueNode.className = `estimate-value ${className || ""}`.trim();
+    valueNode.textContent = value;
+    valueNode.title = value;
+
+    row.appendChild(labelNode);
+    row.appendChild(valueNode);
+    parent.appendChild(row);
+  }
+
+  function renderEstimateResult(payload) {
+    const estimate = payload.estimate || {};
+    const hero = selectedHero();
+    const heroLabel = hero ? (hero.name || payload.hero_id) : payload.hero_id;
+    const targetId = payload.target_id || estimate.target_id;
+    clearNode(elements.estimateState);
+    elements.estimateState.className = "result-box estimate-result";
+    elements.estimateState.title = "";
+
+    const grid = document.createElement("div");
+    grid.className = "estimate-grid";
+    appendEstimateRow(grid, "Hero", heroLabel || "Unknown hero");
+    appendEstimateRow(grid, "Hero army", formatHeroArmy(hero), "long-value");
+    appendEstimateRow(grid, "Target", estimateTargetLabel(estimate, targetId), "long-value");
+    appendEstimateRow(grid, "Distance", formatNumber(estimate.distance));
+    appendEstimateRow(grid, "Enemy army", formatArmy(estimate.enemy_army), "long-value");
+    appendEstimateRow(grid, "Enemy AI", formatNumber(estimate.enemy_ai_value));
+    appendEstimateRow(grid, "Win", formatWinPct(estimate.win_pct), "estimate-win");
+    appendEstimateRow(grid, "Verdict", verdictForWinPct(estimate.win_pct));
+    appendEstimateRow(grid, "Note", estimate.note || "No note.", "long-value");
+    elements.estimateState.appendChild(grid);
+  }
+
+  function simulateTarget(marker) {
+    const decision = simulationClickDecision(marker, heroState.selectedHeroId);
+    if (!decision.simulate) {
+      invalidateEstimateRequests();
+      setEstimateMessage(decision.message);
+      return;
+    }
+
+    const heroId = heroState.selectedHeroId;
+    const requestId = nextEstimateRequestId(marker.id);
+    setEstimateMessage(`Estimating ${marker.label}`, "running");
+
+    postJson(
+      "/api/simulate-target",
+      { hero_id: heroId, target_id: marker.id },
+      "target simulation failed"
+    )
+      .then((payload) => {
+        if (!isFreshEstimatePayload(
+          payload,
+          requestId,
+          estimateState.requestId,
+          heroState.selectedHeroId
+        )) {
+          return;
+        }
+        renderEstimateResult(payload);
+      })
+      .catch((error) => {
+        if (requestId !== estimateState.requestId) {
+          return;
+        }
+        setEstimateMessage(`Simulation error: ${error.message}`, "error");
+        if (error.status === 409) {
+          loadState();
+        }
+      })
+      .finally(() => {
+        if (requestId === estimateState.requestId) {
+          estimateState.runningTargetId = null;
+        }
+      });
+  }
+
   function matchRecentHeroName(heroes, name) {
     const normalized = normalizeName(name);
     if (!normalized) {
@@ -508,6 +718,7 @@
   }
 
   function applySelectedHero(heroId, recentHeroes) {
+    invalidateEstimateRequests();
     heroState.selectedHeroId = heroId || null;
     heroState.recentHeroes = recentHeroes || heroState.recentHeroes;
     if (mapView.snapshot) {
@@ -521,29 +732,23 @@
     if (!centerOnHero(heroState.selectedHeroId)) {
       drawMap();
     }
+    setEstimateMessage("No simulation run.");
   }
 
   function selectHero(heroId) {
     if (!heroId || heroState.selectingHeroId) {
       return;
     }
+    invalidateEstimateRequests();
     heroState.selectingHeroId = heroId;
     setText(elements.refresh, "Selecting hero");
     renderHeroes();
 
-    fetch("/api/select-hero", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hero_id: heroId })
-    })
-      .then((response) => {
-        if (!response.ok) {
-          return response.json().catch(() => ({})).then((payload) => {
-            throw new Error(payload.error || `hero selection failed: ${response.status}`);
-          });
-        }
-        return response.json();
-      })
+    postJson(
+      "/api/select-hero",
+      { hero_id: heroId },
+      "hero selection failed"
+    )
       .then((payload) => {
         applySelectedHero(payload.selected_hero_id, payload.recent_heroes || []);
         setText(elements.refresh, "Hero selected");
@@ -589,11 +794,12 @@
     mapView.markers = buildMarkerCache(snapshot, tileSize);
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
+    invalidateEstimateRequests();
     setTargetDetails(null);
     fitMapToCanvas(snapshot);
     drawMap();
 
-    elements.estimateState.textContent = "No simulation run.";
+    setEstimateMessage("No simulation run.");
     appendEmpty(elements.scanState, "No scan results.");
   }
 
@@ -619,11 +825,14 @@
     mapView.markers = [];
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
+    invalidateEstimateRequests();
     setTargetDetails(null);
+    setEstimateMessage("No simulation run.");
     drawMap();
   }
 
   function loadState() {
+    invalidateEstimateRequests();
     setText(elements.refresh, "Loading");
     elements.refreshButton.disabled = true;
 
@@ -720,6 +929,7 @@
     const marker = hitTestMarker(mapView.markers, point, mapView);
     mapView.activeMarkerId = marker ? marker.id : null;
     setTargetDetails(marker);
+    simulateTarget(marker);
     drawMap();
   });
 
@@ -754,7 +964,9 @@
   window.__battleEstimatorGuiTest = {
     buildMarkerCache,
     clampZoom,
+    estimateTargetLabel,
     filterHeroesForQuery,
+    formatWinPct,
     hitTestMarker,
     matchRecentHeroName,
     markerContainsScreenPoint,
@@ -762,6 +974,9 @@
     recentHeroChipState,
     screenToWorld,
     centerOnHero,
+    isFreshEstimatePayload,
+    simulationClickDecision,
+    verdictForWinPct,
     worldToScreen,
     zoomAtPoint
   };
