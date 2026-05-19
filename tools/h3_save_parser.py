@@ -59,16 +59,7 @@ HERO_ARMY_SLOT_COUNT = 7
 HERO_ARMY_VALUE_SIZE = 4
 HERO_NAME_SIZE = 13
 HERO_ARMY_XOR_KEY = 0x01
-ENCODED_HERO_NAME_CANDIDATE_PATTERN = re.compile(
-    rb"(?=([" +
-    re.escape(bytes(byte ^ HERO_ARMY_XOR_KEY for byte in HERO_NAME_FIRST_CHARS)) +
-    rb"][" +
-    re.escape(
-        bytes(byte ^ HERO_ARMY_XOR_KEY for byte in HERO_NAME_REST_CHARS)
-        + bytes([HERO_ARMY_XOR_KEY])
-    ) +
-    rb"]{12}))"
-)
+HERO_ARMY_XOR_KEYS = (HERO_ARMY_XOR_KEY, 0x00)
 # Sanity cap for parser candidates, not a Heroes III game-rule limit.
 MAX_HERO_ARMY_COUNT = 1_000_000
 DEFAULT_RELEVANT_HERO_AI_VALUE = 5_000
@@ -100,6 +91,41 @@ HERO_ARMY_TYPES_FROM_NAME_OFFSET = (
 HERO_ARMY_COUNTS_FROM_NAME_OFFSET = (
     HERO_STRUCT_ARMY_COUNTS_OFFSET - HERO_STRUCT_NAME_OFFSET
 )
+HOTSEAT_HERO_STRUCT_POSITION_FROM_NAME_OFFSET = (
+    HERO_STRUCT_POSITION_FROM_NAME_OFFSET - 1
+)
+HOTSEAT_HERO_FALLBACK_POSITION_FROM_NAME_OFFSET = (
+    HERO_STRUCT_POSITION_FROM_NAME_OFFSET + 6
+)
+HERO_POSITION_OFFSETS_BY_XOR_KEY = {
+    HERO_ARMY_XOR_KEY: (HERO_STRUCT_POSITION_FROM_NAME_OFFSET,),
+    0x00: (
+        HOTSEAT_HERO_STRUCT_POSITION_FROM_NAME_OFFSET,
+        HOTSEAT_HERO_FALLBACK_POSITION_FROM_NAME_OFFSET,
+    ),
+}
+
+
+def _build_encoded_hero_name_candidate_pattern(key: int):
+    return re.compile(
+        rb"(?=([" +
+        re.escape(bytes(byte ^ key for byte in HERO_NAME_FIRST_CHARS)) +
+        rb"][" +
+        re.escape(
+            bytes(byte ^ key for byte in HERO_NAME_REST_CHARS)
+            + bytes([key])
+        ) +
+        rb"]{12}))"
+    )
+
+
+ENCODED_HERO_NAME_CANDIDATE_PATTERN = _build_encoded_hero_name_candidate_pattern(
+    HERO_ARMY_XOR_KEY
+)
+HERO_NAME_CANDIDATE_PATTERNS_BY_XOR_KEY = {
+    key: _build_encoded_hero_name_candidate_pattern(key)
+    for key in HERO_ARMY_XOR_KEYS
+}
 
 
 @dataclass(frozen=True)
@@ -593,7 +619,7 @@ def load_save(path: str | Path) -> LoadedSave:
 
 
 def load_hero_armies_from_save(path: str | Path) -> tuple[HeroArmy, ...]:
-    """Load a save file and scan it for XOR 0x01 encoded hero armies."""
+    """Load a save file and scan it for detectable hero armies."""
 
     loaded_save = load_save(path)
     return scan_xor01_hero_armies(loaded_save.data)
@@ -1041,20 +1067,28 @@ def xor_decode_bytes(
     return bytes(byte ^ key for byte in data[offset:offset + length])
 
 
-def decode_xor_u32(data: bytes, offset: int) -> int:
+def decode_xor_u32(
+    data: bytes,
+    offset: int,
+    key: int = HERO_ARMY_XOR_KEY,
+) -> int:
     """Decode one XOR-obfuscated little-endian unsigned 32-bit integer."""
 
     return int.from_bytes(
-        xor_decode_bytes(data, offset, HERO_ARMY_VALUE_SIZE),
+        xor_decode_bytes(data, offset, HERO_ARMY_VALUE_SIZE, key),
         "little",
     )
 
 
-def decode_hero_name(data: bytes, name_offset: int) -> str | None:
+def decode_hero_name(
+    data: bytes,
+    name_offset: int,
+    key: int = HERO_ARMY_XOR_KEY,
+) -> str | None:
     """Decode and validate a null-padded XOR-obfuscated hero name."""
 
     try:
-        decoded = xor_decode_bytes(data, name_offset, HERO_NAME_SIZE)
+        decoded = xor_decode_bytes(data, name_offset, HERO_NAME_SIZE, key)
     except ValueError:
         return None
 
@@ -1076,32 +1110,53 @@ def decode_hero_name(data: bytes, name_offset: int) -> str | None:
     return name
 
 
-def decode_hero_position(data: bytes, name_offset: int) -> HeroPosition | None:
+def decode_hero_position(
+    data: bytes,
+    name_offset: int,
+    key: int = HERO_ARMY_XOR_KEY,
+) -> HeroPosition | None:
     """Decode the optional XOR-obfuscated hero position near a hero name."""
 
-    position_offset = name_offset + HERO_STRUCT_POSITION_FROM_NAME_OFFSET
-    try:
-        decoded = xor_decode_bytes(data, position_offset, HERO_POSITION_SIZE)
-    except ValueError:
-        return None
+    position_offsets = HERO_POSITION_OFFSETS_BY_XOR_KEY.get(
+        key,
+        (HERO_STRUCT_POSITION_FROM_NAME_OFFSET,),
+    )
+    for position_from_name_offset in position_offsets:
+        position_offset = name_offset + position_from_name_offset
+        try:
+            decoded = xor_decode_bytes(
+                data,
+                position_offset,
+                HERO_POSITION_SIZE,
+                key,
+            )
+        except ValueError:
+            continue
 
-    x = int.from_bytes(decoded[0:2], "little")
-    y = int.from_bytes(decoded[2:4], "little")
-    z = decoded[4]
-    if x > MAX_HERO_POSITION_COORD or y > MAX_HERO_POSITION_COORD:
-        return None
-    if z > MAX_HERO_POSITION_LEVEL:
-        return None
-    return HeroPosition(x=x, y=y, z=z)
+        x = int.from_bytes(decoded[0:2], "little")
+        y = int.from_bytes(decoded[2:4], "little")
+        z = decoded[4]
+        if x > MAX_HERO_POSITION_COORD or y > MAX_HERO_POSITION_COORD:
+            continue
+        if z > MAX_HERO_POSITION_LEVEL:
+            continue
+        if key == 0x00 and x == 0 and y == 0 and z == 0:
+            continue
+        return HeroPosition(x=x, y=y, z=z)
+    return None
 
 
-def parse_xor01_hero_at(data: bytes, name_offset: int) -> HeroArmy | None:
-    """Parse one XOR 0x01 hero-army candidate by hero-name offset."""
+def parse_hero_at(
+    data: bytes,
+    name_offset: int,
+    key: int = HERO_ARMY_XOR_KEY,
+) -> HeroArmy | None:
+    """Parse one hero-army candidate by hero-name offset and XOR key."""
 
     if name_offset < HERO_STRUCT_NAME_OFFSET:
         return None
 
-    hero_name = decode_hero_name(data, name_offset)
+    hero_name = decode_hero_name(data, name_offset, key)
     if hero_name is None:
         return None
 
@@ -1114,10 +1169,12 @@ def parse_xor01_hero_at(data: bytes, name_offset: int) -> HeroArmy | None:
             creature_id = decode_xor_u32(
                 data,
                 ids_offset + slot * HERO_ARMY_VALUE_SIZE,
+                key,
             )
             count = decode_xor_u32(
                 data,
                 counts_offset + slot * HERO_ARMY_VALUE_SIZE,
+                key,
             )
             if count == 0:
                 continue
@@ -1129,7 +1186,7 @@ def parse_xor01_hero_at(data: bytes, name_offset: int) -> HeroArmy | None:
 
     if not stacks:
         return None
-    position = decode_hero_position(data, name_offset)
+    position = decode_hero_position(data, name_offset, key)
     return HeroArmy(
         hero_name=hero_name,
         stacks=tuple(stacks),
@@ -1138,18 +1195,26 @@ def parse_xor01_hero_at(data: bytes, name_offset: int) -> HeroArmy | None:
     )
 
 
+def parse_xor01_hero_at(data: bytes, name_offset: int) -> HeroArmy | None:
+    """Parse one XOR 0x01 hero-army candidate by hero-name offset."""
+
+    return parse_hero_at(data, name_offset, HERO_ARMY_XOR_KEY)
+
+
 def scan_xor01_hero_armies(data: bytes) -> tuple[HeroArmy, ...]:
-    """Scan decompressed save bytes for XOR 0x01 encoded hero armies."""
+    """Scan decompressed save bytes for encoded and hotseat hero armies."""
 
     heroes = []
-    for match in ENCODED_HERO_NAME_CANDIDATE_PATTERN.finditer(data):
-        name_offset = match.start()
-        if name_offset < HERO_STRUCT_NAME_OFFSET:
-            continue
-        hero_army = parse_xor01_hero_at(data, name_offset)
-        if hero_army is not None:
-            heroes.append(hero_army)
-    return tuple(heroes)
+    for key in HERO_ARMY_XOR_KEYS:
+        pattern = HERO_NAME_CANDIDATE_PATTERNS_BY_XOR_KEY[key]
+        for match in pattern.finditer(data):
+            name_offset = match.start()
+            if name_offset < HERO_STRUCT_NAME_OFFSET:
+                continue
+            hero_army = parse_hero_at(data, name_offset, key)
+            if hero_army is not None:
+                heroes.append(hero_army)
+    return tuple(sorted(heroes, key=lambda hero: hero.source_offset or 0))
 
 
 def filter_relevant_heroes(

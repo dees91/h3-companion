@@ -20,8 +20,8 @@ ISRA_COUNTS = (731, 181, 59, 47, 19, 316, 8)
 ISRA_MOVED_COUNTS = (181, 731, 59, 47, 19, 316, 8)
 
 
-def _xor_encode(raw: bytes) -> bytes:
-    return bytes(byte ^ h3_save_parser.HERO_ARMY_XOR_KEY for byte in raw)
+def _xor_encode(raw: bytes, key=h3_save_parser.HERO_ARMY_XOR_KEY) -> bytes:
+    return bytes(byte ^ key for byte in raw)
 
 
 def _removed_neutral_record_bytes(
@@ -72,17 +72,19 @@ def _build_xor_hero_fixture(
     counts=ISRA_COUNTS,
     name_offset=256,
     position=None,
+    xor_key=h3_save_parser.HERO_ARMY_XOR_KEY,
+    position_from_name_offset=h3_save_parser.HERO_STRUCT_POSITION_FROM_NAME_OFFSET,
 ):
     data = bytearray(name_offset + h3_save_parser.HERO_NAME_SIZE + 32)
     ids_offset = name_offset + h3_save_parser.HERO_ARMY_TYPES_FROM_NAME_OFFSET
     counts_offset = name_offset + h3_save_parser.HERO_ARMY_COUNTS_FROM_NAME_OFFSET
 
     for slot, creature_id in enumerate(creature_ids):
-        encoded = _xor_encode(int(creature_id).to_bytes(4, "little"))
+        encoded = _xor_encode(int(creature_id).to_bytes(4, "little"), xor_key)
         offset = ids_offset + slot * h3_save_parser.HERO_ARMY_VALUE_SIZE
         data[offset:offset + 4] = encoded
     for slot, count in enumerate(counts):
-        encoded = _xor_encode(int(count).to_bytes(4, "little"))
+        encoded = _xor_encode(int(count).to_bytes(4, "little"), xor_key)
         offset = counts_offset + slot * h3_save_parser.HERO_ARMY_VALUE_SIZE
         data[offset:offset + 4] = encoded
 
@@ -91,18 +93,20 @@ def _build_xor_hero_fixture(
         raise ValueError("test hero name is too long")
     padded_name = name_bytes.ljust(h3_save_parser.HERO_NAME_SIZE, b"\x00")
     data[name_offset:name_offset + h3_save_parser.HERO_NAME_SIZE] = _xor_encode(
-        padded_name
+        padded_name,
+        xor_key,
     )
     if position is not None:
         x, y, z = position
-        position_offset = name_offset + h3_save_parser.HERO_STRUCT_POSITION_FROM_NAME_OFFSET
+        position_offset = name_offset + position_from_name_offset
         position_bytes = b"".join((
             int(x).to_bytes(2, "little"),
             int(y).to_bytes(2, "little"),
             bytes([int(z)]),
         ))
         data[position_offset:position_offset + h3_save_parser.HERO_POSITION_SIZE] = _xor_encode(
-            position_bytes
+            position_bytes,
+            xor_key,
         )
     return bytes(data), name_offset
 
@@ -1345,6 +1349,55 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(len(heroes), 1)
         self.assertEqual(heroes[0].hero_name, "Isra")
         self.assertEqual(heroes[0].source_offset, name_offset + len(b"prefix bytes"))
+
+    def test_parse_hero_at_reads_unencoded_hotseat_army(self):
+        data, name_offset = _build_xor_hero_fixture(
+            xor_key=0x00,
+            position=(52, 54, 1),
+            position_from_name_offset=(
+                h3_save_parser.HOTSEAT_HERO_STRUCT_POSITION_FROM_NAME_OFFSET
+            ),
+        )
+
+        hero = h3_save_parser.parse_hero_at(data, name_offset, key=0x00)
+
+        self.assertIsNotNone(hero)
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertEqual([stack.count for stack in hero.stacks], list(ISRA_COUNTS))
+        self.assertEqual(hero.position, h3_save_parser.HeroPosition(52, 54, 1))
+
+    def test_parse_hero_at_reads_unencoded_hotseat_fallback_position(self):
+        data, name_offset = _build_xor_hero_fixture(
+            xor_key=0x00,
+            position=(44, 60, 0),
+            position_from_name_offset=(
+                h3_save_parser.HOTSEAT_HERO_FALLBACK_POSITION_FROM_NAME_OFFSET
+            ),
+        )
+
+        hero = h3_save_parser.parse_hero_at(data, name_offset, key=0x00)
+
+        self.assertIsNotNone(hero)
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertEqual(hero.position, h3_save_parser.HeroPosition(44, 60, 0))
+
+    def test_scan_xor01_hero_armies_finds_unencoded_hotseat_hero(self):
+        fixture, name_offset = _build_xor_hero_fixture(
+            name_offset=300,
+            xor_key=0x00,
+            position=(52, 54, 1),
+            position_from_name_offset=(
+                h3_save_parser.HOTSEAT_HERO_STRUCT_POSITION_FROM_NAME_OFFSET
+            ),
+        )
+        data = b"prefix bytes" + fixture + b"suffix bytes"
+
+        heroes = h3_save_parser.scan_xor01_hero_armies(data)
+
+        self.assertEqual(len(heroes), 1)
+        self.assertEqual(heroes[0].hero_name, "Isra")
+        self.assertEqual(heroes[0].source_offset, name_offset + len(b"prefix bytes"))
+        self.assertEqual(heroes[0].position, h3_save_parser.HeroPosition(52, 54, 1))
 
     def test_scan_xor01_hero_armies_matches_brute_force_candidates(self):
         first_fixture, first_offset = _build_xor_hero_fixture(
