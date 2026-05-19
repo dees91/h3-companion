@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+from tools import battle_estimator
 from tools import h3_map_parser
 from tools import h3_save_parser
 
@@ -128,6 +129,42 @@ def _build_minimal_sod_h3m_with_monster(
 
 
 class H3MapParserContractTests(unittest.TestCase):
+    def test_h3m_def_mapping_covers_all_estimator_creatures(self):
+        mapped_names = set(h3_map_parser.H3M_DEF_TO_ESTIMATOR_CREATURE_NAME.values())
+        expected_names = {creature.name for creature in battle_estimator.CREATURES}
+
+        self.assertEqual(mapped_names, expected_names)
+
+        for def_name, expected_name in sorted(
+            h3_map_parser.H3M_DEF_TO_ESTIMATOR_CREATURE_NAME.items()
+        ):
+            with self.subTest(def_name=def_name):
+                creature_name, creature_id = (
+                    h3_map_parser._map_template_to_estimator_creature(def_name)
+                )
+
+                self.assertEqual(creature_name, expected_name)
+                self.assertIsNotNone(creature_id)
+
+    def test_h3m_def_mapping_handles_nearby_scan_creatures(self):
+        cases = {
+            "AvWInfr.def": ("Infernal Troglodyte", 71),
+            "AVWimpx0.def": ("Familiar", 43),
+            "AVWelma0.def": ("Air Elemental", 114),
+            "AVWsprit.def": ("Sprite", 113),
+            "AvWDFly.def": ("Serpent Fly", 102),
+            "AvWDFir.def": ("Dragon Fly", 103),
+        }
+
+        for animation_file, expected in cases.items():
+            with self.subTest(animation_file=animation_file):
+                self.assertEqual(
+                    h3_map_parser._map_template_to_estimator_creature(
+                        animation_file
+                    ),
+                    expected,
+                )
+
     def test_contract_dataclasses_expose_map_shapes(self):
         template = h3_map_parser.H3ObjectTemplate(
             template_index=3,
