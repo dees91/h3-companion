@@ -476,6 +476,21 @@ payloads are stable.
 1. Endpoint tests with synthetic or monkeypatched snapshot services.
 2. Invalid JSON and invalid target/hero IDs are covered.
 
+**Completion Notes (2026-05-19):**
+- Added JSON API endpoints for state, saves, hero selection, save mode,
+  single-target simulation, and radius scan.
+- Added `GuiAppState` runtime settings and raw `DomainSnapshot` handling so API
+  simulation endpoints reuse existing battle-estimator domain helpers instead
+  of dict-only snapshot data.
+- API responses use JSON errors for validation failures, invalid JSON, stale
+  selected heroes, snapshot consistency conflicts, and unknown API paths.
+- Save listing and follow-latest ignore numeric symlinks; pinned save mode is
+  restricted to non-symlink numeric saves in the active autosave folder.
+- Verified with `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest discover -s tests`,
+  `python3 tools/battle_estimator.py --help`, `git diff --check`, and a
+  standalone HTTP API smoke test for `/api/state` and `/api/saves`.
+
 ---
 
 ### GUI-T05: Frontend Layout Shell
@@ -768,7 +783,7 @@ structure and frontend test strategy.
 | GUI-T01: GUI Server + Static Asset Skeleton | done | -- | Codex | Local stdlib server, static shell, and health endpoint added. |
 | GUI-T02: Snapshot Builder Service | done | GUI-T01 | Codex | Snapshot builder supports follow-latest, pinned saves, map dimensions, heroes, neutrals, and fingerprints. |
 | GUI-T03: Config Recent Heroes | done | -- | Codex | Config now tracks capped, deduped recent heroes for GUI selections. |
-| GUI-T04: JSON API Endpoints | todo | GUI-T02, GUI-T03 | unassigned | Frontend/backend contract. |
+| GUI-T04: JSON API Endpoints | done | GUI-T02, GUI-T03 | Codex | JSON API endpoints added with state, saves, selection, mode, simulation, scan, and JSON errors. |
 | GUI-T05: Frontend Layout Shell | todo | GUI-T01 | unassigned | First usable browser screen. |
 | GUI-T06: Canvas Map Rendering | blocked | GUI-T04, GUI-T05 | unassigned | Full map grid, pan, zoom, markers. |
 | GUI-T07: Hero Search + Recent Selection | blocked | GUI-T03, GUI-T04, GUI-T05 | unassigned | Search/recent/select workflow. |
