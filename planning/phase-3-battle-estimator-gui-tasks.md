@@ -565,6 +565,20 @@ payloads are stable.
 1. Manual check with a real local save/map.
 2. Marker hit testing can be unit-tested in JS if helper functions are pure.
 
+**Completion Notes (2026-05-19):**
+- Added DPR-aware canvas rendering for the full map grid from `/api/state`.
+- Added hero and neutral marker drawing, selected hero highlight from
+  `selected_hero_id`, and visual treatment for removed or unsupported neutrals.
+- Added pointer-drag panning, wheel zoom around the cursor, resize redraw, and
+  marker hover/click hit testing that identifies stable marker IDs in the
+  target details panel without running simulations or selecting heroes.
+- Exposed pure transform/hit-test helpers for future JS-level tests.
+- Verified with `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest discover -s tests`,
+  `node --check tools/battle_estimator_gui/app.js`,
+  `python3 tools/battle_estimator.py --help`, `git diff --check`, and a local
+  canvas static asset smoke test.
+
 ---
 
 ### GUI-T07: Hero Search + Recent Selection
@@ -798,7 +812,7 @@ structure and frontend test strategy.
 | GUI-T03: Config Recent Heroes | done | -- | Codex | Config now tracks capped, deduped recent heroes for GUI selections. |
 | GUI-T04: JSON API Endpoints | done | GUI-T02, GUI-T03 | Codex | JSON API endpoints added with state, saves, selection, mode, simulation, scan, and JSON errors. |
 | GUI-T05: Frontend Layout Shell | done | GUI-T01 | Codex | Dense operational shell with status bar, hero panel, canvas stage, and result/scan panel. |
-| GUI-T06: Canvas Map Rendering | todo | GUI-T04, GUI-T05 | unassigned | Full map grid, pan, zoom, markers. |
+| GUI-T06: Canvas Map Rendering | done | GUI-T04, GUI-T05 | Codex | Canvas grid, pan/zoom, marker drawing, hit testing, and target details added. |
 | GUI-T07: Hero Search + Recent Selection | todo | GUI-T03, GUI-T04, GUI-T05 | unassigned | Search/recent/select workflow. |
 | GUI-T08: Click Target Simulation | blocked | GUI-T04, GUI-T06, GUI-T07 | unassigned | Single target estimate. |
 | GUI-T09: Radius Scan Visualization | blocked | GUI-T04, GUI-T06, GUI-T07 | unassigned | Scan overlay and result list. |

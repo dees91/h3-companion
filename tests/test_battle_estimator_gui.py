@@ -146,6 +146,27 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
         self.assertNotIn("setHealth(", load_state_body)
         self.assertIn('setText(elements.mode, "Snapshot unavailable")', app_js)
         self.assertIn('renderRecentHeroes([])', app_js)
+        for expected in (
+            "__battleEstimatorGuiTest",
+            "buildMarkerCache",
+            "worldToScreen",
+            "screenToWorld",
+            "zoomAtPoint",
+            "hitTestMarker",
+            "markerContainsScreenPoint",
+            "markerScreenRadius",
+            "pointerdown",
+            "pointermove",
+            "pointerup",
+            "wheel",
+            "ResizeObserver",
+            "selected_hero_id",
+            "estimator_creature_id",
+            "removed"
+        ):
+            self.assertIn(expected, app_js)
+        self.assertNotIn("/api/simulate-target", app_js)
+        self.assertNotIn("/api/select-hero", app_js)
 
     def test_default_server_binds_to_localhost(self):
         server = battle_estimator_gui.create_server(port=0)
