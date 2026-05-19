@@ -392,6 +392,18 @@ payloads are stable.
 1. Unit tests with synthetic save/map fixtures where possible.
 2. Manual local check loads the latest Diamond save and matching `.h3m`.
 
+**Completion Notes (2026-05-19):**
+- Added `build_state_snapshot()` with `follow_latest` and `pinned` save modes.
+- Snapshot resolution reuses public save/map parser helpers, emits stable hero
+  and neutral IDs, JSON-safe positions, save/map fingerprints, map dimensions,
+  hero armies, and neutral target removal metadata.
+- Snapshot captures save/map fingerprints before parsing and rejects files that
+  change while the snapshot is being built.
+- Verified with `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest discover -s tests`,
+  `python3 tools/battle_estimator.py --help`, `git diff --check`, and a
+  standalone synthetic snapshot smoke test.
+
 ---
 
 ### GUI-T03: Config Recent Heroes
@@ -742,7 +754,7 @@ structure and frontend test strategy.
 | Task | Status | Blocked By | Owner | Notes |
 |---|---|---|---|---|
 | GUI-T01: GUI Server + Static Asset Skeleton | done | -- | Codex | Local stdlib server, static shell, and health endpoint added. |
-| GUI-T02: Snapshot Builder Service | todo | GUI-T01 | unassigned | Central backend state model. |
+| GUI-T02: Snapshot Builder Service | done | GUI-T01 | Codex | Snapshot builder supports follow-latest, pinned saves, map dimensions, heroes, neutrals, and fingerprints. |
 | GUI-T03: Config Recent Heroes | todo | -- | unassigned | Independent config extension. |
 | GUI-T04: JSON API Endpoints | blocked | GUI-T02, GUI-T03 | unassigned | Frontend/backend contract. |
 | GUI-T05: Frontend Layout Shell | todo | GUI-T01 | unassigned | First usable browser screen. |
