@@ -13,6 +13,7 @@ from pathlib import Path
 from tools import battle_estimator
 from tools import h3_map_parser
 from tools import h3_save_parser
+from tests.test_h3_map_parser import _build_minimal_sod_h3m_with_monster
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +32,7 @@ def _write_xor_hero_window(
     creature_ids=ISRA_CREATURE_IDS,
     counts=ISRA_COUNTS,
     name_offset=256,
+    position=None,
 ):
     ids_offset = name_offset + h3_save_parser.HERO_ARMY_TYPES_FROM_NAME_OFFSET
     counts_offset = name_offset + h3_save_parser.HERO_ARMY_COUNTS_FROM_NAME_OFFSET
@@ -49,6 +51,17 @@ def _write_xor_hero_window(
     data[name_offset:name_offset + h3_save_parser.HERO_NAME_SIZE] = _xor_encode(
         padded_name
     )
+    if position is not None:
+        x, y, z = position
+        position_offset = name_offset + h3_save_parser.HERO_STRUCT_POSITION_FROM_NAME_OFFSET
+        position_bytes = b"".join((
+            int(x).to_bytes(2, "little"),
+            int(y).to_bytes(2, "little"),
+            bytes([int(z)]),
+        ))
+        data[position_offset:position_offset + h3_save_parser.HERO_POSITION_SIZE] = _xor_encode(
+            position_bytes
+        )
 
 
 def _build_xor_hero_fixture(
@@ -56,6 +69,7 @@ def _build_xor_hero_fixture(
     creature_ids=ISRA_CREATURE_IDS,
     counts=ISRA_COUNTS,
     name_offset=256,
+    position=None,
 ):
     data = bytearray(name_offset + h3_save_parser.HERO_NAME_SIZE + 32)
     data[0:len(h3_save_parser.H3SVG_SIGNATURE)] = h3_save_parser.H3SVG_SIGNATURE
@@ -65,6 +79,7 @@ def _build_xor_hero_fixture(
         creature_ids=creature_ids,
         counts=counts,
         name_offset=name_offset,
+        position=position,
     )
     return bytes(data)
 
@@ -84,18 +99,32 @@ def _build_multi_hero_fixture(hero_specs):
     return bytes(data)
 
 
-def _compressed_save(hero_name="Isra", counts=ISRA_COUNTS):
-    return gzip.compress(_build_xor_hero_fixture(hero_name=hero_name, counts=counts))
+def _compressed_save(hero_name="Isra", counts=ISRA_COUNTS, position=None):
+    return gzip.compress(_build_xor_hero_fixture(
+        hero_name=hero_name,
+        counts=counts,
+        position=position,
+    ))
 
 
 def _compressed_multi_hero_save(hero_specs):
     return gzip.compress(_build_multi_hero_fixture(hero_specs))
 
 
-def _write_save(game_dir: Path, name: str, hero_name="Isra", counts=ISRA_COUNTS):
+def _write_save(
+    game_dir: Path,
+    name: str,
+    hero_name="Isra",
+    counts=ISRA_COUNTS,
+    position=None,
+):
     game_dir.mkdir(parents=True, exist_ok=True)
     save_path = game_dir / name
-    save_path.write_bytes(_compressed_save(hero_name=hero_name, counts=counts))
+    save_path.write_bytes(_compressed_save(
+        hero_name=hero_name,
+        counts=counts,
+        position=position,
+    ))
     return save_path
 
 
@@ -111,6 +140,13 @@ def _write_empty_save(game_dir: Path, name: str):
     save_path = game_dir / name
     save_path.write_bytes(gzip.compress(h3_save_parser.H3SVG_SIGNATURE))
     return save_path
+
+
+def _write_h3m_map(path: Path, **monster_kwargs):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _build_minimal_sod_h3m_with_monster(**monster_kwargs)
+    path.write_bytes(gzip.compress(payload))
+    return path
 
 
 def _run_cli(args, home: Path | None = None, input_text: str | None = None):
@@ -141,6 +177,23 @@ def _write_config(home: Path, autosave_dir: Path, last_hero: str | None = None):
 
 
 class BattleEstimatorCliTests(unittest.TestCase):
+    def test_simulation_default_helpers_preserve_analysis_and_scan_defaults(self):
+        args = argparse.Namespace(simulations=None)
+
+        self.assertEqual(
+            battle_estimator._analysis_simulations(args),
+            battle_estimator.DEFAULT_ANALYSIS_SIMULATIONS,
+        )
+        self.assertEqual(
+            battle_estimator._scan_simulations(args),
+            battle_estimator.DEFAULT_SCAN_SIMULATIONS,
+        )
+
+        args = argparse.Namespace(simulations=123)
+
+        self.assertEqual(battle_estimator._analysis_simulations(args), 123)
+        self.assertEqual(battle_estimator._scan_simulations(args), 123)
+
     def test_resolve_cli_map_uses_explicit_map_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -276,6 +329,156 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("could not auto-detect H3M map", result.stderr)
         self.assertIn("--map-file", result.stderr)
         self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
+
+    def test_scan_nearby_requires_hero(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir) / "game"
+            _write_save(game_dir, "415.GM2", position=(39, 69, 1))
+            map_path = Path(temp_dir) / "map.h3m"
+            _write_h3m_map(map_path)
+
+            result = _run_cli([
+                "--scan-nearby",
+                "2",
+                "--save-file",
+                str(game_dir / "415.GM2"),
+                "--map-file",
+                str(map_path),
+            ])
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("--scan-nearby requires --hero", result.stderr)
+
+    def test_scan_nearby_rejects_invalid_target_type(self):
+        result = _run_cli([
+            "--scan-nearby",
+            "2",
+            "--hero",
+            "Isra",
+            "--target-type",
+            "town",
+        ])
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("invalid choice", result.stderr)
+        self.assertIn("town", result.stderr)
+
+    def test_scan_nearby_prints_compact_output_for_synthetic_neutral(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            save_path = _write_save(
+                game_dir,
+                "415.GM2",
+                position=(39, 69, 1),
+            )
+            map_path = _write_h3m_map(
+                temp_path / "map.h3m",
+                position=(39, 70, 1),
+                count=37,
+            )
+
+            result = _run_cli([
+                "--scan-nearby",
+                "2",
+                "--hero",
+                "Isra",
+                "--save-file",
+                str(save_path),
+                "--map-file",
+                str(map_path),
+                "--target-type",
+                "neutral",
+                "--include-removed",
+                "-n",
+                "1",
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("VCMI Nearby Scan", result.stdout)
+        self.assertIn(f"Plik zapisu:     {save_path}", result.stdout)
+        self.assertIn(f"Plik mapy:       {map_path}", result.stdout)
+        self.assertIn("Bohater:         Isra (39,69,1)", result.stdout)
+        self.assertIn("Promien skanu:   2", result.stdout)
+        self.assertIn("Target filter:   neutral", result.stdout)
+        self.assertIn("Include removed: yes", result.stdout)
+        self.assertIn("Symulacje:       1", result.stdout)
+        self.assertIn("neutral", result.stdout)
+        self.assertIn("(39,70,1)", result.stdout)
+        self.assertIn("37x Gnoll", result.stdout)
+        self.assertRegex(result.stdout, r"\s100\.0\s")
+
+    def test_scan_nearby_uses_default_scan_simulations_without_override(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            save_path = _write_save(
+                game_dir,
+                "415.GM2",
+                position=(39, 69, 1),
+            )
+            map_path = _write_h3m_map(
+                temp_path / "map.h3m",
+                position=(39, 70, 1),
+                count=37,
+            )
+
+            result = _run_cli([
+                "--scan-nearby",
+                "0",
+                "--hero",
+                "Isra",
+                "--save-file",
+                str(save_path),
+                "--map-file",
+                str(map_path),
+                "--target-type",
+                "neutral",
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Symulacje:       500", result.stdout)
+        self.assertIn("No nearby targets found.", result.stdout)
+
+    def test_scan_nearby_prints_unsupported_note_for_unknown_neutral(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            save_path = _write_save(
+                game_dir,
+                "415.GM2",
+                position=(39, 69, 1),
+            )
+            map_path = _write_h3m_map(
+                temp_path / "map.h3m",
+                animation_file="AVWunknown.def",
+                subid=104,
+                count=20,
+                position=(39, 70, 1),
+            )
+
+            result = _run_cli([
+                "--scan-nearby",
+                "2",
+                "--hero",
+                "Isra",
+                "--save-file",
+                str(save_path),
+                "--map-file",
+                str(map_path),
+                "--target-type",
+                "neutral",
+                "-n",
+                "1",
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("20x unsupported subid 104", result.stdout)
+        self.assertIn(
+            "unsupported neutral creature: AVWunknown.def/subid 104",
+            result.stdout,
+        )
+        self.assertIn("--", result.stdout)
 
     def test_manual_army_mode_still_runs_without_autosave_context(self):
         result = _run_cli(["10 pikeman", "vs", "20 boar", "-n", "1"])

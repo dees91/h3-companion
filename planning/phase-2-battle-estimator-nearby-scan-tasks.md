@@ -716,6 +716,28 @@ identity model.
 3. Manual local command:
    `python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --save-file ".../post_attack_2.GM1" --map-file ".../Diamond.h3m"`.
 
+**Completion Notes (2026-05-19):**
+- Added `--scan-nearby RADIUS`, `--target-type all|neutral|hero`, and
+  `--include-removed` to `tools/battle_estimator.py`. `--map-file` is reused
+  and required for scan mode when auto-detection cannot resolve a map.
+- Scan mode now loads the selected save and H3M map, selects the requested
+  hero, builds nearby targets, estimates each target, and prints a compact
+  distance-sorted table with distance, type, position, target/army,
+  `enemy_ai`, `win%`, and notes.
+- Added scan-specific simulation defaults: normal analysis still defaults to
+  `2000`, while scan mode defaults to `500`; `--simulations/-n` overrides
+  both.
+- Added CLI tests for scan argument validation, target-type choices, scan
+  simulation default, compact supported-target output, and unsupported neutral
+  notes using synthetic positioned saves and H3M fixtures.
+- Verified with `python3 -m unittest tests.test_battle_estimator_cli
+  tests.test_nearby_scan`, `git diff --check`, and
+  `python3 -m unittest discover -s tests`.
+- Manual local command on `post_attack_2.GM1` and the Diamond H3M map printed
+  Isra at `(39,69,1)`, radius `10`, filter `all`, simulation count `500`, and
+  table rows where supported targets had `win%` and the unsupported Centaur
+  Captain mapping had a clear unsupported note.
+
 ---
 
 ### NS-T10: Documentation and Verification Pass
@@ -790,5 +812,5 @@ H3M-to-save object identity.
 | NS-T06: Removed Neutral Detection | done | NS-T02 | Codex | Removed neutral detection and filtering implemented. |
 | NS-T07: Nearby Target Scan Service | done | NS-T02, NS-T03, NS-T04, NS-T05, NS-T06 | Codex | Nearby scan service implemented. |
 | NS-T08: Per-Target Estimation Runner | done | NS-T07 | Codex | Compact per-target estimation implemented. |
-| NS-T09: CLI Output and Arguments | todo | NS-T08 | unassigned | User-facing scan command. |
-| NS-T10: Documentation and Verification Pass | blocked | NS-T09 | unassigned | Final docs and tests. |
+| NS-T09: CLI Output and Arguments | done | NS-T08 | Codex | Nearby scan CLI implemented. |
+| NS-T10: Documentation and Verification Pass | todo | NS-T09 | unassigned | Final docs and tests. |

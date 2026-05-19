@@ -41,6 +41,7 @@ ATTACK_POINT_DAMAGE_FACTOR = 0.05
 ATTACK_POINT_DAMAGE_FACTOR_CAP = 4.0
 DEFENSE_POINT_DAMAGE_FACTOR = 0.025
 DEFENSE_POINT_DAMAGE_FACTOR_CAP = 0.7
+DEFAULT_ANALYSIS_SIMULATIONS = 2000
 
 AUTOSAVE_MODELING_LIMITATION = (
     "Modeling note: hero stats, skills, artifacts, spells, morale, and luck "
@@ -1076,6 +1077,10 @@ def _print_parsed_army(label: str, parsed: List[Tuple[Creature, int, Optional[Tu
 
 
 def _print_cli_error(exc: Exception):
+    if isinstance(exc, NearbyScanError):
+        print(f"  Nie mozna wykonac skanu: {exc}", file=sys.stderr)
+        return
+
     if isinstance(exc, h3_save_parser.HeroSelectionError):
         print(
             f"  Nie mozna wybrac bohatera '{exc.query}': {exc.reason}",
@@ -1114,6 +1119,7 @@ def _print_cli_error(exc: Exception):
 def _print_usage_examples():
     print("\nPrzyklady:")
     print("  python3 tools/battle_estimator.py")
+    print("  python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra")
     print('  python3 tools/battle_estimator.py Isra vs "horde of ancient behemoth"')
     print('  python3 tools/battle_estimator.py --hero Isra vs "1 pikeman"')
     print("  python3 tools/battle_estimator.py --list-save-heroes")
@@ -1144,6 +1150,18 @@ def _handle_config_command(args: argparse.Namespace) -> bool:
 
 def _format_hero_army_summary(hero_army: h3_save_parser.HeroArmy) -> str:
     return hero_army.army_summary
+
+
+def _analysis_simulations(args: argparse.Namespace) -> int:
+    if args.simulations is None:
+        return DEFAULT_ANALYSIS_SIMULATIONS
+    return args.simulations
+
+
+def _scan_simulations(args: argparse.Namespace) -> int:
+    if args.simulations is None:
+        return DEFAULT_SCAN_SIMULATIONS
+    return args.simulations
 
 
 def _sort_hero_armies(heroes) -> List[h3_save_parser.HeroArmy]:
@@ -1296,6 +1314,138 @@ def _save_wizard_last_hero(hero_name: str):
         print(f"  Warning: could not save last hero: {exc}", file=sys.stderr)
 
 
+def _run_nearby_scan(args: argparse.Namespace) -> None:
+    if args.army_specs:
+        raise NearbyScanError("--scan-nearby does not accept army specs")
+    if not args.hero or not args.hero.strip():
+        raise NearbyScanError("--scan-nearby requires --hero")
+    if args.scan_nearby < 0:
+        raise NearbyScanError(
+            f"scan radius must be non-negative: {args.scan_nearby}"
+        )
+
+    context = _resolve_cli_save(args)
+    map_file = _resolve_cli_map(args, context, required=True)
+    loaded_save = h3_save_parser.load_save(context.save_file)
+    detected_heroes = h3_save_parser.scan_xor01_hero_armies(loaded_save.data)
+    listed_heroes = h3_save_parser.filter_relevant_heroes(
+        detected_heroes,
+        all_heroes=args.all_heroes,
+    )
+    selected_hero = h3_save_parser.select_hero(listed_heroes, args.hero.strip())
+
+    neutral_targets = h3_map_parser.load_h3m_neutral_monsters(map_file)
+    hero_targets = h3_save_parser.build_other_hero_targets(
+        detected_heroes,
+        selected_hero,
+        same_level_z=selected_hero.z,
+    )
+    removed_records = h3_save_parser.detect_removed_neutral_records(
+        loaded_save.data
+    )
+    scan_targets = build_nearby_scan_targets(
+        selected_hero,
+        neutral_targets=neutral_targets,
+        hero_targets=hero_targets,
+        removed_records=removed_records,
+        radius=args.scan_nearby,
+        target_type=args.target_type,
+        include_removed=args.include_removed,
+    )
+    simulations = _scan_simulations(args)
+    estimates = estimate_nearby_scan_targets(
+        selected_hero,
+        scan_targets,
+        simulations=simulations,
+    )
+
+    _print_nearby_scan_results(
+        context,
+        map_file,
+        selected_hero,
+        args.scan_nearby,
+        args.target_type,
+        args.include_removed,
+        simulations,
+        estimates,
+    )
+
+
+def _print_nearby_scan_results(
+    context: h3_save_parser.SaveContext,
+    map_file: Path,
+    selected_hero: h3_save_parser.HeroArmy,
+    radius: int,
+    target_type: str,
+    include_removed: bool,
+    simulations: int,
+    estimates,
+) -> None:
+    print("=" * 65)
+    print("  VCMI Nearby Scan")
+    print(f"  Folder zapisu:   {context.game_dir}")
+    print(f"  Plik zapisu:     {context.save_file}")
+    print(f"  Plik mapy:       {map_file}")
+    print(
+        f"  Bohater:         {selected_hero.hero_name} "
+        f"{_format_scan_position(selected_hero.x, selected_hero.y, selected_hero.z)}"
+    )
+    print(f"  Promien skanu:   {radius}")
+    print(f"  Target filter:   {target_type}")
+    print(f"  Include removed: {'yes' if include_removed else 'no'}")
+    print(f"  Symulacje:       {simulations}")
+    print("=" * 65)
+
+    if not estimates:
+        print("  No nearby targets found.")
+        return
+
+    print(
+        f"  {'d':>3}  {'type':<7}  {'pos':<11}  "
+        f"{'target/army':<32}  {'enemy_ai':>8}  {'win%':>7}  note"
+    )
+    print(
+        f"  {'-' * 3}  {'-' * 7}  {'-' * 11}  "
+        f"{'-' * 32}  {'-' * 8}  {'-' * 7}  {'-' * 16}"
+    )
+    for estimate in estimates:
+        print(
+            f"  {estimate.distance:>3}  "
+            f"{estimate.target_type:<7}  "
+            f"{_format_scan_position(estimate.x, estimate.y, estimate.z):<11}  "
+            f"{_format_scan_target_label(estimate):<32}  "
+            f"{_format_scan_enemy_ai(estimate):>8}  "
+            f"{_format_scan_win_pct(estimate):>7}  "
+            f"{estimate.note}"
+        )
+
+
+def _format_scan_position(x: int, y: int, z: int) -> str:
+    return f"({x},{y},{z})"
+
+
+def _format_scan_target_label(estimate: NearbyScanEstimate) -> str:
+    target = estimate.scan_target.target
+    if estimate.target_type == "neutral":
+        creature_name = target.creature_name
+        if creature_name is None:
+            creature_name = f"unsupported subid {target.h3m_subid}"
+        return f"{target.count}x {creature_name}"
+    return f"{target.hero_name}, {target.total_creatures} creatures"
+
+
+def _format_scan_enemy_ai(estimate: NearbyScanEstimate) -> str:
+    if not estimate.enemy_army:
+        return "--"
+    return str(estimate.enemy_ai_value)
+
+
+def _format_scan_win_pct(estimate: NearbyScanEstimate) -> str:
+    if estimate.win_pct is None:
+        return "--"
+    return f"{estimate.win_pct:.1f}"
+
+
 def _run_wizard(args: argparse.Namespace) -> int:
     context = _resolve_cli_save(args)
     map_file = _resolve_cli_map(args, context)
@@ -1328,7 +1478,7 @@ def _run_wizard(args: argparse.Namespace) -> int:
     run_analysis(
         player_parsed,
         enemy_parsed,
-        args.simulations,
+        _analysis_simulations(args),
         args.verbose,
         player_label=selected_hero.hero_name,
         enemy_label="Wrog",
@@ -1490,6 +1640,13 @@ def main():
                         help="Jawna ścieżka do pliku .GM1/.GM2")
     parser.add_argument("--map-file",
                         help="Jawna ścieżka do pliku .h3m")
+    parser.add_argument("--scan-nearby", type=int,
+                        help="Skanuj cele w promieniu Manhattan od bohatera")
+    parser.add_argument("--target-type", choices=VALID_SCAN_TARGET_TYPES,
+                        default="all",
+                        help="Typ celu dla skanu: all, neutral lub hero")
+    parser.add_argument("--include-removed", action="store_true",
+                        help="Pokazuj usunięte neutralne cele w trybie debug")
     parser.add_argument("--autosave-dir",
                         help="Jawny folder gry z numericznymi zapisami .GM1/.GM2")
     parser.add_argument("--set-autosave-dir",
@@ -1500,8 +1657,8 @@ def main():
                         help="Pokaż konfigurację i zakończ")
     parser.add_argument("--all-heroes", action="store_true",
                         help="Uwzględnij także małe armie bohaterów przy wyborze")
-    parser.add_argument("--simulations", "-n", type=int, default=2000,
-                        help="Liczba symulacji (domyślnie: 2000)")
+    parser.add_argument("--simulations", "-n", type=int, default=None,
+                        help="Liczba symulacji (domyślnie: 2000; skan: 500)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Pokaż szczegóły pierwszej symulacji")
     args = parser.parse_args()
@@ -1517,6 +1674,22 @@ def main():
     except h3_save_parser.ConfigError as exc:
         _print_cli_error(exc)
         sys.exit(1)
+
+    if args.scan_nearby is not None:
+        try:
+            _run_nearby_scan(args)
+        except (
+            NearbyScanError,
+            h3_save_parser.SaveSelectionError,
+            h3_save_parser.SaveLoadError,
+            h3_save_parser.HeroSelectionError,
+            h3_save_parser.ConfigError,
+            h3_map_parser.H3MapSelectionError,
+            h3_map_parser.H3MapLoadError,
+        ) as exc:
+            _print_cli_error(exc)
+            sys.exit(1)
+        return
 
     if args.list_save_heroes:
         try:
@@ -1573,7 +1746,7 @@ def main():
         run_analysis(
             player_parsed,
             enemy_parsed,
-            args.simulations,
+            _analysis_simulations(args),
             args.verbose,
         )
         return
@@ -1602,7 +1775,7 @@ def main():
     run_analysis(
         player_parsed,
         enemy_parsed,
-        args.simulations,
+        _analysis_simulations(args),
         args.verbose,
         player_label=hero_army.hero_name,
         enemy_label="Wrog",
