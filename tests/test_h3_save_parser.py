@@ -49,6 +49,23 @@ def _removed_neutral_record_core_bytes(
     ))
 
 
+def _removed_neutral_coord_record_bytes(
+    position,
+    object_index,
+    h3m_subid,
+    removal_flags=0x48007000,
+):
+    x, y, z = position
+    encoded_yz = int(y) + (int(z) << h3_save_parser.REMOVED_NEUTRAL_COORD_LEVEL_SHIFT)
+    return b"".join((
+        int(x).to_bytes(2, "little"),
+        encoded_yz.to_bytes(2, "little"),
+        int(object_index).to_bytes(4, "little"),
+        int(removal_flags).to_bytes(4, "little"),
+        int(h3m_subid).to_bytes(4, "little"),
+    ))
+
+
 def _build_xor_hero_fixture(
     hero_name="Isra",
     creature_ids=ISRA_CREATURE_IDS,
@@ -88,6 +105,20 @@ def _build_xor_hero_fixture(
             position_bytes
         )
     return bytes(data), name_offset
+
+
+def _write_gzip_save(path: Path, payload: bytes):
+    path.write_bytes(gzip.compress(payload))
+
+
+def _brute_force_scan_xor01_hero_armies(data: bytes):
+    heroes = []
+    last_name_offset = len(data) - h3_save_parser.HERO_NAME_SIZE
+    for name_offset in range(h3_save_parser.HERO_STRUCT_NAME_OFFSET, last_name_offset + 1):
+        hero = h3_save_parser.parse_xor01_hero_at(data, name_offset)
+        if hero is not None:
+            heroes.append(hero)
+    return tuple(heroes)
 
 
 def _build_multi_xor_hero_fixture(hero_specs):
@@ -307,6 +338,35 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(map_aware_records[0].source_offset, 8)
         self.assertEqual(map_aware_records[0].removal_flags, 0x9000)
 
+    def test_detect_removed_neutral_records_uses_known_targets_for_coord_records(self):
+        payload = (
+            b"H3SVG"
+            + b"\x00" * 3
+            + _removed_neutral_coord_record_bytes(
+                (91, 92, 0),
+                3217,
+                119,
+                0x48007000,
+            )
+        )
+        neutral_targets = (
+            SimpleNamespace(object_index=3217, h3m_subid=119, x=91, y=92, z=0),
+            SimpleNamespace(object_index=3253, h3m_subid=119, x=87, y=85, z=0),
+        )
+
+        strict_records = h3_save_parser.detect_removed_neutral_records(payload)
+        map_aware_records = h3_save_parser.detect_removed_neutral_records(
+            payload,
+            neutral_targets=neutral_targets,
+        )
+
+        self.assertEqual(strict_records, ())
+        self.assertEqual(len(map_aware_records), 1)
+        self.assertEqual(map_aware_records[0].object_index, 3217)
+        self.assertEqual(map_aware_records[0].h3m_subid, 119)
+        self.assertEqual(map_aware_records[0].source_offset, 8)
+        self.assertEqual(map_aware_records[0].removal_flags, 0x48007000)
+
     def test_detect_removed_neutral_records_ignores_markerless_records_not_in_known_targets(self):
         payload = (
             b"H3SVG"
@@ -324,6 +384,34 @@ class H3SaveParserContractTests(unittest.TestCase):
         )
 
         self.assertEqual(records, ())
+
+    def test_detect_removed_neutral_records_ignores_coord_records_not_matching_target(self):
+        payload = (
+            b"H3SVG"
+            + b"\x00" * 3
+            + _removed_neutral_coord_record_bytes((91, 92, 0), 3217, 119)
+        )
+        wrong_subid = (
+            SimpleNamespace(object_index=3217, h3m_subid=120, x=91, y=92, z=0),
+        )
+        wrong_position = (
+            SimpleNamespace(object_index=3217, h3m_subid=119, x=91, y=93, z=0),
+        )
+
+        self.assertEqual(
+            h3_save_parser.detect_removed_neutral_records(
+                payload,
+                neutral_targets=wrong_subid,
+            ),
+            (),
+        )
+        self.assertEqual(
+            h3_save_parser.detect_removed_neutral_records(
+                payload,
+                neutral_targets=wrong_position,
+            ),
+            (),
+        )
 
     def test_detect_removed_neutral_records_ignores_invalid_heuristic_records(self):
         payload = b"".join((
@@ -535,6 +623,156 @@ class H3SaveParserContractTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.path, game_dir)
         self.assertIn("invalid save number", raised.exception.reason)
+
+    def test_load_removed_neutral_records_for_save_scans_numeric_history(self):
+        neutral_targets = (
+            SimpleNamespace(object_index=3217, h3m_subid=119, x=91, y=92, z=0),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            _write_gzip_save(game_dir / "133.GM2", b"H3SVG")
+            _write_gzip_save(
+                game_dir / "134.GM2",
+                b"H3SVG"
+                + b"\x00" * 3
+                + _removed_neutral_coord_record_bytes((91, 92, 0), 3217, 119),
+            )
+            _write_gzip_save(game_dir / "417.GM2", b"H3SVG")
+            _write_gzip_save(
+                game_dir / "418.GM2",
+                b"H3SVG"
+                + _removed_neutral_coord_record_bytes((91, 92, 0), 3217, 119),
+            )
+            _write_gzip_save(
+                game_dir / "post_attack.GM1",
+                b"H3SVG"
+                + _removed_neutral_coord_record_bytes((91, 92, 0), 3217, 119),
+            )
+
+            records = h3_save_parser.load_removed_neutral_records_for_save(
+                game_dir / "417.GM2",
+                neutral_targets=neutral_targets,
+                game_dir=game_dir,
+            )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].object_index, 3217)
+        self.assertEqual(records[0].h3m_subid, 119)
+        self.assertEqual(records[0].source_path.name, "134.GM2")
+
+    def test_load_removed_neutral_records_for_save_ignores_future_numeric_saves(self):
+        neutral_targets = (
+            SimpleNamespace(object_index=3217, h3m_subid=119, x=91, y=92, z=0),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            _write_gzip_save(game_dir / "133.GM2", b"H3SVG")
+            _write_gzip_save(
+                game_dir / "134.GM2",
+                b"H3SVG"
+                + _removed_neutral_coord_record_bytes((91, 92, 0), 3217, 119),
+            )
+
+            records = h3_save_parser.load_removed_neutral_records_for_save(
+                game_dir / "133.GM2",
+                neutral_targets=neutral_targets,
+                game_dir=game_dir,
+            )
+
+        self.assertEqual(records, ())
+
+    def test_removed_neutral_history_cache_reuses_persisted_entries(self):
+        neutral_targets = (
+            SimpleNamespace(object_index=3217, h3m_subid=119, x=91, y=92, z=0),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            cache_dir = temp_path / "cache"
+            game_dir.mkdir()
+            _write_gzip_save(game_dir / "001.GM2", b"H3SVG")
+            _write_gzip_save(
+                game_dir / "002.GM2",
+                b"H3SVG"
+                + _removed_neutral_coord_record_bytes((91, 92, 0), 3217, 119),
+            )
+
+            cache = h3_save_parser.RemovedNeutralHistoryCache(cache_dir=cache_dir)
+            records = cache.load_removed_neutral_records_for_save(
+                game_dir / "002.GM2",
+                neutral_targets=neutral_targets,
+                game_dir=game_dir,
+            )
+
+            warm_cache = h3_save_parser.RemovedNeutralHistoryCache(cache_dir=cache_dir)
+            with patch(
+                "tools.h3_save_parser.load_save",
+                side_effect=AssertionError("unexpected cache miss"),
+            ):
+                cached_records = warm_cache.load_removed_neutral_records_for_save(
+                    game_dir / "002.GM2",
+                    neutral_targets=neutral_targets,
+                    game_dir=game_dir,
+                )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(len(cached_records), 1)
+        self.assertEqual(cached_records[0].source_path.name, "002.GM2")
+
+    def test_removed_neutral_history_cache_scans_only_new_numeric_saves(self):
+        neutral_targets = (
+            SimpleNamespace(object_index=3217, h3m_subid=119, x=91, y=92, z=0),
+            SimpleNamespace(object_index=3253, h3m_subid=119, x=87, y=85, z=0),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            cache_dir = temp_path / "cache"
+            game_dir.mkdir()
+            _write_gzip_save(game_dir / "001.GM2", b"H3SVG")
+            _write_gzip_save(
+                game_dir / "002.GM2",
+                b"H3SVG"
+                + _removed_neutral_coord_record_bytes((91, 92, 0), 3217, 119),
+            )
+            cache = h3_save_parser.RemovedNeutralHistoryCache(cache_dir=cache_dir)
+            cache.load_removed_neutral_records_for_save(
+                game_dir / "002.GM2",
+                neutral_targets=neutral_targets,
+                game_dir=game_dir,
+            )
+
+            _write_gzip_save(
+                game_dir / "003.GM2",
+                b"H3SVG"
+                + _removed_neutral_coord_record_bytes((87, 85, 0), 3253, 119),
+            )
+            original_load_save = h3_save_parser.load_save
+            load_save_calls = []
+
+            def recording_load_save(path):
+                load_save_calls.append(Path(path).name)
+                return original_load_save(path)
+
+            with patch(
+                "tools.h3_save_parser.load_save",
+                side_effect=recording_load_save,
+            ):
+                records = cache.load_removed_neutral_records_for_save(
+                    game_dir / "003.GM2",
+                    neutral_targets=neutral_targets,
+                    game_dir=game_dir,
+                )
+
+        self.assertEqual(load_save_calls, ["003.GM2"])
+        self.assertEqual(
+            [(record.object_index, record.source_path.name) for record in records],
+            [(3217, "002.GM2"), (3253, "003.GM2")],
+        )
 
     def test_resolve_save_context_selects_game_dir_and_latest_save(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -943,6 +1181,50 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(len(heroes), 1)
         self.assertEqual(heroes[0].hero_name, "Isra")
         self.assertEqual(heroes[0].source_offset, name_offset + len(b"prefix bytes"))
+
+    def test_scan_xor01_hero_armies_matches_brute_force_candidates(self):
+        first_fixture, first_offset = _build_xor_hero_fixture(
+            hero_name="Isra",
+            name_offset=300,
+        )
+        second_fixture, second_offset = _build_xor_hero_fixture(
+            hero_name="Fafner",
+            name_offset=420,
+        )
+        false_name_candidate = _xor_encode(b"BogusHero\x00\x00\x00\x00")
+        data = (
+            b"\x00" * 17
+            + false_name_candidate
+            + b"\x00" * 23
+            + first_fixture
+            + b"\xff" * 31
+            + second_fixture
+            + b"\x00" * 29
+        )
+
+        heroes = h3_save_parser.scan_xor01_hero_armies(data)
+        brute_force_heroes = _brute_force_scan_xor01_hero_armies(data)
+
+        self.assertEqual(
+            [hero.source_offset for hero in heroes],
+            [hero.source_offset for hero in brute_force_heroes],
+        )
+        self.assertEqual(
+            [hero.hero_name for hero in heroes],
+            [hero.hero_name for hero in brute_force_heroes],
+        )
+        self.assertEqual(
+            [hero.source_offset for hero in heroes],
+            [
+                len(b"\x00" * 17 + false_name_candidate + b"\x00" * 23) + first_offset,
+                (
+                    len(b"\x00" * 17 + false_name_candidate + b"\x00" * 23)
+                    + len(first_fixture)
+                    + len(b"\xff" * 31)
+                    + second_offset
+                ),
+            ],
+        )
 
     def test_parse_xor01_hero_at_reads_swapped_first_two_slots(self):
         data, name_offset = _build_xor_hero_fixture(

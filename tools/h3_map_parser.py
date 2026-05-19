@@ -596,6 +596,9 @@ def _removed_neutral_note(record) -> str:
     source_offset = getattr(record, "source_offset", None)
     if source_offset is None:
         return "removed-save-record"
+    source_path = getattr(record, "source_path", None)
+    if source_path is not None:
+        return f"removed-save-record@{Path(source_path).name}:{source_offset}"
     return f"removed-save-record@{source_offset}"
 
 

@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import re
+import threading
 import zlib
 from dataclasses import dataclass
 from datetime import datetime
@@ -35,6 +37,7 @@ DEFAULT_AUTOSAVE_ROOT = (
     / "PlayerTwo"
 )
 CONFIG_PATH = Path.home() / ".config" / "vcmi-battle-estimator" / "config.json"
+CACHE_ROOT = Path.home() / ".cache" / "vcmi-battle-estimator"
 
 SAVE_EXTENSIONS = (".GM1", ".GM2")
 RECENT_HERO_LIMIT = 8
@@ -46,23 +49,39 @@ GAME_FOLDER_DATE_PATTERN = re.compile(
 )
 NUMERIC_SAVE_PATTERN = re.compile(r"^(?P<number>\d+)\.(?P<ext>gm[12])$", re.I)
 HERO_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9 '\-]{0,12}$")
+HERO_NAME_FIRST_CHARS = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+HERO_NAME_REST_CHARS = HERO_NAME_FIRST_CHARS + b"0123456789 '-"
 
 HERO_ARMY_SLOT_COUNT = 7
 HERO_ARMY_VALUE_SIZE = 4
 HERO_NAME_SIZE = 13
 HERO_ARMY_XOR_KEY = 0x01
+ENCODED_HERO_NAME_CANDIDATE_PATTERN = re.compile(
+    rb"(?=([" +
+    re.escape(bytes(byte ^ HERO_ARMY_XOR_KEY for byte in HERO_NAME_FIRST_CHARS)) +
+    rb"][" +
+    re.escape(
+        bytes(byte ^ HERO_ARMY_XOR_KEY for byte in HERO_NAME_REST_CHARS)
+        + bytes([HERO_ARMY_XOR_KEY])
+    ) +
+    rb"]{12}))"
+)
 # Sanity cap for parser candidates, not a Heroes III game-rule limit.
 MAX_HERO_ARMY_COUNT = 1_000_000
 DEFAULT_RELEVANT_HERO_AI_VALUE = 5_000
 DEFAULT_RELEVANT_HERO_TOTAL_CREATURES = 50
 REMOVED_NEUTRAL_RECORD_CORE_SIZE = 12
 REMOVED_NEUTRAL_RECORD_SIZE = 16
+REMOVED_NEUTRAL_COORD_RECORD_SIZE = 16
 REMOVED_NEUTRAL_SCAN_TAIL_BYTES = 64 * 1024
 REMOVED_NEUTRAL_RECORD_MARKER = 11
 MAX_REMOVED_NEUTRAL_OBJECT_INDEX = 100_000
 MAX_REMOVED_NEUTRAL_SUBID = 512
 MAX_REMOVED_NEUTRAL_REMOVAL_FLAGS = 0xFFFF
+MAX_REMOVED_NEUTRAL_COORD_REMOVAL_FLAGS = 0xFFFFFFFF
 REMOVED_NEUTRAL_REMOVAL_FLAG_GRANULARITY = 0x1000
+REMOVED_NEUTRAL_COORD_LEVEL_SHIFT = 10
+REMOVED_NEUTRAL_COORD_LEVEL_MASK = (1 << REMOVED_NEUTRAL_COORD_LEVEL_SHIFT) - 1
 
 HERO_STRUCT_ARMY_TYPES_OFFSET = 113
 HERO_STRUCT_ARMY_COUNTS_OFFSET = 141
@@ -115,6 +134,120 @@ class RemovedNeutralRecord:
     h3m_subid: int
     source_offset: int
     removal_flags: int
+    source_path: Path | None = None
+
+
+class RemovedNeutralHistoryCache:
+    """Persistent cache for removed neutral records found in save history."""
+
+    def __init__(self, cache_dir: str | Path | None = None):
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else (
+            CACHE_ROOT / "removed-neutrals"
+        )
+        self._lock = threading.RLock()
+        self._documents: dict[Path, dict] = {}
+
+    def load_removed_neutral_records_for_save(
+        self,
+        save_file: str | Path,
+        neutral_targets=None,
+        game_dir: str | Path | None = None,
+    ) -> tuple[RemovedNeutralRecord, ...]:
+        """Load removed neutral records using per-save persistent cache entries."""
+
+        target_keys = _removed_neutral_target_keys(neutral_targets)
+        if target_keys is not None and not target_keys:
+            return ()
+
+        save_path = Path(save_file)
+        history_paths = _removed_neutral_history_save_paths(save_path, game_dir)
+        cache_path = self._cache_path(
+            game_dir if game_dir is not None else save_path.parent
+        )
+        target_signature = _removed_neutral_target_signature(neutral_targets)
+        remaining_keys = set(target_keys) if target_keys is not None else None
+        records = []
+        seen_keys = set()
+
+        with self._lock:
+            document = self._load_document(cache_path)
+            entries = document.setdefault("entries", {}).setdefault(target_signature, {})
+            dirty = False
+
+            for history_save_path in history_paths:
+                fingerprint = _removed_neutral_file_fingerprint(history_save_path)
+                entry_key = str(history_save_path)
+                entry = entries.get(entry_key)
+                if not _removed_neutral_cache_entry_matches(entry, fingerprint):
+                    loaded_save = load_save(history_save_path)
+                    detected_records = detect_removed_neutral_records(
+                        loaded_save.data,
+                        neutral_targets=neutral_targets,
+                    )
+                    entry = {
+                        "fingerprint": fingerprint,
+                        "records": [
+                            _removed_neutral_record_to_cache(record)
+                            for record in detected_records
+                        ],
+                    }
+                    entries[entry_key] = entry
+                    dirty = True
+
+                for record in _removed_neutral_records_from_cache_entry(
+                    entry,
+                    history_save_path,
+                ):
+                    key = (record.object_index, record.h3m_subid)
+                    if key in seen_keys:
+                        continue
+                    records.append(record)
+                    seen_keys.add(key)
+                    if remaining_keys is not None:
+                        remaining_keys.discard(key)
+                        if not remaining_keys:
+                            if dirty:
+                                self._write_document(cache_path, document)
+                            return tuple(records)
+
+            if dirty:
+                self._write_document(cache_path, document)
+
+        return tuple(records)
+
+    def _cache_path(self, game_dir: str | Path) -> Path:
+        folder = Path(game_dir).expanduser().resolve()
+        digest = hashlib.sha256(str(folder).encode("utf-8")).hexdigest()
+        return self.cache_dir / f"{digest}.json"
+
+    def _load_document(self, cache_path: Path) -> dict:
+        document = self._documents.get(cache_path)
+        if document is not None:
+            return document
+
+        try:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        if not isinstance(data, dict) or data.get("version") != 1:
+            data = {"version": 1, "entries": {}}
+        if not isinstance(data.get("entries"), dict):
+            data["entries"] = {}
+
+        self._documents[cache_path] = data
+        return data
+
+    def _write_document(self, cache_path: Path, document: dict) -> None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = cache_path.with_name(f".{cache_path.name}.tmp")
+            temp_path.write_text(
+                json.dumps(document, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            temp_path.replace(cache_path)
+        except OSError:
+            return
 
 
 @dataclass(frozen=True)
@@ -410,6 +543,114 @@ def load_removed_neutral_records_from_save(
     return detect_removed_neutral_records(loaded_save.data)
 
 
+def load_removed_neutral_records_for_save(
+    save_file: str | Path,
+    neutral_targets=None,
+    game_dir: str | Path | None = None,
+) -> tuple[RemovedNeutralRecord, ...]:
+    """Load removed neutral records from one save and earlier numeric saves."""
+
+    target_keys = _removed_neutral_target_keys(neutral_targets)
+    if target_keys is not None and not target_keys:
+        return ()
+    remaining_keys = set(target_keys) if target_keys is not None else None
+    save_path = Path(save_file)
+    records = []
+    seen_keys = set()
+    for history_save_path in _removed_neutral_history_save_paths(save_path, game_dir):
+        loaded_save = load_save(history_save_path)
+        for record in detect_removed_neutral_records(
+            loaded_save.data,
+            neutral_targets=neutral_targets,
+        ):
+            key = (record.object_index, record.h3m_subid)
+            if key in seen_keys:
+                continue
+            records.append(_removed_neutral_record_with_path(record, history_save_path))
+            seen_keys.add(key)
+            if remaining_keys is not None:
+                remaining_keys.discard(key)
+                if not remaining_keys:
+                    return tuple(records)
+
+    return tuple(records)
+
+
+def _removed_neutral_file_fingerprint(path: str | Path) -> dict:
+    file_path = Path(path)
+    stat_result = file_path.stat()
+    return {
+        "path": str(file_path),
+        "size": stat_result.st_size,
+        "mtime_ns": stat_result.st_mtime_ns,
+    }
+
+
+def _removed_neutral_cache_entry_matches(entry, fingerprint: dict) -> bool:
+    return (
+        isinstance(entry, dict)
+        and entry.get("fingerprint") == fingerprint
+        and isinstance(entry.get("records"), list)
+    )
+
+
+def _removed_neutral_target_signature(neutral_targets) -> str:
+    if neutral_targets is None:
+        return "all-targets"
+    items = []
+    for target in neutral_targets:
+        position = _removed_neutral_target_position(target)
+        items.append((
+            int(target.object_index),
+            int(target.h3m_subid),
+            (-1, -1, -1) if position is None else tuple(position),
+        ))
+    raw_signature = json.dumps(
+        sorted(items),
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(raw_signature.encode("utf-8")).hexdigest()
+
+
+def _removed_neutral_record_to_cache(record: RemovedNeutralRecord) -> dict:
+    return {
+        "object_index": record.object_index,
+        "h3m_subid": record.h3m_subid,
+        "source_offset": record.source_offset,
+        "removal_flags": record.removal_flags,
+    }
+
+
+def _removed_neutral_records_from_cache_entry(
+    entry,
+    source_path: Path,
+) -> tuple[RemovedNeutralRecord, ...]:
+    if not isinstance(entry, dict):
+        return ()
+    raw_records = entry.get("records")
+    if not isinstance(raw_records, list):
+        return ()
+
+    records = []
+    for raw_record in raw_records:
+        if not isinstance(raw_record, dict):
+            continue
+        try:
+            records.append(
+                RemovedNeutralRecord(
+                    object_index=int(raw_record["object_index"]),
+                    h3m_subid=int(raw_record["h3m_subid"]),
+                    source_offset=int(raw_record["source_offset"]),
+                    removal_flags=int(raw_record["removal_flags"]),
+                    source_path=source_path,
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return tuple(records)
+
+
 def find_h3svg_offset(data: bytes) -> int | None:
     """Return the offset of the H3SVG signature, if present."""
 
@@ -426,31 +667,94 @@ def detect_removed_neutral_records(
     """Scan the late save log for removed neutral monster records."""
 
     known_neutral_keys = _removed_neutral_target_keys(neutral_targets)
+    known_neutral_targets = _removed_neutral_target_lookup(neutral_targets)
     record_size = (
         REMOVED_NEUTRAL_RECORD_CORE_SIZE
         if known_neutral_keys is not None
         else REMOVED_NEUTRAL_RECORD_SIZE
     )
     tail_start = max(0, len(data) - REMOVED_NEUTRAL_SCAN_TAIL_BYTES)
-    last_offset = len(data) - record_size
+    minimum_record_size = min(record_size, REMOVED_NEUTRAL_COORD_RECORD_SIZE)
+    last_offset = len(data) - minimum_record_size
     records = []
     seen_keys = set()
 
-    for offset in range(tail_start, last_offset + 1):
-        record = _parse_removed_neutral_record_at(
+    if known_neutral_keys is None:
+        candidate_offsets = range(tail_start, last_offset + 1)
+    else:
+        candidate_offsets = _removed_neutral_candidate_offsets(
             data,
-            offset,
-            known_neutral_keys=known_neutral_keys,
+            tail_start,
+            known_neutral_keys,
+            known_neutral_targets,
         )
-        if record is None:
-            continue
-        key = (record.object_index, record.h3m_subid)
-        if key in seen_keys:
-            continue
-        records.append(record)
-        seen_keys.add(key)
+
+    for offset in candidate_offsets:
+        parsed_records = (
+            _parse_removed_neutral_record_at(
+                data,
+                offset,
+                known_neutral_keys=known_neutral_keys,
+            ),
+            _parse_removed_neutral_coord_record_at(
+                data,
+                offset,
+                known_neutral_targets=known_neutral_targets,
+            ),
+        )
+        for record in parsed_records:
+            if record is None:
+                continue
+            key = (record.object_index, record.h3m_subid)
+            if key in seen_keys:
+                continue
+            records.append(record)
+            seen_keys.add(key)
 
     return tuple(records)
+
+
+def _removed_neutral_candidate_offsets(
+    data: bytes,
+    tail_start: int,
+    known_neutral_keys,
+    known_neutral_targets,
+) -> tuple[int, ...]:
+    prefixes = {
+        int(object_index).to_bytes(4, "little")
+        for object_index, _ in known_neutral_keys
+    }
+    for target in known_neutral_targets.values():
+        position = _removed_neutral_target_position(target)
+        if position is None:
+            continue
+        x, y, z = position
+        encoded_yz = y + (z << REMOVED_NEUTRAL_COORD_LEVEL_SHIFT)
+        prefixes.add(
+            int(x).to_bytes(2, "little")
+            + int(encoded_yz).to_bytes(2, "little")
+        )
+
+    if not prefixes:
+        return ()
+    offsets = set()
+    for prefix in prefixes:
+        offsets.update(_find_all_offsets(data, prefix, tail_start, len(data)))
+    return tuple(sorted(offsets))
+
+
+def _find_all_offsets(
+    data: bytes,
+    needle: bytes,
+    start: int,
+    end: int,
+) -> tuple[int, ...]:
+    offsets = []
+    offset = data.find(needle, start, end)
+    while offset != -1:
+        offsets.append(offset)
+        offset = data.find(needle, offset + 1, end)
+    return tuple(offsets)
 
 
 def _removed_neutral_target_keys(neutral_targets):
@@ -458,6 +762,15 @@ def _removed_neutral_target_keys(neutral_targets):
         return None
     return {
         (int(target.object_index), int(target.h3m_subid))
+        for target in neutral_targets
+    }
+
+
+def _removed_neutral_target_lookup(neutral_targets):
+    if neutral_targets is None:
+        return None
+    return {
+        (int(target.object_index), int(target.h3m_subid)): target
         for target in neutral_targets
     }
 
@@ -496,6 +809,59 @@ def _parse_removed_neutral_record_at(
     )
 
 
+def _parse_removed_neutral_coord_record_at(
+    data: bytes,
+    offset: int,
+    known_neutral_targets=None,
+) -> RemovedNeutralRecord | None:
+    if known_neutral_targets is None:
+        return None
+
+    record_end = offset + REMOVED_NEUTRAL_COORD_RECORD_SIZE
+    if offset < 0 or record_end > len(data):
+        return None
+
+    x = int.from_bytes(data[offset:offset + 2], "little")
+    encoded_yz = int.from_bytes(data[offset + 2:offset + 4], "little")
+    y = encoded_yz & REMOVED_NEUTRAL_COORD_LEVEL_MASK
+    z = encoded_yz >> REMOVED_NEUTRAL_COORD_LEVEL_SHIFT
+    object_index = int.from_bytes(data[offset + 4:offset + 8], "little")
+    removal_flags = int.from_bytes(data[offset + 8:offset + 12], "little")
+    h3m_subid = int.from_bytes(data[offset + 12:offset + 16], "little")
+
+    target = known_neutral_targets.get((object_index, h3m_subid))
+    if target is None:
+        return None
+    target_position = _removed_neutral_target_position(target)
+    if target_position is None:
+        return None
+    if (x, y, z) != target_position:
+        return None
+    if not _looks_like_coord_removed_neutral_record(
+        object_index,
+        removal_flags,
+        h3m_subid,
+        x,
+        y,
+        z,
+    ):
+        return None
+
+    return RemovedNeutralRecord(
+        object_index=object_index,
+        h3m_subid=h3m_subid,
+        source_offset=offset,
+        removal_flags=removal_flags,
+    )
+
+
+def _removed_neutral_target_position(target):
+    try:
+        return int(target.x), int(target.y), int(target.z)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def _looks_like_removed_neutral_record(
     object_index: int,
     removal_flags: int,
@@ -518,6 +884,75 @@ def _looks_like_removed_neutral_record(
     if object_index <= 0:
         return False
     return marker == REMOVED_NEUTRAL_RECORD_MARKER
+
+
+def _looks_like_coord_removed_neutral_record(
+    object_index: int,
+    removal_flags: int,
+    h3m_subid: int,
+    x: int,
+    y: int,
+    z: int,
+) -> bool:
+    if object_index <= 0 or object_index > MAX_REMOVED_NEUTRAL_OBJECT_INDEX:
+        return False
+    if h3m_subid > MAX_REMOVED_NEUTRAL_SUBID:
+        return False
+    if x > MAX_HERO_POSITION_COORD or y > MAX_HERO_POSITION_COORD:
+        return False
+    if z > MAX_HERO_POSITION_LEVEL:
+        return False
+    if removal_flags <= 0 or removal_flags > MAX_REMOVED_NEUTRAL_COORD_REMOVAL_FLAGS:
+        return False
+    return removal_flags % REMOVED_NEUTRAL_REMOVAL_FLAG_GRANULARITY == 0
+
+
+def _removed_neutral_history_save_paths(
+    save_file: Path,
+    game_dir: str | Path | None,
+) -> tuple[Path, ...]:
+    selected_key = parse_numeric_save_name(save_file)
+    if selected_key is None:
+        return (save_file,)
+
+    folder = Path(game_dir) if game_dir is not None else save_file.parent
+    if not folder.is_dir():
+        return (save_file,)
+
+    try:
+        children = list(folder.iterdir())
+    except OSError:
+        return (save_file,)
+
+    candidates = []
+    for child in children:
+        if not child.is_file():
+            continue
+        numeric_save = parse_numeric_save_name(child)
+        if numeric_save is None:
+            continue
+        if numeric_save <= selected_key:
+            candidates.append((*numeric_save, child.name, child))
+
+    if not candidates:
+        return (save_file,)
+    return tuple(
+        item[3]
+        for item in sorted(candidates, key=lambda item: (item[0], item[1], item[2]))
+    )
+
+
+def _removed_neutral_record_with_path(
+    record: RemovedNeutralRecord,
+    source_path: Path,
+) -> RemovedNeutralRecord:
+    return RemovedNeutralRecord(
+        object_index=record.object_index,
+        h3m_subid=record.h3m_subid,
+        source_offset=record.source_offset,
+        removal_flags=record.removal_flags,
+        source_path=source_path,
+    )
 
 
 def xor_decode_bytes(
@@ -634,8 +1069,10 @@ def scan_xor01_hero_armies(data: bytes) -> tuple[HeroArmy, ...]:
     """Scan decompressed save bytes for XOR 0x01 encoded hero armies."""
 
     heroes = []
-    last_name_offset = len(data) - HERO_NAME_SIZE
-    for name_offset in range(HERO_STRUCT_NAME_OFFSET, last_name_offset + 1):
+    for match in ENCODED_HERO_NAME_CANDIDATE_PATTERN.finditer(data):
+        name_offset = match.start()
+        if name_offset < HERO_STRUCT_NAME_OFFSET:
+            continue
         hero_army = parse_xor01_hero_at(data, name_offset)
         if hero_army is not None:
             heroes.append(hero_army)

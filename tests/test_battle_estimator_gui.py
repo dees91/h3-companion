@@ -562,6 +562,74 @@ assert.strictEqual(
 
             self._with_server(check, app_state=app_state)
 
+    def test_state_reuses_domain_snapshot_cache_for_unchanged_save(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                removed_neutral_cache=(
+                    battle_estimator_gui.h3_save_parser.RemovedNeutralHistoryCache(
+                        cache_dir=temp_path / "cache"
+                    )
+                ),
+            )
+
+            original_builder = battle_estimator_gui._build_domain_snapshot_from_source
+
+            def check(base_url):
+                with patch(
+                    "tools.battle_estimator_gui._build_domain_snapshot_from_source",
+                    wraps=original_builder,
+                ) as wrapped_builder:
+                    self._get_json(base_url, "/api/state")
+                    self._get_json(base_url, "/api/state")
+
+                    self.assertEqual(wrapped_builder.call_count, 1)
+
+            self._with_server(check, app_state=app_state)
+
+    def test_select_hero_reuses_cached_domain_snapshot_after_state_load(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+                removed_neutral_cache=(
+                    battle_estimator_gui.h3_save_parser.RemovedNeutralHistoryCache(
+                        cache_dir=temp_path / "cache"
+                    )
+                ),
+            )
+
+            original_builder = battle_estimator_gui._build_domain_snapshot_from_source
+
+            def check(base_url):
+                with patch(
+                    "tools.battle_estimator_gui._build_domain_snapshot_from_source",
+                    wraps=original_builder,
+                ) as wrapped_builder:
+                    _, state_payload = self._get_json(base_url, "/api/state")
+                    self._post_json(
+                        base_url,
+                        "/api/select-hero",
+                        {"hero_id": state_payload["heroes"][0]["id"]},
+                    )
+
+                    self.assertEqual(wrapped_builder.call_count, 1)
+
+            self._with_server(check, app_state=app_state)
+
     def test_saves_endpoint_lists_numeric_saves_in_active_folder(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

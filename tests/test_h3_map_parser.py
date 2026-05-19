@@ -581,6 +581,50 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertTrue(included[0].removed)
         self.assertEqual(included[0].removal_note, "removed-save-record@947054")
 
+    def test_filter_removed_neutral_targets_notes_history_source_save(self):
+        template = h3_map_parser.H3ObjectTemplate(
+            template_index=3,
+            animation_file="AVWsprit.def",
+            block_mask=b"\x00" * 6,
+            visit_mask=b"\x01" * 6,
+            terrain_mask=0x01FF,
+            object_id=54,
+            subid=119,
+            object_type=2,
+            print_priority=4,
+        )
+        target = h3_map_parser.H3NeutralMonsterTarget(
+            object_index=3217,
+            x=91,
+            y=92,
+            z=0,
+            template=template,
+            h3m_subid=119,
+            count=22,
+            creature_name="Sprite",
+            estimator_creature_id=113,
+        )
+        records = (
+            h3_save_parser.RemovedNeutralRecord(
+                object_index=3217,
+                h3m_subid=119,
+                source_offset=939860,
+                removal_flags=0x48007000,
+                source_path=Path("/tmp/134.GM2"),
+            ),
+        )
+
+        included = h3_map_parser.filter_removed_neutral_targets(
+            (target,),
+            records,
+            include_removed=True,
+        )
+
+        self.assertEqual(
+            included[0].removal_note,
+            "removed-save-record@134.GM2:939860",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

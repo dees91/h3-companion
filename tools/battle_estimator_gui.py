@@ -61,6 +61,15 @@ class ApiError(Exception):
 
 
 @dataclass
+class GuiDomainSnapshotCache:
+    """In-memory cache for the latest GUI domain snapshot."""
+
+    key: tuple | None = None
+    snapshot: object | None = None
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+@dataclass
 class GuiAppState:
     """Mutable runtime settings for one local GUI server instance."""
 
@@ -70,6 +79,12 @@ class GuiAppState:
     map_file: Path | None = None
     selected_hero_id: str | None = None
     config_path: Path = h3_save_parser.CONFIG_PATH
+    snapshot_cache: GuiDomainSnapshotCache = field(
+        default_factory=GuiDomainSnapshotCache
+    )
+    removed_neutral_cache: h3_save_parser.RemovedNeutralHistoryCache = field(
+        default_factory=h3_save_parser.RemovedNeutralHistoryCache
+    )
     lock: threading.RLock = field(default_factory=threading.RLock)
     config_lock: threading.RLock = field(default_factory=threading.RLock)
 
@@ -89,6 +104,16 @@ class DomainSnapshot:
     visible_neutral_targets: tuple
     neutral_by_id: dict
     removed_records: tuple
+
+
+@dataclass(frozen=True)
+class DomainSnapshotSource:
+    """Resolved files and fingerprints used to build a domain snapshot."""
+
+    save_context: h3_save_parser.SaveContext
+    map_file: Path
+    save_fingerprint: dict
+    map_fingerprint: dict
 
 
 class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
@@ -197,7 +222,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         return payload
 
     def _api_state(self) -> dict:
-        domain_snapshot = build_domain_snapshot(**self._snapshot_kwargs())
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
         payload = _state_payload_for_app(self.app_state, domain_snapshot)
         return payload
 
@@ -213,7 +238,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
 
     def _api_select_hero(self, payload: dict) -> dict:
         hero_id = _required_text(payload, "hero_id")
-        domain_snapshot = build_domain_snapshot(**self._snapshot_kwargs())
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
         hero = _hero_by_id(domain_snapshot, hero_id)
         with self.app_state.lock:
             config_path = self.app_state.config_path
@@ -248,7 +273,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
                 f"invalid mode {mode!r}; expected follow_latest or pinned",
             )
 
-        domain_snapshot = build_domain_snapshot(**_snapshot_kwargs_for_state(candidate))
+        domain_snapshot = _domain_snapshot_for_app(candidate)
         with self.app_state.lock:
             self.app_state.mode = candidate.mode
             self.app_state.save_file = candidate.save_file
@@ -264,7 +289,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             minimum=1,
             maximum=MAX_API_SIMULATIONS,
         )
-        domain_snapshot = build_domain_snapshot(**self._snapshot_kwargs())
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
         selected_hero = _request_hero_by_id(self.app_state, domain_snapshot, hero_id)
         scan_target, resolved_target_id = _single_scan_target(
             domain_snapshot,
@@ -301,7 +326,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         )
         target_type = str(payload.get("target_type", "all")).strip() or "all"
         include_removed = _optional_bool(payload, "include_removed", False)
-        domain_snapshot = build_domain_snapshot(**self._snapshot_kwargs())
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
         selected_hero = _request_hero_by_id(self.app_state, domain_snapshot, hero_id)
         hero_targets = h3_save_parser.build_other_hero_targets(
             domain_snapshot.heroes,
@@ -355,6 +380,8 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
                 map_file=self.app_state.map_file,
                 selected_hero_id=self.app_state.selected_hero_id,
                 config_path=self.app_state.config_path,
+                snapshot_cache=self.app_state.snapshot_cache,
+                removed_neutral_cache=self.app_state.removed_neutral_cache,
             )
 
     def _send_json(self, payload, send_body: bool = True, status=HTTPStatus.OK):
@@ -434,9 +461,51 @@ def build_domain_snapshot(
     save_file: str | Path | None = None,
     map_file: str | Path | None = None,
     config_path: str | Path = h3_save_parser.CONFIG_PATH,
+    removed_neutral_cache: h3_save_parser.RemovedNeutralHistoryCache | None = None,
 ) -> DomainSnapshot:
     """Build a GUI snapshot with raw parser objects for API operations."""
 
+    source = _resolve_domain_snapshot_source(
+        mode=mode,
+        autosave_dir=autosave_dir,
+        save_file=save_file,
+        map_file=map_file,
+        config_path=config_path,
+    )
+    return _build_domain_snapshot_from_source(
+        mode,
+        source,
+        removed_neutral_cache=removed_neutral_cache,
+    )
+
+
+def _domain_snapshot_for_app(app_state: GuiAppState) -> DomainSnapshot:
+    kwargs = _snapshot_kwargs_for_state(app_state)
+    source = _resolve_domain_snapshot_source(**kwargs)
+    key = _domain_snapshot_cache_key(kwargs["mode"], source)
+    snapshot_cache = app_state.snapshot_cache
+
+    with snapshot_cache.lock:
+        if snapshot_cache.key == key and snapshot_cache.snapshot is not None:
+            return snapshot_cache.snapshot
+
+        snapshot = _build_domain_snapshot_from_source(
+            kwargs["mode"],
+            source,
+            removed_neutral_cache=app_state.removed_neutral_cache,
+        )
+        snapshot_cache.key = key
+        snapshot_cache.snapshot = snapshot
+        return snapshot
+
+
+def _resolve_domain_snapshot_source(
+    mode: str = FOLLOW_LATEST_MODE,
+    autosave_dir: str | Path | None = None,
+    save_file: str | Path | None = None,
+    map_file: str | Path | None = None,
+    config_path: str | Path = h3_save_parser.CONFIG_PATH,
+) -> DomainSnapshotSource:
     save_context = _resolve_snapshot_save(
         mode=mode,
         autosave_dir=autosave_dir,
@@ -457,13 +526,38 @@ def build_domain_snapshot(
     )
     save_fingerprint = _file_fingerprint(save_context.save_file)
     map_fingerprint = _file_fingerprint(resolved_map_file)
+    return DomainSnapshotSource(
+        save_context=save_context,
+        map_file=resolved_map_file,
+        save_fingerprint=save_fingerprint,
+        map_fingerprint=map_fingerprint,
+    )
+
+
+def _build_domain_snapshot_from_source(
+    mode: str,
+    source: DomainSnapshotSource,
+    removed_neutral_cache: h3_save_parser.RemovedNeutralHistoryCache | None = None,
+) -> DomainSnapshot:
+    save_context = source.save_context
+    resolved_map_file = source.map_file
+    save_fingerprint = source.save_fingerprint
+    map_fingerprint = source.map_fingerprint
     loaded_save = h3_save_parser.load_save(save_context.save_file)
     heroes = h3_save_parser.scan_xor01_hero_armies(loaded_save.data)
     loaded_map = h3_map_parser.load_h3m(resolved_map_file, parse_objects=True)
-    removed_records = h3_save_parser.detect_removed_neutral_records(
-        loaded_save.data,
-        loaded_map.neutral_targets,
-    )
+    if removed_neutral_cache is None:
+        removed_records = h3_save_parser.load_removed_neutral_records_for_save(
+            save_context.save_file,
+            neutral_targets=loaded_map.neutral_targets,
+            game_dir=save_context.game_dir,
+        )
+    else:
+        removed_records = removed_neutral_cache.load_removed_neutral_records_for_save(
+            save_context.save_file,
+            neutral_targets=loaded_map.neutral_targets,
+            game_dir=save_context.game_dir,
+        )
     neutral_targets = h3_map_parser.filter_removed_neutral_targets(
         loaded_map.neutral_targets,
         removed_records,
@@ -506,6 +600,25 @@ def build_domain_snapshot(
             for target in neutral_targets
         },
         removed_records=removed_records,
+    )
+
+
+def _domain_snapshot_cache_key(
+    mode: str,
+    source: DomainSnapshotSource,
+) -> tuple:
+    return (
+        mode,
+        _fingerprint_cache_key(source.save_fingerprint),
+        _fingerprint_cache_key(source.map_fingerprint),
+    )
+
+
+def _fingerprint_cache_key(fingerprint: dict) -> tuple:
+    return (
+        fingerprint["path"],
+        fingerprint["size"],
+        fingerprint["mtime_ns"],
     )
 
 

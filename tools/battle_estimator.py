@@ -810,6 +810,8 @@ def _scan_target_base_note(scan_target: NearbyScanTarget) -> str:
         notes.append("army-only")
     if scan_target.target_type == "neutral" and scan_target.target.removed:
         notes.append("removed/debug")
+        if scan_target.target.removal_note:
+            notes.append(scan_target.target.removal_note)
     return "; ".join(notes)
 
 
@@ -844,6 +846,23 @@ def _build_scan_target(
         y=target.y,
         z=target.z,
         target=target,
+    )
+
+
+def _nearby_neutral_targets(
+    selected_hero: h3_save_parser.HeroArmy,
+    neutral_targets,
+    radius: int,
+):
+    if selected_hero.position is None:
+        return ()
+    return tuple(
+        target
+        for target in neutral_targets
+        if (
+            _build_scan_target("neutral", target, selected_hero.position, radius)
+            is not None
+        )
     )
 
 
@@ -1340,10 +1359,19 @@ def _run_nearby_scan(args: argparse.Namespace) -> None:
         selected_hero,
         same_level_z=selected_hero.z,
     )
-    removed_records = h3_save_parser.detect_removed_neutral_records(
-        loaded_save.data,
-        neutral_targets=neutral_targets,
-    )
+    removed_records = ()
+    if args.target_type in ("all", "neutral"):
+        removed_scan_targets = _nearby_neutral_targets(
+            selected_hero,
+            neutral_targets,
+            args.scan_nearby,
+        )
+        if removed_scan_targets:
+            removed_records = h3_save_parser.load_removed_neutral_records_for_save(
+                context.save_file,
+                neutral_targets=removed_scan_targets,
+                game_dir=context.game_dir,
+            )
     scan_targets = build_nearby_scan_targets(
         selected_hero,
         neutral_targets=neutral_targets,
