@@ -58,6 +58,10 @@ DEFAULT_RELEVANT_HERO_TOTAL_CREATURES = 50
 HERO_STRUCT_ARMY_TYPES_OFFSET = 113
 HERO_STRUCT_ARMY_COUNTS_OFFSET = 141
 HERO_STRUCT_NAME_OFFSET = 169
+HERO_STRUCT_POSITION_FROM_NAME_OFFSET = -194
+HERO_POSITION_SIZE = 5
+MAX_HERO_POSITION_COORD = 255
+MAX_HERO_POSITION_LEVEL = 1
 
 HERO_ARMY_TYPES_FROM_NAME_OFFSET = (
     HERO_STRUCT_ARMY_TYPES_OFFSET - HERO_STRUCT_NAME_OFFSET
@@ -94,6 +98,15 @@ class LoadedSave:
 
 
 @dataclass(frozen=True)
+class HeroPosition:
+    """Current hero adventure-map position when present in the save."""
+
+    x: int
+    y: int
+    z: int
+
+
+@dataclass(frozen=True)
 class HeroStack:
     """One non-empty hero army slot."""
 
@@ -117,6 +130,7 @@ class HeroArmy:
     hero_name: str
     stacks: tuple[HeroStack, ...]
     source_offset: int | None = None
+    position: HeroPosition | None = None
 
     @property
     def total_creatures(self) -> int:
@@ -125,6 +139,18 @@ class HeroArmy:
     @property
     def ai_value(self) -> int:
         return sum(stack.creature.ai_value * stack.count for stack in self.stacks)
+
+    @property
+    def x(self) -> int | None:
+        return None if self.position is None else self.position.x
+
+    @property
+    def y(self) -> int | None:
+        return None if self.position is None else self.position.y
+
+    @property
+    def z(self) -> int | None:
+        return None if self.position is None else self.position.z
 
 
 class SaveLoadError(ValueError):
@@ -340,6 +366,25 @@ def decode_hero_name(data: bytes, name_offset: int) -> str | None:
     return name
 
 
+def decode_hero_position(data: bytes, name_offset: int) -> HeroPosition | None:
+    """Decode the optional XOR-obfuscated hero position near a hero name."""
+
+    position_offset = name_offset + HERO_STRUCT_POSITION_FROM_NAME_OFFSET
+    try:
+        decoded = xor_decode_bytes(data, position_offset, HERO_POSITION_SIZE)
+    except ValueError:
+        return None
+
+    x = int.from_bytes(decoded[0:2], "little")
+    y = int.from_bytes(decoded[2:4], "little")
+    z = decoded[4]
+    if x > MAX_HERO_POSITION_COORD or y > MAX_HERO_POSITION_COORD:
+        return None
+    if z > MAX_HERO_POSITION_LEVEL:
+        return None
+    return HeroPosition(x=x, y=y, z=z)
+
+
 def parse_xor01_hero_at(data: bytes, name_offset: int) -> HeroArmy | None:
     """Parse one XOR 0x01 hero-army candidate by hero-name offset."""
 
@@ -374,7 +419,13 @@ def parse_xor01_hero_at(data: bytes, name_offset: int) -> HeroArmy | None:
 
     if not stacks:
         return None
-    return HeroArmy(hero_name=hero_name, stacks=tuple(stacks), source_offset=name_offset)
+    position = decode_hero_position(data, name_offset)
+    return HeroArmy(
+        hero_name=hero_name,
+        stacks=tuple(stacks),
+        source_offset=name_offset,
+        position=position,
+    )
 
 
 def scan_xor01_hero_armies(data: bytes) -> tuple[HeroArmy, ...]:

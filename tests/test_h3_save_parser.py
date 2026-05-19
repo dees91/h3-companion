@@ -28,6 +28,7 @@ def _build_xor_hero_fixture(
     creature_ids=ISRA_CREATURE_IDS,
     counts=ISRA_COUNTS,
     name_offset=256,
+    position=None,
 ):
     data = bytearray(name_offset + h3_save_parser.HERO_NAME_SIZE + 32)
     ids_offset = name_offset + h3_save_parser.HERO_ARMY_TYPES_FROM_NAME_OFFSET
@@ -49,6 +50,17 @@ def _build_xor_hero_fixture(
     data[name_offset:name_offset + h3_save_parser.HERO_NAME_SIZE] = _xor_encode(
         padded_name
     )
+    if position is not None:
+        x, y, z = position
+        position_offset = name_offset + h3_save_parser.HERO_STRUCT_POSITION_FROM_NAME_OFFSET
+        position_bytes = b"".join((
+            int(x).to_bytes(2, "little"),
+            int(y).to_bytes(2, "little"),
+            bytes([int(z)]),
+        ))
+        data[position_offset:position_offset + h3_save_parser.HERO_POSITION_SIZE] = _xor_encode(
+            position_bytes
+        )
     return bytes(data), name_offset
 
 
@@ -97,6 +109,10 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(h3_save_parser.HERO_STRUCT_NAME_OFFSET, 169)
         self.assertEqual(h3_save_parser.HERO_ARMY_TYPES_FROM_NAME_OFFSET, -56)
         self.assertEqual(h3_save_parser.HERO_ARMY_COUNTS_FROM_NAME_OFFSET, -28)
+        self.assertEqual(h3_save_parser.HERO_STRUCT_POSITION_FROM_NAME_OFFSET, -194)
+        self.assertEqual(h3_save_parser.HERO_POSITION_SIZE, 5)
+        self.assertEqual(h3_save_parser.MAX_HERO_POSITION_COORD, 255)
+        self.assertEqual(h3_save_parser.MAX_HERO_POSITION_LEVEL, 1)
 
     def test_creature_id_maps_to_existing_battle_estimator_creature(self):
         creature = h3_save_parser.creature_by_id(57)
@@ -600,6 +616,31 @@ class H3SaveParserContractTests(unittest.TestCase):
                 "Ghost Dragon",
             ],
         )
+        self.assertIsNone(hero.position)
+        self.assertIsNone(hero.x)
+        self.assertIsNone(hero.y)
+        self.assertIsNone(hero.z)
+
+    def test_parse_xor01_hero_at_reads_encoded_position(self):
+        data, name_offset = _build_xor_hero_fixture(position=(54, 70, 1))
+
+        hero = h3_save_parser.parse_xor01_hero_at(data, name_offset)
+
+        self.assertIsNotNone(hero)
+        self.assertEqual(hero.position, h3_save_parser.HeroPosition(54, 70, 1))
+        self.assertEqual(hero.x, 54)
+        self.assertEqual(hero.y, 70)
+        self.assertEqual(hero.z, 1)
+
+    def test_parse_xor01_hero_at_keeps_army_when_position_window_is_invalid(self):
+        data, name_offset = _build_xor_hero_fixture(name_offset=180)
+
+        hero = h3_save_parser.parse_xor01_hero_at(data, name_offset)
+
+        self.assertIsNotNone(hero)
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertEqual([stack.count for stack in hero.stacks], list(ISRA_COUNTS))
+        self.assertIsNone(hero.position)
 
     def test_scan_xor01_hero_armies_finds_embedded_synthetic_hero(self):
         fixture, name_offset = _build_xor_hero_fixture(name_offset=300)
