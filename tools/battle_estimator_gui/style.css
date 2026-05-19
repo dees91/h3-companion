@@ -221,6 +221,21 @@ select:disabled {
   white-space: nowrap;
 }
 
+.chip-button {
+  cursor: pointer;
+}
+
+.chip-button:hover:not(:disabled),
+.chip-button:focus-visible {
+  border-color: #758195;
+  background: #eef2f7;
+}
+
+.chip-button:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
 .list-stack {
   display: grid;
   gap: 8px;
@@ -233,6 +248,31 @@ select:disabled {
   border: 1px solid #d5dbe3;
   border-radius: 4px;
   background: #fbfcfd;
+}
+
+.hero-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hero-item:hover:not(:disabled),
+.hero-item:focus-visible {
+  border-color: #758195;
+  background: #f3f6fa;
+}
+
+.hero-item.selected {
+  border-color: #7a4d00;
+  background: #fff7db;
+  box-shadow: inset 3px 0 0 #f5c542;
+}
+
+.hero-item.pending,
+.hero-item:disabled {
+  cursor: default;
+  opacity: 0.72;
 }
 
 .item-title,

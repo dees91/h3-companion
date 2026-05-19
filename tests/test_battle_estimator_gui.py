@@ -135,6 +135,12 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
         app_js = (
             Path("tools") / "battle_estimator_gui" / "app.js"
         ).read_text(encoding="utf-8")
+        index_html = (
+            Path("tools") / "battle_estimator_gui" / "index.html"
+        ).read_text(encoding="utf-8")
+        style_css = (
+            Path("tools") / "battle_estimator_gui" / "style.css"
+        ).read_text(encoding="utf-8")
 
         self.assertNotIn("innerHTML", app_js)
         self.assertIn("textContent", app_js)
@@ -143,7 +149,12 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             app_js.index("function loadState()"):
             app_js.index("function checkHealth()")
         ]
+        select_hero_body = app_js[
+            app_js.index("function selectHero("):
+            app_js.index("function renderSnapshot(")
+        ]
         self.assertNotIn("setHealth(", load_state_body)
+        self.assertIn("renderRecentHeroes(heroState.recentHeroes);", select_hero_body)
         self.assertIn('setText(elements.mode, "Snapshot unavailable")', app_js)
         self.assertIn('renderRecentHeroes([])', app_js)
         for expected in (
@@ -162,11 +173,32 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "ResizeObserver",
             "selected_hero_id",
             "estimator_creature_id",
-            "removed"
+            "removed",
+            "heroSearch",
+            "filterHeroesForQuery",
+            "matchRecentHeroName",
+            "recentHeroChipState",
+            "ambiguous in this snapshot",
+            "is not in this snapshot",
+            'addEventListener("input"',
+            'fetch("/api/select-hero"'
         ):
             self.assertIn(expected, app_js)
+        for expected in (
+            'id="hero-search"',
+            'id="recent-heroes"',
+            'id="hero-list"',
+        ):
+            self.assertIn(expected, index_html)
+        for expected in (
+            ".chip-button",
+            ".hero-item",
+            ".hero-item.selected",
+        ):
+            self.assertIn(expected, style_css)
         self.assertNotIn("/api/simulate-target", app_js)
-        self.assertNotIn("/api/select-hero", app_js)
+        self.assertNotIn("owner_id", app_js)
+        self.assertNotIn("team_id", app_js)
 
     def test_default_server_binds_to_localhost(self):
         server = battle_estimator_gui.create_server(port=0)

@@ -610,6 +610,26 @@ payloads are stable.
 1. API test for select-hero persistence.
 2. Manual browser check for search, selection, recent list, and recentering.
 
+**Completion Notes (2026-05-19):**
+- Added frontend hero selection state with case-insensitive search over the full
+  hero list, clickable hero rows, selected-row highlighting, and selected hero
+  marker refresh.
+- Reworked recent heroes into clickable buttons that select only when exactly
+  one current snapshot hero matches the recent name case-insensitively; missing
+  or ambiguous recent names remain disabled.
+- Wired selection to `POST /api/select-hero`, refreshes persisted recent hero
+  names from the API response, handles stale selection errors by reloading
+  state, and recenters the canvas on the selected hero when positioned.
+- Added CSS states for recent and hero buttons plus static regression checks for
+  search/select wiring, no target-simulation wiring, and no owner/team filtering.
+- Addressed subagent code review by re-rendering recent buttons after the
+  pending selection flag clears, so successful selection does not leave recent
+  buttons disabled.
+- Verified with `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest discover -s tests`,
+  `node --check tools/battle_estimator_gui/app.js`,
+  `python3 tools/battle_estimator.py --help`, and `git diff --check`.
+
 ---
 
 ### GUI-T08: Click Target Simulation
@@ -813,8 +833,8 @@ structure and frontend test strategy.
 | GUI-T04: JSON API Endpoints | done | GUI-T02, GUI-T03 | Codex | JSON API endpoints added with state, saves, selection, mode, simulation, scan, and JSON errors. |
 | GUI-T05: Frontend Layout Shell | done | GUI-T01 | Codex | Dense operational shell with status bar, hero panel, canvas stage, and result/scan panel. |
 | GUI-T06: Canvas Map Rendering | done | GUI-T04, GUI-T05 | Codex | Canvas grid, pan/zoom, marker drawing, hit testing, and target details added. |
-| GUI-T07: Hero Search + Recent Selection | todo | GUI-T03, GUI-T04, GUI-T05 | unassigned | Search/recent/select workflow. |
-| GUI-T08: Click Target Simulation | blocked | GUI-T04, GUI-T06, GUI-T07 | unassigned | Single target estimate. |
-| GUI-T09: Radius Scan Visualization | blocked | GUI-T04, GUI-T06, GUI-T07 | unassigned | Scan overlay and result list. |
-| GUI-T10: Save Picker + Auto Refresh | blocked | GUI-T02, GUI-T04, GUI-T05 | unassigned | Follow latest and pinned save. |
+| GUI-T07: Hero Search + Recent Selection | done | GUI-T03, GUI-T04, GUI-T05 | Codex | Search, recent hero selection, persistence, selected highlighting, and map recentering added. |
+| GUI-T08: Click Target Simulation | todo | GUI-T04, GUI-T06, GUI-T07 | unassigned | Single target estimate. |
+| GUI-T09: Radius Scan Visualization | todo | GUI-T04, GUI-T06, GUI-T07 | unassigned | Scan overlay and result list. |
+| GUI-T10: Save Picker + Auto Refresh | todo | GUI-T02, GUI-T04, GUI-T05 | unassigned | Follow latest and pinned save. |
 | GUI-T11: End-to-End Polish + Docs | blocked | GUI-T08, GUI-T09, GUI-T10 | unassigned | Final verification pass. |

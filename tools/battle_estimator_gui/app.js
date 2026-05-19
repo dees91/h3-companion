@@ -8,6 +8,7 @@
     map: document.getElementById("map-status"),
     refresh: document.getElementById("refresh-status"),
     refreshButton: document.getElementById("refresh-button"),
+    heroSearch: document.getElementById("hero-search"),
     heroCount: document.getElementById("hero-count"),
     recentHeroes: document.getElementById("recent-heroes"),
     heroList: document.getElementById("hero-list"),
@@ -34,6 +35,13 @@
     drag: null,
     movedDuringDrag: false
   };
+  const heroState = {
+    heroes: [],
+    recentHeroes: [],
+    searchQuery: "",
+    selectedHeroId: null,
+    selectingHeroId: null
+  };
 
   function setHealth(text, className) {
     elements.health.textContent = text;
@@ -57,6 +65,10 @@
       return "no position";
     }
     return `${position.x},${position.y},${position.z}`;
+  }
+
+  function normalizeName(value) {
+    return String(value || "").trim().toLowerCase();
   }
 
   function clamp(value, min, max) {
@@ -228,6 +240,23 @@
     };
   }
 
+  function centerOnHero(heroId) {
+    const marker = mapView.markers.find((candidate) => (
+      candidate.type === "hero" && candidate.id === heroId
+    ));
+    if (!marker) {
+      return false;
+    }
+
+    const canvasSize = syncCanvasSize();
+    mapView.pan = {
+      x: (canvasSize.width / 2) - (marker.world.x * mapView.zoom),
+      y: (canvasSize.height / 2) - (marker.world.y * mapView.zoom)
+    };
+    drawMap();
+    return true;
+  }
+
   function drawMap() {
     const canvasSize = syncCanvasSize();
     canvasContext.clearRect(0, 0, canvasSize.width, canvasSize.height);
@@ -364,6 +393,34 @@
     node.appendChild(item);
   }
 
+  function matchRecentHeroName(heroes, name) {
+    const normalized = normalizeName(name);
+    if (!normalized) {
+      return [];
+    }
+    return (heroes || []).filter((hero) => normalizeName(hero.name) === normalized);
+  }
+
+  function recentHeroChipState(heroes, name, selectingHeroId) {
+    const matches = matchRecentHeroName(heroes, name);
+    if (matches.length === 1) {
+      return {
+        disabled: Boolean(selectingHeroId),
+        heroId: matches[0].id,
+        reason: selectingHeroId ? "pending" : "selectable",
+        title: selectingHeroId ? "Selection in progress" : `Select ${name}`
+      };
+    }
+    return {
+      disabled: true,
+      heroId: null,
+      reason: matches.length === 0 ? "missing" : "ambiguous",
+      title: matches.length === 0
+        ? `${name} is not in this snapshot`
+        : `${name} is ambiguous in this snapshot`
+    };
+  }
+
   function renderRecentHeroes(recentHeroes) {
     clearNode(elements.recentHeroes);
     if (!recentHeroes || recentHeroes.length === 0) {
@@ -374,24 +431,65 @@
 
     elements.recentHeroes.className = "chip-row";
     recentHeroes.slice(0, 8).forEach((name) => {
-      const chip = document.createElement("span");
-      chip.className = "chip";
+      const chipState = recentHeroChipState(
+        heroState.heroes,
+        name,
+        heroState.selectingHeroId
+      );
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip chip-button";
       chip.textContent = name;
-      chip.title = name;
+      chip.disabled = chipState.disabled;
+      chip.title = chipState.title;
+      if (chipState.heroId && !chipState.disabled) {
+        chip.addEventListener("click", () => selectHero(chipState.heroId));
+      }
       elements.recentHeroes.appendChild(chip);
     });
   }
 
-  function renderHeroes(heroes) {
-    if (!heroes || heroes.length === 0) {
+  function filteredHeroes() {
+    return filterHeroesForQuery(heroState.heroes, heroState.searchQuery);
+  }
+
+  function filterHeroesForQuery(heroes, queryText) {
+    const query = normalizeName(queryText);
+    if (!query) {
+      return heroes || [];
+    }
+    return (heroes || []).filter((hero) => (
+      normalizeName(hero.name || hero.id).includes(query)
+    ));
+  }
+
+  function renderHeroes() {
+    if (!heroState.heroes || heroState.heroes.length === 0) {
       appendEmpty(elements.heroList, "No heroes detected.");
       return;
     }
 
+    const heroes = filteredHeroes();
+    if (heroes.length === 0) {
+      appendEmpty(elements.heroList, "No heroes match the search.");
+      return;
+    }
+
     clearNode(elements.heroList);
-    heroes.slice(0, 24).forEach((hero) => {
-      const row = document.createElement("article");
-      row.className = "list-item";
+    heroes.forEach((hero) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "list-item hero-item";
+      row.dataset.heroId = hero.id;
+      row.setAttribute("aria-pressed", hero.id === heroState.selectedHeroId ? "true" : "false");
+      if (hero.id === heroState.selectedHeroId) {
+        row.classList.add("selected");
+      }
+      if (hero.id === heroState.selectingHeroId) {
+        row.classList.add("pending");
+      }
+      row.disabled = Boolean(heroState.selectingHeroId);
+      row.addEventListener("click", () => selectHero(hero.id));
 
       const title = document.createElement("div");
       title.className = "item-title";
@@ -407,6 +505,59 @@
       row.appendChild(meta);
       elements.heroList.appendChild(row);
     });
+  }
+
+  function applySelectedHero(heroId, recentHeroes) {
+    heroState.selectedHeroId = heroId || null;
+    heroState.recentHeroes = recentHeroes || heroState.recentHeroes;
+    if (mapView.snapshot) {
+      mapView.snapshot.selected_hero_id = heroState.selectedHeroId;
+      mapView.snapshot.recent_heroes = heroState.recentHeroes;
+    }
+    const tileSize = tileSizeForMap((mapView.snapshot && mapView.snapshot.map) || {});
+    mapView.markers = buildMarkerCache(mapView.snapshot, tileSize);
+    renderRecentHeroes(heroState.recentHeroes);
+    renderHeroes();
+    if (!centerOnHero(heroState.selectedHeroId)) {
+      drawMap();
+    }
+  }
+
+  function selectHero(heroId) {
+    if (!heroId || heroState.selectingHeroId) {
+      return;
+    }
+    heroState.selectingHeroId = heroId;
+    setText(elements.refresh, "Selecting hero");
+    renderHeroes();
+
+    fetch("/api/select-hero", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hero_id: heroId })
+    })
+      .then((response) => {
+        if (!response.ok) {
+          return response.json().catch(() => ({})).then((payload) => {
+            throw new Error(payload.error || `hero selection failed: ${response.status}`);
+          });
+        }
+        return response.json();
+      })
+      .then((payload) => {
+        applySelectedHero(payload.selected_hero_id, payload.recent_heroes || []);
+        setText(elements.refresh, "Hero selected");
+      })
+      .catch((error) => {
+        setText(elements.refresh, `Selection error: ${error.message}; refreshing`);
+        heroState.selectedHeroId = mapView.snapshot ? mapView.snapshot.selected_hero_id : null;
+        return loadState();
+      })
+      .finally(() => {
+        heroState.selectingHeroId = null;
+        renderRecentHeroes(heroState.recentHeroes);
+        renderHeroes();
+      });
   }
 
   function renderSnapshot(snapshot) {
@@ -427,8 +578,12 @@
     setText(elements.mapOverlayTitle, dimensions);
     setText(elements.mapOverlayDetail, `${heroes.length} heroes | ${targets.length} neutrals`);
 
-    renderRecentHeroes(snapshot.recent_heroes || []);
-    renderHeroes(heroes);
+    heroState.heroes = heroes;
+    heroState.recentHeroes = snapshot.recent_heroes || [];
+    heroState.selectedHeroId = snapshot.selected_hero_id || null;
+    elements.heroSearch.disabled = false;
+    renderRecentHeroes(heroState.recentHeroes);
+    renderHeroes();
     mapView.snapshot = snapshot;
     const tileSize = tileSizeForMap(snapshot.map || {});
     mapView.markers = buildMarkerCache(snapshot, tileSize);
@@ -448,6 +603,11 @@
     setText(elements.map, "None");
     setText(elements.refresh, "Error");
     setText(elements.heroCount, "No snapshot loaded");
+    heroState.heroes = [];
+    heroState.recentHeroes = [];
+    heroState.selectedHeroId = null;
+    heroState.selectingHeroId = null;
+    elements.heroSearch.disabled = true;
     renderRecentHeroes([]);
     appendEmpty(elements.heroList, "Unable to load heroes.");
     appendEmpty(elements.scanState, "No scan results.");
@@ -505,6 +665,11 @@
 
   elements.refreshButton.addEventListener("click", () => {
     loadState();
+  });
+
+  elements.heroSearch.addEventListener("input", () => {
+    heroState.searchQuery = elements.heroSearch.value;
+    renderHeroes();
   });
 
   elements.canvas.addEventListener("pointerdown", (event) => {
@@ -589,10 +754,14 @@
   window.__battleEstimatorGuiTest = {
     buildMarkerCache,
     clampZoom,
+    filterHeroesForQuery,
     hitTestMarker,
+    matchRecentHeroName,
     markerContainsScreenPoint,
     markerScreenRadius,
+    recentHeroChipState,
     screenToWorld,
+    centerOnHero,
     worldToScreen,
     zoomAtPoint
   };
