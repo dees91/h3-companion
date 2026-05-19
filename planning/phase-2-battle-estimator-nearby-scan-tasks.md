@@ -561,6 +561,27 @@ identity model.
    - after `post_attack_3`, Gremlin target is filtered.
    - after `post_attack_4`, Master Gremlin target is filtered.
 
+**Completion Notes (2026-05-19):**
+- Added `RemovedNeutralRecord` plus a tail-save late-log heuristic in
+  `tools/h3_save_parser.py` for 16-byte little-endian records containing
+  `object_index`, removal flags, H3M `subid`, and marker `11`.
+- Added `filter_removed_neutral_targets()` in `tools/h3_map_parser.py`.
+  Removed targets are excluded by default; `include_removed=True` keeps them
+  with `removed=True` and a `removed-save-record@<offset>` debug note. The
+  user-facing `--include-removed` CLI wiring remains part of NS-T09.
+- Matching uses `(object_index, h3m_subid)` because the sequential H3M parser
+  proves the Diamond map object indexes match the known removed save object
+  IDs for `#2393/subid 98`, `#2331/subid 28`, and `#2330/subid 29`.
+- Added synthetic tests for the unaligned removed-record heuristic and target
+  filtering/marking.
+- Verified with `python3 -m unittest tests.test_h3_save_parser
+  tests.test_h3_map_parser`, `git diff --check`, and
+  `python3 -m unittest discover -s tests`.
+- Manual Diamond checks confirmed `post_attack_2.GM1` filters the Gnoll,
+  `post_attack_3.GM1` filters the Gremlin, and `post_attack_4.GM1` filters
+  the Master Gremlin by default, while `include_removed=True` marks each as
+  removed with the save-record offset.
+
 ---
 
 ### NS-T07: Nearby Target Scan Service
@@ -727,8 +748,8 @@ H3M-to-save object identity.
 | NS-T03: H3M Map Auto-Detection | done | NS-T01 | Codex | Map-file override and random_maps resolver implemented. |
 | NS-T04: Hero Position Parsing | done | -- | Codex | Hero x,y,z parsing implemented. |
 | NS-T05: Other Hero Target Extraction | done | NS-T04 | Codex | Other-hero target records implemented. |
-| NS-T06: Removed Neutral Detection | todo | NS-T02 | unassigned | Needs neutral identity model. |
-| NS-T07: Nearby Target Scan Service | blocked | NS-T02, NS-T03, NS-T04, NS-T05, NS-T06 | unassigned | Combines all inputs. |
+| NS-T06: Removed Neutral Detection | done | NS-T02 | Codex | Removed neutral detection and filtering implemented. |
+| NS-T07: Nearby Target Scan Service | todo | NS-T02, NS-T03, NS-T04, NS-T05, NS-T06 | unassigned | Combines all inputs. |
 | NS-T08: Per-Target Estimation Runner | blocked | NS-T07 | unassigned | Compact scan estimates. |
 | NS-T09: CLI Output and Arguments | blocked | NS-T08 | unassigned | User-facing scan command. |
 | NS-T10: Documentation and Verification Pass | blocked | NS-T09 | unassigned | Final docs and tests. |

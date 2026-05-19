@@ -6,7 +6,7 @@ from __future__ import annotations
 import gzip
 import re
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from importlib import import_module
 from pathlib import Path
@@ -106,6 +106,8 @@ class H3NeutralMonsterTarget:
     count: int
     creature_name: str | None = None
     estimator_creature_id: int | None = None
+    removed: bool = False
+    removal_note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -404,6 +406,36 @@ def load_h3m_neutral_monsters(path: str | Path) -> tuple[H3NeutralMonsterTarget,
     return load_h3m(path, parse_objects=True).neutral_targets
 
 
+def filter_removed_neutral_targets(
+    targets,
+    removed_records,
+    include_removed: bool = False,
+) -> tuple[H3NeutralMonsterTarget, ...]:
+    """Filter H3M neutral targets using removed records from the current save."""
+
+    removed_by_key = {}
+    for record in removed_records:
+        key = (record.object_index, record.h3m_subid)
+        removed_by_key.setdefault(key, record)
+
+    filtered = []
+    for target in targets:
+        record = removed_by_key.get((target.object_index, target.h3m_subid))
+        if record is None:
+            filtered.append(target)
+            continue
+        if include_removed:
+            filtered.append(
+                replace(
+                    target,
+                    removed=True,
+                    removal_note=_removed_neutral_note(record),
+                )
+            )
+
+    return tuple(filtered)
+
+
 def parse_h3m_neutral_monsters(
     data: bytes,
     offset: int = 0,
@@ -412,6 +444,13 @@ def parse_h3m_neutral_monsters(
     """Parse neutral monster targets from decompressed H3M bytes."""
 
     return _parse_h3m_structures(data, offset, Path(path))[3]
+
+
+def _removed_neutral_note(record) -> str:
+    source_offset = getattr(record, "source_offset", None)
+    if source_offset is None:
+        return "removed-save-record"
+    return f"removed-save-record@{source_offset}"
 
 
 def _decompress_h3m_bytes(compressed: bytes, path: Path) -> bytes:

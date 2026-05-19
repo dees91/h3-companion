@@ -23,6 +23,19 @@ def _xor_encode(raw: bytes) -> bytes:
     return bytes(byte ^ h3_save_parser.HERO_ARMY_XOR_KEY for byte in raw)
 
 
+def _removed_neutral_record_bytes(
+    object_index,
+    h3m_subid,
+    removal_flags=0x8000,
+):
+    return b"".join((
+        int(object_index).to_bytes(4, "little"),
+        int(removal_flags).to_bytes(4, "little"),
+        int(h3m_subid).to_bytes(4, "little"),
+        h3_save_parser.REMOVED_NEUTRAL_RECORD_MARKER.to_bytes(4, "little"),
+    ))
+
+
 def _build_xor_hero_fixture(
     hero_name="Isra",
     creature_ids=ISRA_CREATURE_IDS,
@@ -140,6 +153,9 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(h3_save_parser.HERO_POSITION_SIZE, 5)
         self.assertEqual(h3_save_parser.MAX_HERO_POSITION_COORD, 255)
         self.assertEqual(h3_save_parser.MAX_HERO_POSITION_LEVEL, 1)
+        self.assertEqual(h3_save_parser.REMOVED_NEUTRAL_RECORD_SIZE, 16)
+        self.assertEqual(h3_save_parser.REMOVED_NEUTRAL_RECORD_MARKER, 11)
+        self.assertEqual(h3_save_parser.REMOVED_NEUTRAL_SCAN_TAIL_BYTES, 64 * 1024)
 
     def test_creature_id_maps_to_existing_battle_estimator_creature(self):
         creature = h3_save_parser.creature_by_id(57)
@@ -231,6 +247,46 @@ class H3SaveParserContractTests(unittest.TestCase):
         )
         self.assertEqual(loaded.data, payload)
         self.assertEqual(loaded.h3svg_offset, 0)
+
+    def test_detect_removed_neutral_records_finds_unaligned_late_log_records(self):
+        payload = (
+            b"H3SVG"
+            + b"\x00" * 3
+            + _removed_neutral_record_bytes(2393, 98, 0x8000)
+            + b"\x00" * 5
+            + _removed_neutral_record_bytes(2331, 28, 0xA000)
+            + b"\x00" * 7
+            + _removed_neutral_record_bytes(2330, 29, 0x5000)
+        )
+
+        records = h3_save_parser.detect_removed_neutral_records(payload)
+
+        self.assertEqual(
+            [(record.object_index, record.h3m_subid) for record in records],
+            [(2393, 98), (2331, 28), (2330, 29)],
+        )
+        self.assertEqual(records[0].source_offset, 8)
+        self.assertEqual(records[0].removal_flags, 0x8000)
+
+    def test_detect_removed_neutral_records_ignores_invalid_heuristic_records(self):
+        payload = b"".join((
+            b"H3SVG",
+            _removed_neutral_record_bytes(2393, 98, 0x8010),
+            _removed_neutral_record_bytes(0, 98, 0x8000),
+            _removed_neutral_record_bytes(
+                2331,
+                h3_save_parser.MAX_REMOVED_NEUTRAL_SUBID + 1,
+                0xA000,
+            ),
+            int(2330).to_bytes(4, "little"),
+            int(0x5000).to_bytes(4, "little"),
+            int(29).to_bytes(4, "little"),
+            int(12).to_bytes(4, "little"),
+        ))
+
+        records = h3_save_parser.detect_removed_neutral_records(payload)
+
+        self.assertEqual(records, ())
 
     def test_load_save_errors_include_path_for_missing_file(self):
         missing_path = Path("/tmp/vcmi-missing-save-for-test.GM1")

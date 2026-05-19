@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from tools import h3_map_parser
+from tools import h3_save_parser
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -162,6 +163,8 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(placed_object.template_index, 3)
         self.assertEqual(target.template, template)
         self.assertEqual(target.count, 37)
+        self.assertFalse(target.removed)
+        self.assertIsNone(target.removal_note)
 
     def test_load_h3m_reads_gzip_with_format_id_at_offset_zero(self):
         payload = _build_minimal_h3m_header()
@@ -424,6 +427,122 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(loaded.objects[0].template_index, 0)
         self.assertEqual(loaded.neutral_targets[0].object_index, 1)
         self.assertEqual(loaded.neutral_targets[0].count, 37)
+
+    def test_filter_removed_neutral_targets_excludes_by_object_index_and_subid(self):
+        template = h3_map_parser.H3ObjectTemplate(
+            template_index=3,
+            animation_file="AVWgnll0.def",
+            block_mask=b"\x00" * 6,
+            visit_mask=b"\x01" * 6,
+            terrain_mask=0x01FF,
+            object_id=54,
+            subid=98,
+            object_type=2,
+            print_priority=4,
+        )
+        def target(object_index, position, h3m_subid, count, creature_name):
+            return h3_map_parser.H3NeutralMonsterTarget(
+                object_index=object_index,
+                x=position[0],
+                y=position[1],
+                z=position[2],
+                template=template,
+                h3m_subid=h3m_subid,
+                count=count,
+                creature_name=creature_name,
+                estimator_creature_id=h3m_subid,
+            )
+
+        gnoll_target = target(2393, (39, 70, 1), 98, 37, "Gnoll")
+        gremlin_target = target(2331, (39, 75, 1), 28, 47, "Gremlin")
+        master_gremlin_target = target(
+            2330,
+            (40, 73, 1),
+            29,
+            32,
+            "Master Gremlin",
+        )
+        kept_target = h3_map_parser.H3NeutralMonsterTarget(
+            object_index=2400,
+            x=41,
+            y=75,
+            z=1,
+            template=template,
+            h3m_subid=30,
+            count=11,
+            creature_name="Stone Gargoyle",
+            estimator_creature_id=30,
+        )
+        records = (
+            h3_save_parser.RemovedNeutralRecord(
+                object_index=2393,
+                h3m_subid=98,
+                source_offset=946676,
+                removal_flags=0x8000,
+            ),
+            h3_save_parser.RemovedNeutralRecord(
+                object_index=2331,
+                h3m_subid=28,
+                source_offset=947037,
+                removal_flags=0xA000,
+            ),
+            h3_save_parser.RemovedNeutralRecord(
+                object_index=2330,
+                h3m_subid=29,
+                source_offset=947054,
+                removal_flags=0x5000,
+            ),
+        )
+
+        filtered = h3_map_parser.filter_removed_neutral_targets(
+            (gnoll_target, gremlin_target, master_gremlin_target, kept_target),
+            records,
+        )
+
+        self.assertEqual(filtered, (kept_target,))
+
+    def test_filter_removed_neutral_targets_can_include_removed_debug_targets(self):
+        template = h3_map_parser.H3ObjectTemplate(
+            template_index=3,
+            animation_file="AVWgrex0.def",
+            block_mask=b"\x00" * 6,
+            visit_mask=b"\x01" * 6,
+            terrain_mask=0x01FF,
+            object_id=54,
+            subid=29,
+            object_type=2,
+            print_priority=4,
+        )
+        target = h3_map_parser.H3NeutralMonsterTarget(
+            object_index=2330,
+            x=40,
+            y=73,
+            z=1,
+            template=template,
+            h3m_subid=29,
+            count=32,
+            creature_name="Master Gremlin",
+            estimator_creature_id=29,
+        )
+        records = (
+            h3_save_parser.RemovedNeutralRecord(
+                object_index=2330,
+                h3m_subid=29,
+                source_offset=947054,
+                removal_flags=0x5000,
+            ),
+        )
+
+        included = h3_map_parser.filter_removed_neutral_targets(
+            (target,),
+            records,
+            include_removed=True,
+        )
+
+        self.assertEqual(len(included), 1)
+        self.assertEqual(included[0].object_index, 2330)
+        self.assertTrue(included[0].removed)
+        self.assertEqual(included[0].removal_note, "removed-save-record@947054")
 
 
 if __name__ == "__main__":
