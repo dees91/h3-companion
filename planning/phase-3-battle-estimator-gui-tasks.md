@@ -770,6 +770,29 @@ payloads are stable.
 1. Unit tests for backend save-mode state.
 2. Manual test by switching pinned/follow modes and adding or selecting saves.
 
+**Completion Notes (2026-05-19):**
+- Added compact top-bar controls for save picking, follow-latest mode, and
+  manual refresh.
+- Wired `GET /api/saves` into the save picker and `POST /api/save-mode` for
+  pinned save and follow-latest transitions.
+- Added a 5-second follow-latest auto-refresh loop that compares mode, save,
+  save fingerprint, map, map fingerprint, and selected hero before replacing
+  the rendered snapshot; pinned mode is not auto-replaced.
+- Added frontend request epochs and save-mode guards so polling and manual
+  refresh cannot overwrite newer save-mode changes.
+- Snapshot replacement now clears stale estimate and scan state, refreshes save
+  controls, and refreshes the save list after state changes.
+- Added backend selected-hero preservation by stable ID or exact
+  case-insensitive unambiguous `last_hero` fallback when a previous selected ID
+  is stale; ambiguous or missing names clear selection without writing config.
+- Added tests for unambiguous fallback and ambiguous-name clearing, plus static
+  frontend checks for save controls, save endpoints, auto-refresh, and race
+  guards.
+- Verified with `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest discover -s tests`,
+  `node --check tools/battle_estimator_gui/app.js`,
+  `python3 tools/battle_estimator.py --help`, and `git diff --check`.
+
 ---
 
 ### GUI-T11: End-to-End Polish + Docs
@@ -878,5 +901,5 @@ structure and frontend test strategy.
 | GUI-T07: Hero Search + Recent Selection | done | GUI-T03, GUI-T04, GUI-T05 | Codex | Search, recent hero selection, persistence, selected highlighting, and map recentering added. |
 | GUI-T08: Click Target Simulation | done | GUI-T04, GUI-T06, GUI-T07 | Codex | Marker clicks run selected-hero target estimates with stale response guards and structured result rendering. |
 | GUI-T09: Radius Scan Visualization | done | GUI-T04, GUI-T06, GUI-T07 | Codex | Radius scans render sorted results, marker coloring, and result navigation. |
-| GUI-T10: Save Picker + Auto Refresh | todo | GUI-T02, GUI-T04, GUI-T05 | unassigned | Follow latest and pinned save. |
-| GUI-T11: End-to-End Polish + Docs | blocked | GUI-T08, GUI-T09, GUI-T10 | unassigned | Final verification pass. |
+| GUI-T10: Save Picker + Auto Refresh | done | GUI-T02, GUI-T04, GUI-T05 | Codex | Save picker, pinned/follow modes, auto-refresh, and selected-hero preservation added. |
+| GUI-T11: End-to-End Polish + Docs | todo | GUI-T08, GUI-T09, GUI-T10 | unassigned | Final verification pass. |

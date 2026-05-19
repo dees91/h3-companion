@@ -100,7 +100,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
                 (
                     "/app.js",
                     "application/javascript; charset=utf-8",
-                    b'fetch("/api/state")',
+                    b'getJson("/api/state"',
                 ),
                 (
                     "/style.css",
@@ -211,13 +211,24 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'addEventListener("input"',
             '"/api/select-hero"',
             '"/api/simulate-target"',
-            '"/api/scan-radius"'
+            '"/api/scan-radius"',
+            '"/api/saves"',
+            '"/api/save-mode"',
+            "AUTO_REFRESH_MS = 5000",
+            "setInterval",
+            "snapshotChanged",
+            "FOLLOW_LATEST_MODE",
+            "PINNED_MODE",
+            "return Promise.resolve();",
+            "elements.refreshButton.disabled = stateRequests.saveModeInFlight || stateRequests.loading;"
         ):
             self.assertIn(expected, app_js)
         for expected in (
             'id="hero-search"',
             'id="recent-heroes"',
             'id="hero-list"',
+            'id="save-picker"',
+            'id="follow-latest-button"',
             'id="scan-radius"',
             'id="scan-target-type"',
             'id="scan-button"',
@@ -234,6 +245,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".result-box.error",
             ".scan-result",
             ".scan-result.strong",
+            ".top-actions",
         ):
             self.assertIn(expected, style_css)
         self.assertNotIn("owner_id", app_js)
@@ -279,6 +291,9 @@ class Element {{
   get firstChild() {{
     return this.children[0] || null;
   }}
+  get options() {{
+    return this.children;
+  }}
   appendChild(child) {{
     this.children.push(child);
     return child;
@@ -317,12 +332,17 @@ global.document = {{
 global.window = {{
   addEventListener() {{}},
   devicePixelRatio: 1,
-  ResizeObserver: null
+  ResizeObserver: null,
+  setInterval() {{
+    return 1;
+  }}
 }};
 const snapshot = {{
   mode: "follow_latest",
   save_file: null,
+  save_fingerprint: null,
   map_file: null,
+  map_fingerprint: null,
   map: {{ width: 1, height: 1, levels: 1 }},
   heroes: [],
   neutral_targets: [],
@@ -455,6 +475,74 @@ assert.strictEqual(
                 self.assertEqual(payload["save_file"], str(save_path))
                 self.assertEqual(payload["selected_hero_id"], "hero:256")
                 self.assertEqual(payload["recent_heroes"], ["Isra", "Marius"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_state_preserves_selected_hero_by_unambiguous_config_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(
+                game_dir,
+                "001.GM2",
+                hero_name="Marius",
+                name_offset=512,
+            )
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            config_path.write_text(
+                json.dumps({"last_hero": "marius"}) + "\n",
+                encoding="utf-8",
+            )
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                selected_hero_id="hero:256",
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["selected_hero_id"], "hero:512")
+                self.assertEqual(app_state.selected_hero_id, "hero:512")
+
+            self._with_server(check, app_state=app_state)
+
+    def test_state_clears_selected_hero_when_config_name_is_ambiguous(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {"hero_name": "Marius", "name_offset": 256, "position": (39, 69, 1)},
+                    {"hero_name": "marius", "name_offset": 512, "position": (39, 71, 1)},
+                ),
+            )
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            config_path.write_text(
+                json.dumps({"last_hero": "Marius"}) + "\n",
+                encoding="utf-8",
+            )
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                selected_hero_id="hero:999",
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                self.assertIsNone(payload["selected_hero_id"])
+                self.assertIsNone(app_state.selected_hero_id)
 
             self._with_server(check, app_state=app_state)
 

@@ -252,8 +252,6 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         with self.app_state.lock:
             self.app_state.mode = candidate.mode
             self.app_state.save_file = candidate.save_file
-            if self.app_state.selected_hero_id not in domain_snapshot.hero_by_id:
-                self.app_state.selected_hero_id = None
         return _state_payload_for_app(self.app_state, domain_snapshot)
 
     def _api_simulate_target(self, payload: dict) -> dict:
@@ -707,16 +705,50 @@ def _state_payload_for_app(
     domain_snapshot: DomainSnapshot,
 ) -> dict:
     config = h3_save_parser.load_config(_snapshot_kwargs_for_state(app_state)["config_path"])
-    with app_state.lock:
-        selected_hero_id = app_state.selected_hero_id
-        if selected_hero_id not in domain_snapshot.hero_by_id:
-            selected_hero_id = None
-            app_state.selected_hero_id = None
-
+    selected_hero_id = _resolve_selected_hero_id_for_app(
+        app_state,
+        domain_snapshot,
+        config.last_hero,
+    )
     payload = dict(domain_snapshot.state)
     payload["selected_hero_id"] = selected_hero_id
     payload["recent_heroes"] = list(config.recent_heroes)
     return payload
+
+
+def _resolve_selected_hero_id_for_app(
+    app_state: GuiAppState,
+    domain_snapshot: DomainSnapshot,
+    fallback_hero_name: str | None,
+) -> str | None:
+    with app_state.lock:
+        selected_hero_id = app_state.selected_hero_id
+        if selected_hero_id is None:
+            return None
+        if selected_hero_id not in domain_snapshot.hero_by_id:
+            selected_hero_id = _hero_id_for_unambiguous_name(
+                domain_snapshot,
+                fallback_hero_name,
+            )
+            app_state.selected_hero_id = selected_hero_id
+    return selected_hero_id
+
+
+def _hero_id_for_unambiguous_name(
+    domain_snapshot: DomainSnapshot,
+    hero_name: str | None,
+) -> str | None:
+    normalized = hero_name.strip().casefold() if hero_name else ""
+    if not normalized:
+        return None
+    matches = [
+        hero_id
+        for hero_id, hero in domain_snapshot.hero_entries
+        if hero.hero_name.casefold() == normalized
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _active_game_dir_for_app(app_state: GuiAppState) -> Path:

@@ -30,7 +30,13 @@
           <dd id="refresh-status">Loading</dd>
         </div>
       </dl>
-      <button id="refresh-button" class="secondary-button" type="button">Refresh</button>
+      <div class="top-actions" aria-label="Save controls">
+        <select id="save-picker" aria-label="Pinned save" disabled>
+          <option value="">Loading saves</option>
+        </select>
+        <button id="follow-latest-button" class="secondary-button" type="button" disabled>Follow Latest</button>
+        <button id="refresh-button" class="secondary-button" type="button">Refresh</button>
+      </div>
     </header>
 
     <main class="app-shell">

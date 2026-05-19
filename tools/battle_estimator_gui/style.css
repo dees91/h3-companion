@@ -141,6 +141,19 @@ h3 {
   opacity: 0.6;
 }
 
+.top-actions {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.top-actions select,
+.top-actions .secondary-button {
+  min-width: 0;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: minmax(240px, 300px) minmax(420px, 1fr) minmax(260px, 340px);
@@ -517,6 +530,15 @@ canvas.has-marker-hover {
     width: 100%;
   }
 
+  .top-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) repeat(2, minmax(120px, auto));
+  }
+
+  .top-actions .secondary-button {
+    grid-column: auto;
+  }
+
   .status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -538,6 +560,14 @@ canvas.has-marker-hover {
 
   .status-grid {
     grid-template-columns: 1fr;
+  }
+
+  .top-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .top-actions .secondary-button {
+    width: 100%;
   }
 
   .status-grid div {

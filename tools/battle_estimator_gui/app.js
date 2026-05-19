@@ -7,6 +7,8 @@
     save: document.getElementById("save-status"),
     map: document.getElementById("map-status"),
     refresh: document.getElementById("refresh-status"),
+    savePicker: document.getElementById("save-picker"),
+    followLatestButton: document.getElementById("follow-latest-button"),
     refreshButton: document.getElementById("refresh-button"),
     heroSearch: document.getElementById("hero-search"),
     heroCount: document.getElementById("hero-count"),
@@ -58,6 +60,19 @@
     results: [],
     resultByTargetId: new Map()
   };
+  const stateRequests = {
+    epoch: 0,
+    loading: false,
+    loadingEpoch: 0,
+    saveListRequestId: 0,
+    saveModeRequestId: 0,
+    saveModeInFlight: false,
+    autoRefreshRunning: false,
+    autoRefreshTimer: null
+  };
+  const AUTO_REFRESH_MS = 5000;
+  const FOLLOW_LATEST_MODE = "follow_latest";
+  const PINNED_MODE = "pinned";
 
   function setHealth(text, className) {
     elements.health.textContent = text;
@@ -67,6 +82,18 @@
   function setText(element, value) {
     element.textContent = value || "...";
     element.title = value || "";
+  }
+
+  function getJson(path, fallbackMessage) {
+    return fetch(path)
+      .then((response) => {
+        if (!response.ok) {
+          return response.json().catch(() => ({})).then((errorPayload) => {
+            throw new Error(errorPayload.error || `${fallbackMessage}: ${response.status}`);
+          });
+        }
+        return response.json();
+      });
   }
 
   function postJson(path, payload, fallbackMessage) {
@@ -94,6 +121,35 @@
       return "None";
     }
     return String(path).split(/[\\/]/).pop() || String(path);
+  }
+
+  function modeLabel(mode) {
+    if (mode === FOLLOW_LATEST_MODE) {
+      return "Follow latest";
+    }
+    if (mode === PINNED_MODE) {
+      return "Pinned save";
+    }
+    return mode || "unknown";
+  }
+
+  function nextStateEpoch() {
+    stateRequests.epoch += 1;
+    return stateRequests.epoch;
+  }
+
+  function snapshotChanged(current, next) {
+    if (!current || !next) {
+      return true;
+    }
+    return (
+      current.mode !== next.mode
+      || current.save_file !== next.save_file
+      || current.save_fingerprint !== next.save_fingerprint
+      || current.map_file !== next.map_file
+      || current.map_fingerprint !== next.map_fingerprint
+      || current.selected_hero_id !== next.selected_hero_id
+    );
   }
 
   function positionText(position) {
@@ -874,6 +930,185 @@
       });
   }
 
+  function savePickerOption(value, text) {
+    const option = document.createElement("option");
+    option.value = value || "";
+    option.textContent = text;
+    return option;
+  }
+
+  function syncSaveControls(snapshot) {
+    const current = snapshot || mapView.snapshot;
+    const mode = current ? current.mode : null;
+    const hasSaveOptions = elements.savePicker.options.length > 1;
+    elements.followLatestButton.disabled = (
+      !current
+      || mode === FOLLOW_LATEST_MODE
+      || stateRequests.saveModeInFlight
+      || stateRequests.loading
+    );
+    elements.savePicker.disabled = (
+      !current
+      || !hasSaveOptions
+      || stateRequests.saveModeInFlight
+      || stateRequests.loading
+    );
+    elements.refreshButton.disabled = stateRequests.saveModeInFlight || stateRequests.loading;
+    if (!current) {
+      elements.savePicker.value = "";
+      return;
+    }
+    if (mode === PINNED_MODE && current.save_file) {
+      const hasCurrent = Array.from(elements.savePicker.options).some((option) => (
+        option.value === current.save_file
+      ));
+      if (!hasCurrent) {
+        elements.savePicker.appendChild(
+          savePickerOption(current.save_file, `${fileName(current.save_file)} (current pinned)`)
+        );
+      }
+      elements.savePicker.value = current.save_file;
+      return;
+    }
+    elements.savePicker.value = "";
+  }
+
+  function renderSaveOptions(payload) {
+    const saves = payload && payload.saves ? payload.saves : [];
+    clearNode(elements.savePicker);
+    if (saves.length === 0) {
+      elements.savePicker.appendChild(savePickerOption("", "No numeric saves"));
+      elements.savePicker.disabled = true;
+      syncSaveControls(mapView.snapshot);
+      return;
+    }
+
+    elements.savePicker.appendChild(savePickerOption("", "Pin a save..."));
+    saves.forEach((save) => {
+      const label = save.path === payload.latest_save_file
+        ? `${fileName(save.path)} (latest)`
+        : fileName(save.path);
+      elements.savePicker.appendChild(savePickerOption(save.path, label));
+    });
+    syncSaveControls(mapView.snapshot);
+  }
+
+  function loadSaves() {
+    const requestId = stateRequests.saveListRequestId + 1;
+    stateRequests.saveListRequestId = requestId;
+    return getJson("/api/saves", "saves request failed")
+      .then((payload) => {
+        if (requestId !== stateRequests.saveListRequestId) {
+          return;
+        }
+        renderSaveOptions(payload);
+      })
+      .catch((error) => {
+        if (requestId !== stateRequests.saveListRequestId) {
+          return;
+        }
+        clearNode(elements.savePicker);
+        elements.savePicker.appendChild(savePickerOption("", "Unable to load saves"));
+        elements.savePicker.disabled = true;
+        setText(elements.refresh, `Save list error: ${error.message}`);
+      });
+  }
+
+  function switchSaveMode(mode, saveFile) {
+    if (mode === PINNED_MODE && !saveFile) {
+      return;
+    }
+    const requestId = stateRequests.saveModeRequestId + 1;
+    const epoch = nextStateEpoch();
+    stateRequests.saveModeRequestId = requestId;
+    stateRequests.saveModeInFlight = true;
+    syncSaveControls(mapView.snapshot);
+    setText(elements.refresh, mode === PINNED_MODE ? "Pinning save" : "Following latest");
+
+    const payload = mode === PINNED_MODE
+      ? { mode, save_file: saveFile }
+      : { mode };
+    return postJson("/api/save-mode", payload, "save mode request failed")
+      .then((snapshot) => {
+        if (
+          requestId !== stateRequests.saveModeRequestId
+          || epoch !== stateRequests.epoch
+        ) {
+          return;
+        }
+        renderSnapshot(snapshot);
+        setText(elements.refresh, "Loaded");
+        return loadSaves();
+      })
+      .catch((error) => {
+        if (requestId === stateRequests.saveModeRequestId) {
+          setText(elements.refresh, `Save mode error: ${error.message}`);
+        }
+      })
+      .finally(() => {
+        if (requestId === stateRequests.saveModeRequestId) {
+          stateRequests.saveModeInFlight = false;
+          syncSaveControls(mapView.snapshot);
+        }
+      });
+  }
+
+  function refreshStateAndSaves() {
+    if (stateRequests.saveModeInFlight) {
+      return Promise.resolve();
+    }
+    return loadState().then(() => loadSaves());
+  }
+
+  function autoRefreshState() {
+    if (
+      stateRequests.autoRefreshRunning
+      || stateRequests.saveModeInFlight
+      || stateRequests.loading
+      || !mapView.snapshot
+      || mapView.snapshot.mode !== FOLLOW_LATEST_MODE
+    ) {
+      return;
+    }
+
+    const epoch = stateRequests.epoch;
+    stateRequests.autoRefreshRunning = true;
+    getJson("/api/state", "state request failed")
+      .then((snapshot) => {
+        if (
+          epoch !== stateRequests.epoch
+          || !mapView.snapshot
+          || mapView.snapshot.mode !== FOLLOW_LATEST_MODE
+          || snapshot.mode !== FOLLOW_LATEST_MODE
+        ) {
+          return;
+        }
+        if (snapshotChanged(mapView.snapshot, snapshot)) {
+          renderSnapshot(snapshot);
+          setText(elements.refresh, "Auto refreshed");
+          loadSaves();
+        } else {
+          setText(elements.refresh, "Up to date");
+        }
+      })
+      .catch((error) => {
+        setText(elements.refresh, `Auto refresh error: ${error.message}`);
+      })
+      .finally(() => {
+        stateRequests.autoRefreshRunning = false;
+      });
+  }
+
+  function startAutoRefresh() {
+    if (stateRequests.autoRefreshTimer) {
+      return;
+    }
+    stateRequests.autoRefreshTimer = window.setInterval(
+      autoRefreshState,
+      AUTO_REFRESH_MS
+    );
+  }
+
   function matchRecentHeroName(heroes, name) {
     const normalized = normalizeName(name);
     if (!normalized) {
@@ -1045,7 +1280,7 @@
       ? `${map.width} x ${map.height} x ${map.levels || 1}`
       : "No map";
 
-    setText(elements.mode, snapshot.mode || "unknown");
+    setText(elements.mode, modeLabel(snapshot.mode));
     setText(elements.save, fileName(snapshot.save_file));
     setText(elements.map, fileName(snapshot.map_file));
     setText(elements.refresh, "Loaded");
@@ -1073,6 +1308,7 @@
 
     setEstimateMessage("No simulation run.");
     clearScanResults("No scan results.");
+    syncSaveControls(snapshot);
   }
 
   function renderError(message) {
@@ -1100,32 +1336,38 @@
     setTargetDetails(null);
     setEstimateMessage("No simulation run.");
     clearScanResults("No scan results.");
+    syncSaveControls(null);
     drawMap();
   }
 
   function loadState() {
+    const epoch = nextStateEpoch();
+    stateRequests.loading = true;
+    stateRequests.loadingEpoch = epoch;
     invalidateEstimateRequests();
     clearScanResults("No scan results.");
     setText(elements.refresh, "Loading");
     elements.refreshButton.disabled = true;
+    syncSaveControls(mapView.snapshot);
 
-    return fetch("/api/state")
-      .then((response) => {
-        if (!response.ok) {
-          return response.json().catch(() => ({})).then((payload) => {
-            throw new Error(payload.error || `state request failed: ${response.status}`);
-          });
-        }
-        return response.json();
-      })
+    return getJson("/api/state", "state request failed")
       .then((snapshot) => {
+        if (epoch !== stateRequests.epoch) {
+          return;
+        }
         renderSnapshot(snapshot);
       })
       .catch((error) => {
-        renderError(error.message);
+        if (epoch === stateRequests.epoch) {
+          renderError(error.message);
+        }
       })
       .finally(() => {
-        elements.refreshButton.disabled = false;
+        if (stateRequests.loadingEpoch === epoch) {
+          stateRequests.loading = false;
+          elements.refreshButton.disabled = false;
+          syncSaveControls(mapView.snapshot);
+        }
       });
   }
 
@@ -1146,7 +1388,18 @@
   }
 
   elements.refreshButton.addEventListener("click", () => {
-    loadState();
+    refreshStateAndSaves();
+  });
+
+  elements.savePicker.addEventListener("change", () => {
+    const saveFile = elements.savePicker.value;
+    if (saveFile) {
+      switchSaveMode(PINNED_MODE, saveFile);
+    }
+  });
+
+  elements.followLatestButton.addEventListener("click", () => {
+    switchSaveMode(FOLLOW_LATEST_MODE);
   });
 
   elements.heroSearch.addEventListener("input", () => {
@@ -1270,5 +1523,6 @@
     zoomAtPoint
   };
 
-  checkHealth().finally(loadState);
+  startAutoRefresh();
+  checkHealth().finally(refreshStateAndSaves);
 }());
