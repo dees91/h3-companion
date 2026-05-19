@@ -141,12 +141,28 @@ h3 {
   opacity: 0.6;
 }
 
+.icon-button {
+  min-width: 34px;
+  padding: 6px 9px;
+  font-weight: 700;
+}
+
 .top-actions {
   display: grid;
-  grid-template-columns: minmax(170px, 220px) minmax(220px, 1fr) auto minmax(150px, 220px) auto auto;
+  grid-template-columns: minmax(170px, 220px) minmax(220px, 1fr) auto minmax(150px, 220px) auto auto auto;
   gap: 8px;
   align-items: center;
   min-width: 0;
+}
+
+.save-nav-controls {
+  display: inline-grid;
+  grid-template-columns: repeat(2, 34px);
+  gap: 4px;
+}
+
+.save-nav-controls .secondary-button {
+  width: 34px;
 }
 
 .top-actions select,
@@ -357,6 +373,17 @@ select:disabled {
   color: #334155;
   font-size: 12px;
   white-space: nowrap;
+}
+
+.toolbar-button {
+  min-width: 104px;
+  min-height: 24px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.toolbar-metrics .secondary-button {
+  width: auto;
 }
 
 .segmented-control {
@@ -684,6 +711,51 @@ select:disabled {
   box-shadow: 0 14px 40px rgba(24, 36, 52, 0.22);
 }
 
+.ranking-dialog-panel {
+  width: min(560px, 100%);
+  max-height: min(720px, calc(100vh - 32px));
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.dialog-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.dialog-heading .icon-button {
+  flex: 0 0 auto;
+  width: 34px;
+}
+
+.ranking-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.ranking-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ranking-item:hover,
+.ranking-item:focus-visible {
+  border-color: #758195;
+  background: #f3f6fa;
+}
+
+.ranking-title {
+  color: #172033;
+}
+
 .dialog-panel p {
   color: #566273;
   font-size: 13px;
@@ -708,11 +780,15 @@ select:disabled {
 
   .top-actions {
     grid-column: 1 / -1;
-    grid-template-columns: minmax(170px, 220px) minmax(220px, 1fr) auto minmax(150px, 220px) auto auto;
+    grid-template-columns: minmax(170px, 220px) minmax(220px, 1fr) auto minmax(150px, 220px) auto auto auto;
   }
 
   .top-actions .secondary-button {
     grid-column: auto;
+  }
+
+  .save-nav-controls .secondary-button {
+    width: 34px;
   }
 
   .status-grid {
@@ -749,6 +825,14 @@ select:disabled {
   }
 
   .top-actions .secondary-button {
+    width: 100%;
+  }
+
+  .save-nav-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .save-nav-controls .secondary-button {
     width: 100%;
   }
 

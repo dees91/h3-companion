@@ -11,6 +11,8 @@
     gameFolderPath: document.getElementById("game-folder-path"),
     useGameFolderButton: document.getElementById("use-game-folder-button"),
     savePicker: document.getElementById("save-picker"),
+    previousSaveButton: document.getElementById("previous-save-button"),
+    nextSaveButton: document.getElementById("next-save-button"),
     followLatestButton: document.getElementById("follow-latest-button"),
     refreshButton: document.getElementById("refresh-button"),
     heroSearch: document.getElementById("hero-search"),
@@ -22,6 +24,7 @@
     mapLevelControl: document.getElementById("map-level-control"),
     showRemovedToggle: document.getElementById("show-removed-toggle"),
     showHiddenToggle: document.getElementById("show-hidden-toggle"),
+    heroRankingButton: document.getElementById("hero-ranking-button"),
     mapStage: document.getElementById("map-stage"),
     mapTooltip: document.getElementById("map-tooltip"),
     targetContextMenu: document.getElementById("target-context-menu"),
@@ -38,7 +41,10 @@
     followLatestDialog: document.getElementById("follow-latest-dialog"),
     followCurrentFolderButton: document.getElementById("follow-current-folder-button"),
     followLatestFolderButton: document.getElementById("follow-latest-folder-button"),
-    followCancelButton: document.getElementById("follow-cancel-button")
+    followCancelButton: document.getElementById("follow-cancel-button"),
+    heroRankingDialog: document.getElementById("hero-ranking-dialog"),
+    heroRankingCloseButton: document.getElementById("hero-ranking-close-button"),
+    heroRankingList: document.getElementById("hero-ranking-list")
   };
   const canvasContext = elements.canvas.getContext("2d");
   const mapView = {
@@ -75,6 +81,9 @@
     targetType: "all",
     results: [],
     resultByTargetId: new Map()
+  };
+  const saveNavigation = {
+    saves: []
   };
   const stateRequests = {
     epoch: 0,
@@ -154,6 +163,18 @@
       return "Pinned save";
     }
     return mode || "unknown";
+  }
+
+  function currentSaveIndex(snapshot) {
+    const current = snapshot || mapView.snapshot;
+    if (!current || !current.save_file) {
+      return -1;
+    }
+    return saveNavigation.saves.findIndex((save) => save.path === current.save_file);
+  }
+
+  function heroAiValue(hero) {
+    return typeof hero.ai_value === "number" ? hero.ai_value : 0;
   }
 
   function nextStateEpoch() {
@@ -1306,9 +1327,21 @@
     const mode = current ? current.mode : null;
     const hasSaveOptions = elements.savePicker.options.length > 1;
     const busy = controlsBusy();
+    const saveIndex = currentSaveIndex(current);
     elements.followLatestButton.disabled = (
       !current
       || busy
+    );
+    elements.previousSaveButton.disabled = (
+      !current
+      || busy
+      || saveIndex <= 0
+    );
+    elements.nextSaveButton.disabled = (
+      !current
+      || busy
+      || saveIndex < 0
+      || saveIndex >= saveNavigation.saves.length - 1
     );
     elements.savePicker.disabled = (
       !current
@@ -1335,6 +1368,10 @@
     elements.savePicker.value = "";
   }
 
+  function syncHeroRankingControls() {
+    elements.heroRankingButton.disabled = rankedMapHeroes(mapView.snapshot).length === 0;
+  }
+
   function syncGameFolderControls() {
     const busy = controlsBusy();
     const path = String(elements.gameFolderPath.value || "").trim();
@@ -1345,6 +1382,7 @@
 
   function renderSaveOptions(payload) {
     const saves = payload && payload.saves ? payload.saves : [];
+    saveNavigation.saves = saves;
     clearNode(elements.savePicker);
     if (saves.length === 0) {
       elements.savePicker.appendChild(savePickerOption("", "No numeric saves"));
@@ -1403,6 +1441,7 @@
         if (requestId !== stateRequests.saveListRequestId) {
           return;
         }
+        saveNavigation.saves = [];
         clearNode(elements.savePicker);
         elements.savePicker.appendChild(savePickerOption("", "Unable to load saves"));
         elements.savePicker.disabled = true;
@@ -1434,6 +1473,22 @@
 
   function refreshLists() {
     return Promise.all([loadSaves(), loadGameFolders()]);
+  }
+
+  function navigateSave(direction) {
+    if (controlsBusy()) {
+      return Promise.resolve();
+    }
+    const saveIndex = currentSaveIndex(mapView.snapshot);
+    const targetIndex = saveIndex + direction;
+    if (saveIndex < 0 || targetIndex < 0 || targetIndex >= saveNavigation.saves.length) {
+      return Promise.resolve();
+    }
+    const targetSave = saveNavigation.saves[targetIndex];
+    if (!targetSave || !targetSave.path) {
+      return Promise.resolve();
+    }
+    return switchSaveMode(PINNED_MODE, targetSave.path);
   }
 
   function switchSaveMode(mode, saveFile) {
@@ -1583,6 +1638,71 @@
 
   function hideFollowLatestDialog() {
     elements.followLatestDialog.hidden = true;
+  }
+
+  function rankedMapHeroes(snapshot) {
+    return ((snapshot && snapshot.heroes) || [])
+      .filter((hero) => hero.position)
+      .slice()
+      .sort((left, right) => (
+        heroAiValue(right) - heroAiValue(left)
+        || (right.total_creatures || 0) - (left.total_creatures || 0)
+        || String(left.name || left.id).localeCompare(String(right.name || right.id))
+      ));
+  }
+
+  function renderHeroRanking() {
+    const heroes = rankedMapHeroes(mapView.snapshot);
+    clearNode(elements.heroRankingList);
+    if (heroes.length === 0) {
+      appendEmpty(elements.heroRankingList, "No positioned heroes.");
+      return;
+    }
+
+    heroes.forEach((hero, index) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "list-item ranking-item";
+      row.dataset.heroId = hero.id;
+      row.addEventListener("click", () => focusRankedHero(hero.id));
+
+      const title = document.createElement("div");
+      title.className = "item-title ranking-title";
+      title.textContent = `${index + 1}. ${hero.name || hero.id}`;
+      title.title = title.textContent;
+
+      const meta = document.createElement("div");
+      meta.className = "item-meta";
+      meta.textContent = [
+        `AI ${formatNumber(hero.ai_value)}`,
+        positionText(hero.position),
+        `${hero.total_creatures || 0} creatures`
+      ].join(" | ");
+      meta.title = hero.army_summary || meta.textContent;
+
+      row.appendChild(title);
+      row.appendChild(meta);
+      elements.heroRankingList.appendChild(row);
+    });
+  }
+
+  function showHeroRankingDialog() {
+    renderHeroRanking();
+    elements.heroRankingDialog.hidden = false;
+  }
+
+  function hideHeroRankingDialog() {
+    elements.heroRankingDialog.hidden = true;
+  }
+
+  function focusRankedHero(heroId) {
+    hideHeroRankingDialog();
+    const marker = centerOnMarkerId(heroId);
+    mapView.activeMarkerId = heroId || null;
+    if (marker) {
+      setTargetDetails(marker);
+    }
+    drawMap();
   }
 
   function matchRecentHeroName(heroes, name) {
@@ -1834,6 +1954,10 @@
     clearScanResults("No scan results.");
     syncSaveControls(snapshot);
     syncGameFolderControls();
+    syncHeroRankingControls();
+    if (!elements.heroRankingDialog.hidden) {
+      renderHeroRanking();
+    }
   }
 
   function renderError(message) {
@@ -1871,6 +1995,8 @@
     clearScanResults("No scan results.");
     syncSaveControls(null);
     syncGameFolderControls();
+    syncHeroRankingControls();
+    hideHeroRankingDialog();
     drawMap();
   }
 
@@ -1952,6 +2078,14 @@
     }
   });
 
+  elements.previousSaveButton.addEventListener("click", () => {
+    navigateSave(-1);
+  });
+
+  elements.nextSaveButton.addEventListener("click", () => {
+    navigateSave(1);
+  });
+
   elements.followLatestButton.addEventListener("click", () => {
     showFollowLatestDialog();
   });
@@ -1973,6 +2107,20 @@
   elements.followLatestDialog.addEventListener("click", (event) => {
     if (event.target === elements.followLatestDialog) {
       hideFollowLatestDialog();
+    }
+  });
+
+  elements.heroRankingButton.addEventListener("click", () => {
+    showHeroRankingDialog();
+  });
+
+  elements.heroRankingCloseButton.addEventListener("click", () => {
+    hideHeroRankingDialog();
+  });
+
+  elements.heroRankingDialog.addEventListener("click", (event) => {
+    if (event.target === elements.heroRankingDialog) {
+      hideHeroRankingDialog();
     }
   });
 
@@ -2136,6 +2284,7 @@
     markerContainsScreenPoint,
     markerScreenRadius,
     nextViewStateForSnapshot,
+    rankedMapHeroes,
     recentHeroChipState,
     resolveSelectedHeroId,
     scanClassForWinPct,
@@ -2155,6 +2304,7 @@
   elements.showRemovedToggle.checked = mapView.showRemovedNeutrals;
   elements.showHiddenToggle.checked = mapView.showHiddenNeutrals;
   elements.showHiddenToggle.disabled = true;
+  syncHeroRankingControls();
   elements.targetContextMenu.addEventListener("click", (event) => {
     event.stopPropagation();
   });
@@ -2162,6 +2312,8 @@
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       hideTargetContextMenu();
+      hideFollowLatestDialog();
+      hideHeroRankingDialog();
     }
   });
   startAutoRefresh();

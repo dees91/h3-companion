@@ -202,6 +202,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "filterHeroesForQuery",
             "matchRecentHeroName",
             "recentHeroChipState",
+            "rankedMapHeroes",
             "formatWinPct",
             "isFreshEstimatePayload",
             "isFreshScanPayload",
@@ -227,6 +228,12 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             '"/api/save-mode"',
             '"/api/game-folders"',
             '"/api/game-folder"',
+            "previousSaveButton",
+            "nextSaveButton",
+            "navigateSave",
+            "heroRankingButton",
+            "heroRankingDialog",
+            "renderHeroRanking",
             "gameFolderPath",
             "gameFolderInFlight",
             "showFollowLatestDialog",
@@ -255,11 +262,17 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'class="panel-section detected-heroes-section"',
             'id="hero-list"',
             'id="save-picker"',
+            'id="previous-save-button"',
+            'id="next-save-button"',
             'id="follow-latest-button"',
             'id="follow-latest-dialog"',
             'id="follow-current-folder-button"',
             'id="follow-latest-folder-button"',
             'id="follow-cancel-button"',
+            'id="hero-ranking-button"',
+            'id="hero-ranking-dialog"',
+            'id="hero-ranking-list"',
+            'id="hero-ranking-close-button"',
             'id="map-level-control"',
             'id="show-removed-toggle"',
             'id="show-hidden-toggle"',
@@ -283,9 +296,15 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".scan-result",
             ".scan-result.strong",
             ".top-actions",
+            ".save-nav-controls",
+            ".icon-button",
+            ".toolbar-button",
             ".dialog-backdrop",
             ".dialog-panel",
             ".dialog-actions",
+            ".ranking-dialog-panel",
+            ".ranking-list",
+            ".ranking-item",
             ".segmented-control",
             ".toggle-control",
             ".map-tooltip",
@@ -428,6 +447,7 @@ const markerSnapshot = {{
       name: "Isra",
       position: {{ x: 1, y: 2, z: 0 }},
       total_creatures: 12,
+      ai_value: 500,
       army_summary: "12x Skeleton"
     }},
     {{
@@ -435,7 +455,16 @@ const markerSnapshot = {{
       name: "Fafner",
       position: {{ x: 2, y: 3, z: 1 }},
       total_creatures: 292,
+      ai_value: 1200,
       army_summary: "1x Devil, 72x Master Gremlin"
+    }},
+    {{
+      id: "hero:2",
+      name: "Dormant",
+      position: null,
+      total_creatures: 999,
+      ai_value: 9000,
+      army_summary: "999x Skeleton"
     }}
   ],
   neutral_targets: [
@@ -479,6 +508,10 @@ assert.deepStrictEqual(
 assert.strictEqual(level0WithRemoved.find((marker) => marker.id === "neutral:removed").removed, true);
 const level1Markers = helpers.buildMarkerCache(markerSnapshot, 10, 1, false);
 assert.deepStrictEqual(level1Markers.map((marker) => marker.id), ["hero:1", "neutral:1"]);
+assert.deepStrictEqual(
+  helpers.rankedMapHeroes(markerSnapshot).map((hero) => hero.id),
+  ["hero:1", "hero:0"]
+);
 assert.strictEqual(helpers.defaultLevelForSnapshot(markerSnapshot, "hero:1"), 1);
 assert.strictEqual(helpers.resolveSelectedHeroId(markerSnapshot, "hero:1"), "hero:1");
 assert.strictEqual(helpers.resolveSelectedHeroId(markerSnapshot, "hero:missing"), "hero:0");
