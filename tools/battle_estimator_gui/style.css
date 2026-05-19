@@ -200,7 +200,10 @@ h3 {
 }
 
 .detected-heroes-section .list-stack {
+  align-content: start;
+  align-items: start;
   flex: 1 1 auto;
+  grid-auto-rows: max-content;
   min-height: 0;
   overflow-y: auto;
   padding-right: 2px;

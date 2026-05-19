@@ -215,6 +215,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             '"/api/saves"',
             '"/api/save-mode"',
             "AUTO_REFRESH_MS = 5000",
+            "AUTO_REFRESH_ENABLED = false",
+            "require manual Refresh until UX settles",
             "setInterval",
             "snapshotChanged",
             "FOLLOW_LATEST_MODE",
@@ -249,7 +251,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".top-actions",
             "height: calc(100vh - 73px);",
             ".detected-heroes-section",
+            "align-content: start;",
+            "align-items: start;",
             "flex: 1 1 auto;",
+            "grid-auto-rows: max-content;",
             "min-height: 0;",
             "overflow-y: auto;",
             "grid-template-rows: auto minmax(0, 1fr);",
@@ -337,11 +342,13 @@ global.document = {{
     return elements[id];
   }}
 }};
+let autoRefreshIntervalCalls = 0;
 global.window = {{
   addEventListener() {{}},
   devicePixelRatio: 1,
   ResizeObserver: null,
   setInterval() {{
+    autoRefreshIntervalCalls += 1;
     return 1;
   }}
 }};
@@ -363,6 +370,7 @@ global.fetch = (path) => Promise.resolve({{
 }});
 require({json.dumps(app_js_path)});
 const helpers = window.__battleEstimatorGuiTest;
+assert.strictEqual(autoRefreshIntervalCalls, 0);
 assert.strictEqual(helpers.formatWinPct(null), "not available");
 assert.strictEqual(helpers.formatWinPct(0), "0.0%");
 assert.strictEqual(helpers.verdictForWinPct(null), "Unsupported target");

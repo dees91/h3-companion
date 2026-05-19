@@ -71,6 +71,8 @@
     autoRefreshTimer: null
   };
   const AUTO_REFRESH_MS = 5000;
+  // Keep the polling path available, but require manual Refresh until UX settles.
+  const AUTO_REFRESH_ENABLED = false;
   const FOLLOW_LATEST_MODE = "follow_latest";
   const PINNED_MODE = "pinned";
 
@@ -1100,6 +1102,9 @@
   }
 
   function startAutoRefresh() {
+    if (!AUTO_REFRESH_ENABLED) {
+      return;
+    }
     if (stateRequests.autoRefreshTimer) {
       return;
     }
