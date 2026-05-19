@@ -1366,12 +1366,12 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual([stack.count for stack in hero.stacks], list(ISRA_COUNTS))
         self.assertEqual(hero.position, h3_save_parser.HeroPosition(52, 54, 1))
 
-    def test_parse_hero_at_reads_unencoded_hotseat_fallback_position(self):
+    def test_parse_hero_at_ignores_unencoded_hotseat_stale_position(self):
         data, name_offset = _build_xor_hero_fixture(
             xor_key=0x00,
             position=(44, 60, 0),
             position_from_name_offset=(
-                h3_save_parser.HOTSEAT_HERO_FALLBACK_POSITION_FROM_NAME_OFFSET
+                h3_save_parser.HERO_STRUCT_POSITION_FROM_NAME_OFFSET + 6
             ),
         )
 
@@ -1379,7 +1379,7 @@ class H3SaveParserContractTests(unittest.TestCase):
 
         self.assertIsNotNone(hero)
         self.assertEqual(hero.hero_name, "Isra")
-        self.assertEqual(hero.position, h3_save_parser.HeroPosition(44, 60, 0))
+        self.assertIsNone(hero.position)
 
     def test_scan_xor01_hero_armies_finds_unencoded_hotseat_hero(self):
         fixture, name_offset = _build_xor_hero_fixture(
