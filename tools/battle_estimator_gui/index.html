@@ -7,26 +7,104 @@
     <link rel="stylesheet" href="/style.css">
   </head>
   <body>
-    <header class="topbar">
-      <div>
+    <header class="topbar" data-testid="top-status">
+      <div class="brand-block">
         <h1>VCMI Battle Estimator</h1>
-        <p id="health-status">Checking local server...</p>
+        <span id="health-status" class="status-pill">Checking server</span>
       </div>
+      <dl class="status-grid" aria-label="Current snapshot">
+        <div>
+          <dt>Mode</dt>
+          <dd id="mode-status">...</dd>
+        </div>
+        <div>
+          <dt>Save</dt>
+          <dd id="save-status">...</dd>
+        </div>
+        <div>
+          <dt>Map</dt>
+          <dd id="map-status">...</dd>
+        </div>
+        <div>
+          <dt>Refresh</dt>
+          <dd id="refresh-status">Loading</dd>
+        </div>
+      </dl>
+      <button id="refresh-button" class="secondary-button" type="button">Refresh</button>
     </header>
+
     <main class="app-shell">
-      <aside class="panel">
-        <h2>Heroes</h2>
-        <input type="search" placeholder="Search heroes" disabled>
-        <p class="muted">Hero selection will appear here.</p>
+      <aside class="panel hero-panel" data-testid="hero-panel" aria-label="Heroes">
+        <div class="panel-header">
+          <div>
+            <h2>Heroes</h2>
+            <p id="hero-count" class="panel-subtitle">No snapshot loaded</p>
+          </div>
+        </div>
+        <label class="field-label" for="hero-search">Search</label>
+        <input id="hero-search" type="search" placeholder="Hero search" disabled>
+        <section class="panel-section" aria-label="Recent heroes">
+          <h3>Recent</h3>
+          <div id="recent-heroes" class="chip-row empty-state">None</div>
+        </section>
+        <section class="panel-section" aria-label="Detected heroes">
+          <h3>Detected</h3>
+          <div id="hero-list" class="list-stack">
+            <p class="empty-state">Loading heroes...</p>
+          </div>
+        </section>
       </aside>
-      <section class="map-stage" aria-label="Map preview">
-        <canvas id="battle-map" width="960" height="640"></canvas>
+
+      <section class="map-panel" data-testid="map-panel" aria-label="Map">
+        <div class="map-toolbar">
+          <div>
+            <h2>Map</h2>
+            <p id="map-summary" class="panel-subtitle">Waiting for snapshot</p>
+          </div>
+          <div class="toolbar-metrics" aria-label="Map metrics">
+            <span id="zoom-status">Zoom 100%</span>
+            <span id="object-count">0 targets</span>
+          </div>
+        </div>
+        <div class="map-stage">
+          <canvas id="battle-map" width="960" height="640"></canvas>
+          <div class="map-overlay" aria-live="polite">
+            <strong id="map-overlay-title">Map shell ready</strong>
+            <span id="map-overlay-detail">Grid rendering starts in the next task.</span>
+          </div>
+        </div>
       </section>
-      <aside class="panel">
-        <h2>Estimate</h2>
-        <p class="muted">Target details and scan results will appear here.</p>
+
+      <aside class="panel result-panel" data-testid="result-panel" aria-label="Results">
+        <section class="panel-section">
+          <h2>Target</h2>
+          <p id="target-state" class="empty-state">No target selected.</p>
+        </section>
+        <section class="panel-section">
+          <h2>Estimate</h2>
+          <div id="estimate-state" class="result-box empty-state">No simulation run.</div>
+        </section>
+        <section class="panel-section">
+          <h2>Radius Scan</h2>
+          <div class="scan-controls" aria-label="Radius scan controls">
+            <label>
+              Radius
+              <input type="number" value="10" min="0" max="200" disabled>
+            </label>
+            <label>
+              Target type
+              <select disabled>
+                <option>All</option>
+              </select>
+            </label>
+          </div>
+          <div id="scan-state" class="list-stack">
+            <p class="empty-state">No scan results.</p>
+          </div>
+        </section>
       </aside>
     </main>
+
     <script src="/app.js"></script>
   </body>
 </html>

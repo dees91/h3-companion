@@ -521,6 +521,19 @@ payloads are stable.
 1. Manual browser check at desktop size.
 2. Static file load check through the local server.
 
+**Completion Notes (2026-05-19):**
+- Rebuilt the static frontend as a dense operational shell with top snapshot
+  status, left hero/search panel, central canvas stage, and right result/scan
+  panel.
+- Added loading, empty, and snapshot-error states without implementing
+  selection, pan/zoom, marker hit testing, polling, or save picker workflows.
+- Frontend uses `/api/health` only for server health and `/api/state` for
+  snapshot display; snapshot errors do not mark the local server unavailable.
+- Verified with `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest discover -s tests`,
+  `python3 tools/battle_estimator.py --help`, `git diff --check`, and a
+  local static-shell HTTP smoke test.
+
 ---
 
 ### GUI-T06: Canvas Map Rendering
@@ -784,9 +797,9 @@ structure and frontend test strategy.
 | GUI-T02: Snapshot Builder Service | done | GUI-T01 | Codex | Snapshot builder supports follow-latest, pinned saves, map dimensions, heroes, neutrals, and fingerprints. |
 | GUI-T03: Config Recent Heroes | done | -- | Codex | Config now tracks capped, deduped recent heroes for GUI selections. |
 | GUI-T04: JSON API Endpoints | done | GUI-T02, GUI-T03 | Codex | JSON API endpoints added with state, saves, selection, mode, simulation, scan, and JSON errors. |
-| GUI-T05: Frontend Layout Shell | todo | GUI-T01 | unassigned | First usable browser screen. |
-| GUI-T06: Canvas Map Rendering | blocked | GUI-T04, GUI-T05 | unassigned | Full map grid, pan, zoom, markers. |
-| GUI-T07: Hero Search + Recent Selection | blocked | GUI-T03, GUI-T04, GUI-T05 | unassigned | Search/recent/select workflow. |
+| GUI-T05: Frontend Layout Shell | done | GUI-T01 | Codex | Dense operational shell with status bar, hero panel, canvas stage, and result/scan panel. |
+| GUI-T06: Canvas Map Rendering | todo | GUI-T04, GUI-T05 | unassigned | Full map grid, pan, zoom, markers. |
+| GUI-T07: Hero Search + Recent Selection | todo | GUI-T03, GUI-T04, GUI-T05 | unassigned | Search/recent/select workflow. |
 | GUI-T08: Click Target Simulation | blocked | GUI-T04, GUI-T06, GUI-T07 | unassigned | Single target estimate. |
 | GUI-T09: Radius Scan Visualization | blocked | GUI-T04, GUI-T06, GUI-T07 | unassigned | Scan overlay and result list. |
 | GUI-T10: Save Picker + Auto Refresh | blocked | GUI-T02, GUI-T04, GUI-T05 | unassigned | Follow latest and pinned save. |

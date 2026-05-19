@@ -85,10 +85,26 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
     def test_static_assets_are_served_from_whitelisted_routes(self):
         def check(base_url):
             cases = (
-                ("/", "text/html; charset=utf-8", b"VCMI Battle Estimator"),
-                ("/index.html", "text/html; charset=utf-8", b"/app.js"),
-                ("/app.js", "application/javascript; charset=utf-8", b"/api/health"),
-                ("/style.css", "text/css; charset=utf-8", b".app-shell"),
+                (
+                    "/",
+                    "text/html; charset=utf-8",
+                    b'data-testid="top-status"',
+                ),
+                (
+                    "/index.html",
+                    "text/html; charset=utf-8",
+                    b'data-testid="hero-panel"',
+                ),
+                (
+                    "/app.js",
+                    "application/javascript; charset=utf-8",
+                    b'fetch("/api/state")',
+                ),
+                (
+                    "/style.css",
+                    "text/css; charset=utf-8",
+                    b".map-panel",
+                ),
             )
             for path, expected_type, expected_body in cases:
                 with self.subTest(path=path):
@@ -97,6 +113,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
                     self.assertEqual(status, 200)
                     self.assertEqual(content_type, expected_type)
                     self.assertIn(expected_body, body)
+
+            _, _, html = self._get(base_url, "/")
+            self.assertIn(b'data-testid="map-panel"', html)
+            self.assertIn(b'data-testid="result-panel"', html)
 
         self._with_server(check)
 
@@ -110,6 +130,22 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
                     self.assertEqual(raised.exception.code, 404)
 
         self._with_server(check)
+
+    def test_frontend_shell_uses_safe_dom_text_rendering(self):
+        app_js = (
+            Path("tools") / "battle_estimator_gui" / "app.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("innerHTML", app_js)
+        self.assertIn("textContent", app_js)
+        self.assertIn("Snapshot unavailable", app_js)
+        load_state_body = app_js[
+            app_js.index("function loadState()"):
+            app_js.index("function checkHealth()")
+        ]
+        self.assertNotIn("setHealth(", load_state_body)
+        self.assertIn('setText(elements.mode, "Snapshot unavailable")', app_js)
+        self.assertIn('renderRecentHeroes([])', app_js)
 
     def test_default_server_binds_to_localhost(self):
         server = battle_estimator_gui.create_server(port=0)
