@@ -28,8 +28,9 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 
 try:
-    from tools import h3_save_parser
+    from tools import h3_map_parser, h3_save_parser
 except ImportError:  # pragma: no cover - direct script execution fallback.
+    import h3_map_parser
     import h3_save_parser
 
 
@@ -707,6 +708,36 @@ def _load_cli_hero_army(
     return context, hero
 
 
+def _resolve_cli_map(
+    args: argparse.Namespace,
+    save_context: h3_save_parser.SaveContext,
+    required: bool = False,
+) -> Optional[Path]:
+    if save_context.game_dir is None:
+        if args.map_file or required:
+            raise h3_map_parser.H3MapSelectionError(
+                save_context.save_file or ".",
+                "cannot resolve map without a game folder; use --map-file",
+            )
+        return None
+
+    if args.map_file or required:
+        return h3_map_parser.resolve_h3m_map(
+            save_context.game_dir,
+            explicit_map_file=args.map_file,
+        )
+
+    try:
+        return h3_map_parser.resolve_h3m_map(save_context.game_dir)
+    except h3_map_parser.H3MapSelectionError as exc:
+        print(
+            f"  Warning: could not auto-detect H3M map: {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+
+
 def _hero_army_to_parsed(
     hero_army: h3_save_parser.HeroArmy,
 ) -> List[Tuple[Creature, int, Optional[Tuple[int, int]]]]:
@@ -767,6 +798,14 @@ def _print_cli_error(exc: Exception):
         print(f"  Nie mozna odczytac konfiguracji: {exc}", file=sys.stderr)
         return
 
+    if isinstance(exc, h3_map_parser.H3MapSelectionError):
+        print(f"  Nie mozna wybrac mapy H3M: {exc}", file=sys.stderr)
+        return
+
+    if isinstance(exc, h3_map_parser.H3MapLoadError):
+        print(f"  Nie mozna odczytac mapy H3M: {exc}", file=sys.stderr)
+        return
+
     print(f"  Blad: {exc}", file=sys.stderr)
 
 
@@ -821,6 +860,7 @@ def _sort_hero_armies(heroes) -> List[h3_save_parser.HeroArmy]:
 
 def _list_save_heroes(args: argparse.Namespace):
     context = _resolve_cli_save(args)
+    map_file = _resolve_cli_map(args, context)
     detected_heroes = h3_save_parser.load_hero_armies_from_save(context.save_file)
     listed_heroes = h3_save_parser.filter_relevant_heroes(
         detected_heroes,
@@ -831,6 +871,8 @@ def _list_save_heroes(args: argparse.Namespace):
     print("  VCMI Save Heroes")
     print(f"  Folder zapisu: {context.game_dir}")
     print(f"  Plik zapisu:   {context.save_file}")
+    if map_file is not None:
+        print(f"  Plik mapy:     {map_file}")
     print("  Parser mode: XOR 0x01 hero army scanner")
     print("=" * 65)
 
@@ -855,11 +897,16 @@ def _print_no_listed_heroes(detected_heroes, all_heroes: bool):
         print("  No hero armies found in selected save.")
 
 
-def _print_wizard_header(context: h3_save_parser.SaveContext):
+def _print_wizard_header(
+    context: h3_save_parser.SaveContext,
+    map_file: Optional[Path] = None,
+):
     print("=" * 65)
     print("  VCMI Battle Estimator Wizard")
     print(f"  Folder zapisu: {context.game_dir}")
     print(f"  Plik zapisu:   {context.save_file}")
+    if map_file is not None:
+        print(f"  Plik mapy:     {map_file}")
     print("  Parser mode: XOR 0x01 hero army scanner")
     print("=" * 65)
 
@@ -952,6 +999,7 @@ def _save_wizard_last_hero(hero_name: str):
 
 def _run_wizard(args: argparse.Namespace) -> int:
     context = _resolve_cli_save(args)
+    map_file = _resolve_cli_map(args, context)
     detected_heroes = h3_save_parser.load_hero_armies_from_save(context.save_file)
     listed_heroes = h3_save_parser.filter_relevant_heroes(
         detected_heroes,
@@ -959,7 +1007,7 @@ def _run_wizard(args: argparse.Namespace) -> int:
     )
     ordered_heroes = tuple(_sort_hero_armies(listed_heroes))
 
-    _print_wizard_header(context)
+    _print_wizard_header(context, map_file)
     if not ordered_heroes:
         _print_no_listed_heroes(detected_heroes, args.all_heroes)
         return 1
@@ -986,6 +1034,7 @@ def _run_wizard(args: argparse.Namespace) -> int:
         player_label=selected_hero.hero_name,
         enemy_label="Wrog",
         save_context=context,
+        map_file=map_file,
     )
     return 0
 
@@ -998,6 +1047,7 @@ def run_analysis(
     player_label: str = "Gracz",
     enemy_label: str = "Wrog",
     save_context: Optional[h3_save_parser.SaveContext] = None,
+    map_file: Optional[Path] = None,
 ):
     has_ranges = any(r is not None for _, _, r in player_parsed) or \
                  any(r is not None for _, _, r in enemy_parsed)
@@ -1009,6 +1059,8 @@ def run_analysis(
     if save_context is not None:
         print(f"  Folder zapisu: {save_context.game_dir}")
         print(f"  Plik zapisu:   {save_context.save_file}")
+        if map_file is not None:
+            print(f"  Plik mapy:     {map_file}")
         print(f"  {AUTOSAVE_MODELING_LIMITATION}")
     print("=" * 65)
 
@@ -1137,6 +1189,8 @@ def main():
                         help="Numer zapisu, np. 415; przy remisie wybiera GM2")
     parser.add_argument("--save-file",
                         help="Jawna ścieżka do pliku .GM1/.GM2")
+    parser.add_argument("--map-file",
+                        help="Jawna ścieżka do pliku .h3m")
     parser.add_argument("--autosave-dir",
                         help="Jawny folder gry z numericznymi zapisami .GM1/.GM2")
     parser.add_argument("--set-autosave-dir",
@@ -1172,6 +1226,8 @@ def main():
             h3_save_parser.SaveSelectionError,
             h3_save_parser.SaveLoadError,
             h3_save_parser.ConfigError,
+            h3_map_parser.H3MapSelectionError,
+            h3_map_parser.H3MapLoadError,
         ) as exc:
             _print_cli_error(exc)
             sys.exit(1)
@@ -1189,6 +1245,8 @@ def main():
             h3_save_parser.SaveLoadError,
             h3_save_parser.HeroSelectionError,
             h3_save_parser.ConfigError,
+            h3_map_parser.H3MapSelectionError,
+            h3_map_parser.H3MapLoadError,
         ) as exc:
             _print_cli_error(exc)
             sys.exit(1)
@@ -1229,11 +1287,14 @@ def main():
 
     try:
         save_context, hero_army = _load_cli_hero_army(args, hero_query)
+        map_file = _resolve_cli_map(args, save_context)
     except (
         h3_save_parser.SaveSelectionError,
         h3_save_parser.SaveLoadError,
         h3_save_parser.HeroSelectionError,
         h3_save_parser.ConfigError,
+        h3_map_parser.H3MapSelectionError,
+        h3_map_parser.H3MapLoadError,
     ) as exc:
         _print_cli_error(exc)
         sys.exit(1)
@@ -1247,6 +1308,7 @@ def main():
         player_label=hero_army.hero_name,
         enemy_label="Wrog",
         save_context=save_context,
+        map_file=map_file,
     )
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import gzip
 import json
 import os
@@ -9,6 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tools import battle_estimator
+from tools import h3_map_parser
 from tools import h3_save_parser
 
 
@@ -138,6 +141,142 @@ def _write_config(home: Path, autosave_dir: Path, last_hero: str | None = None):
 
 
 class BattleEstimatorCliTests(unittest.TestCase):
+    def test_resolve_cli_map_uses_explicit_map_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            map_path = temp_path / "manual.h3m"
+            map_path.write_bytes(b"map")
+            args = argparse.Namespace(map_file=str(map_path))
+            context = h3_save_parser.SaveContext(
+                autosave_root=temp_path,
+                game_dir=game_dir,
+                save_file=game_dir / "415.GM2",
+            )
+
+            selected = battle_estimator._resolve_cli_map(args, context)
+
+        self.assertEqual(selected, map_path)
+
+    def test_resolve_cli_map_reports_map_selection_errors(self):
+        args = argparse.Namespace(
+            map_file="/tmp/vcmi-missing-cli-map-selection-test.h3m"
+        )
+        context = h3_save_parser.SaveContext(
+            autosave_root=Path("/tmp"),
+            game_dir=Path("/tmp/game"),
+            save_file=Path("/tmp/game/415.GM2"),
+        )
+
+        with self.assertRaises(h3_map_parser.H3MapSelectionError):
+            battle_estimator._resolve_cli_map(args, context)
+
+    def test_autosave_mode_prints_explicit_map_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            save_file = _write_save(game_dir, "415.GM2")
+            map_path = temp_path / "manual.h3m"
+            map_path.write_bytes(b"map")
+
+            result = _run_cli([
+                "Isra",
+                "vs",
+                "1 pikeman",
+                "--autosave-dir",
+                str(game_dir),
+                "--map-file",
+                str(map_path),
+                "-n",
+                "1",
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(save_file), result.stdout)
+        self.assertIn(f"Plik mapy:     {map_path}", result.stdout)
+
+    def test_autosave_mode_auto_resolves_random_map(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "HoMM 3 Complete"
+            game_dir = (
+                root
+                / "Games"
+                / "Random"
+                / "PlayerTwo"
+                / "2026.04.26 20;45 Diamond"
+            )
+            random_maps = root / "random_maps"
+            map_path = (
+                random_maps
+                / "PlayerOne,PlayerTwo 2026.04.26 18;45 Diamond.h3m"
+            )
+            random_maps.mkdir(parents=True)
+            map_path.write_bytes(b"map")
+            _write_save(game_dir, "415.GM2")
+
+            result = _run_cli([
+                "Isra",
+                "vs",
+                "1 pikeman",
+                "--autosave-dir",
+                str(game_dir),
+                "-n",
+                "1",
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"Plik mapy:     {map_path}", result.stdout)
+
+    def test_autosave_mode_reports_bad_explicit_map_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir) / "game"
+            _write_save(game_dir, "415.GM2")
+            missing_map = Path(temp_dir) / "missing.h3m"
+
+            result = _run_cli([
+                "Isra",
+                "vs",
+                "1 pikeman",
+                "--autosave-dir",
+                str(game_dir),
+                "--map-file",
+                str(missing_map),
+                "-n",
+                "1",
+            ])
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Nie mozna wybrac mapy H3M", result.stderr)
+        self.assertIn("map file is not a file", result.stderr)
+
+    def test_autosave_mode_reports_auto_map_detection_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = (
+                Path(temp_dir)
+                / "HoMM 3 Complete"
+                / "Games"
+                / "Random"
+                / "PlayerTwo"
+                / "2026.04.26 20;45 Diamond"
+            )
+            _write_save(game_dir, "415.GM2")
+
+            result = _run_cli([
+                "Isra",
+                "vs",
+                "1 pikeman",
+                "--autosave-dir",
+                str(game_dir),
+                "-n",
+                "1",
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("could not auto-detect H3M map", result.stderr)
+        self.assertIn("--map-file", result.stderr)
+        self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
+
     def test_manual_army_mode_still_runs_without_autosave_context(self):
         result = _run_cli(["10 pikeman", "vs", "20 boar", "-n", "1"])
 

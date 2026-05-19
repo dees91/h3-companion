@@ -428,6 +428,21 @@ identity model.
 2. Manual local check maps `2026.04.26 20;45 Diamond` to
    `PlayerOne,PlayerTwo 2026.04.26 18;45 Diamond.h3m`.
 
+**Completion Notes (2026-05-19):**
+- Added `h3_map_parser.resolve_h3m_map()` with explicit `.h3m` validation,
+  `random_maps` discovery, timestamp/template matching, and clear
+  `--map-file` hints on selection failures.
+- Added `--map-file` to `tools/battle_estimator.py`; autosave CLI flows now
+  resolve and print `Plik mapy` when available, and warn clearly when
+  auto-detection fails.
+- Verified with `python3 -m unittest tests.test_h3_map_parser`,
+  `python3 -m unittest tests.test_battle_estimator_cli`,
+  `python3 -m unittest tests.test_h3_save_parser`,
+  `python3 tools/battle_estimator.py --help`, `git diff --check`, and
+  `python3 -m unittest discover -s tests`.
+- Manual Diamond check resolved `2026.04.26 20;45 Diamond` to
+  `PlayerOne,PlayerTwo 2026.04.26 18;45 Diamond.h3m`.
+
 ---
 
 ### NS-T04: Hero Position Parsing
@@ -682,7 +697,7 @@ H3M-to-save object identity.
 |---|---|---|---|---|
 | NS-T01: H3M Format Contracts | done | -- | Codex | H3M contracts and smoke loader implemented. |
 | NS-T02: H3M Neutral Monster Parser | done | NS-T01 | Codex | Sequential H3M neutral parser implemented. |
-| NS-T03: H3M Map Auto-Detection | todo | NS-T01 | unassigned | Needs map contracts and path resolver. |
+| NS-T03: H3M Map Auto-Detection | done | NS-T01 | Codex | Map-file override and random_maps resolver implemented. |
 | NS-T04: Hero Position Parsing | todo | -- | unassigned | Can be done independently from H3M work. |
 | NS-T05: Other Hero Target Extraction | blocked | NS-T04 | unassigned | Army-only hero targets. |
 | NS-T06: Removed Neutral Detection | todo | NS-T02 | unassigned | Needs neutral identity model. |

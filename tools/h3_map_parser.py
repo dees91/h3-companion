@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import gzip
+import re
 import zlib
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from importlib import import_module
 from pathlib import Path
 
@@ -15,6 +17,13 @@ H3M_HEADER_MIN_SIZE = 10
 H3M_FORMAT_ROE = 0x0E
 H3M_FORMAT_AB = 0x15
 H3M_FORMAT_SOD = 0x1C
+MAX_RANDOM_MAP_TIME_DELTA = timedelta(hours=2)
+RANDOM_MAP_DATE_PATTERN = re.compile(
+    r"(?P<year>\d{4})\.(?P<month>\d{2})\.(?P<day>\d{2})"
+    r"\s+"
+    r"(?P<hour>\d{2})[;:](?P<minute>\d{2})"
+    r"(?:\s+(?P<template>.+?))?$"
+)
 H3M_OBJECT_MONSTER = 54
 H3M_OBJECT_RANDOM_MONSTER = 71
 H3M_OBJECT_RANDOM_MONSTER_L1 = 72
@@ -130,6 +139,15 @@ class _H3MFeatures:
 
 class H3MapLoadError(ValueError):
     """Raised when a Heroes III map cannot be loaded or identified."""
+
+    def __init__(self, path: str | Path, reason: str):
+        self.path = Path(path)
+        self.reason = reason
+        super().__init__(f"{self.path}: {reason}")
+
+
+class H3MapSelectionError(ValueError):
+    """Raised when a matching H3M map path cannot be selected."""
 
     def __init__(self, path: str | Path, reason: str):
         self.path = Path(path)
@@ -286,6 +304,100 @@ def parse_h3m_header(
     )
 
 
+def resolve_h3m_map(
+    game_dir: str | Path,
+    explicit_map_file: str | Path | None = None,
+) -> Path:
+    """Resolve an H3M map path for an autosave game folder."""
+
+    if explicit_map_file is not None:
+        return _validate_explicit_map_file(explicit_map_file)
+
+    game_path = Path(game_dir).expanduser()
+    if not game_path.is_dir():
+        raise H3MapSelectionError(
+            game_path,
+            "game folder is not a directory; use --map-file to select a map",
+        )
+
+    random_maps_dir = _random_maps_dir_for_game_dir(game_path)
+    if not random_maps_dir.is_dir():
+        raise H3MapSelectionError(
+            random_maps_dir,
+            "random_maps folder not found; use --map-file to select a map",
+        )
+
+    game_stamp = parse_random_map_stamp(game_path.name)
+    if game_stamp is None:
+        raise H3MapSelectionError(
+            game_path,
+            "game folder name has no map timestamp/template; use --map-file",
+        )
+    game_datetime, game_template = game_stamp
+    if not game_template:
+        raise H3MapSelectionError(
+            game_path,
+            "game folder name has no map template; use --map-file",
+        )
+
+    candidates = []
+    try:
+        children = list(random_maps_dir.iterdir())
+    except OSError as exc:
+        raise H3MapSelectionError(
+            random_maps_dir,
+            f"failed to list random_maps folder: {exc}; use --map-file",
+        ) from exc
+
+    normalized_game_template = _normalize_map_template(game_template)
+    for child in children:
+        if not child.is_file() or child.suffix.casefold() != ".h3m":
+            continue
+        candidate_stamp = parse_random_map_stamp(child.stem)
+        if candidate_stamp is None:
+            continue
+        candidate_datetime, candidate_template = candidate_stamp
+        if _normalize_map_template(candidate_template) != normalized_game_template:
+            continue
+        delta = abs(candidate_datetime - game_datetime)
+        if delta > MAX_RANDOM_MAP_TIME_DELTA:
+            continue
+        try:
+            mtime = child.stat().st_mtime
+        except OSError:
+            mtime = 0
+        candidates.append((delta, -mtime, child.name.casefold(), child))
+
+    if not candidates:
+        raise H3MapSelectionError(
+            random_maps_dir,
+            f"no matching .h3m map for '{game_path.name}'; use --map-file",
+        )
+
+    return min(candidates, key=lambda item: item[:3])[3]
+
+
+def parse_random_map_stamp(name: str) -> tuple[datetime, str] | None:
+    """Return the embedded random-map timestamp and template suffix."""
+
+    match = None
+    for candidate in RANDOM_MAP_DATE_PATTERN.finditer(name):
+        match = candidate
+    if match is None:
+        return None
+    try:
+        stamp = datetime(
+            int(match.group("year")),
+            int(match.group("month")),
+            int(match.group("day")),
+            int(match.group("hour")),
+            int(match.group("minute")),
+        )
+    except ValueError:
+        return None
+    return stamp, (match.group("template") or "").strip()
+
+
 def load_h3m_neutral_monsters(path: str | Path) -> tuple[H3NeutralMonsterTarget, ...]:
     """Load neutral monster targets from an H3M map file."""
 
@@ -307,6 +419,28 @@ def _decompress_h3m_bytes(compressed: bytes, path: Path) -> bytes:
         return gzip.decompress(compressed)
     except (OSError, EOFError, zlib.error) as exc:
         raise H3MapLoadError(path, f"gzip decompress failed: {exc}") from exc
+
+
+def _validate_explicit_map_file(path: str | Path) -> Path:
+    map_path = Path(path).expanduser()
+    if not map_path.is_file():
+        raise H3MapSelectionError(map_path, "map file is not a file")
+    if map_path.suffix.casefold() != ".h3m":
+        raise H3MapSelectionError(map_path, "map file must have .h3m extension")
+    return map_path
+
+
+def _random_maps_dir_for_game_dir(game_dir: Path) -> Path:
+    parts = game_dir.parts
+    for index in range(len(parts) - 1, -1, -1):
+        if parts[index].casefold() == "games":
+            homm_root = Path(*parts[:index])
+            return homm_root / "random_maps"
+    return game_dir.parent / "random_maps"
+
+
+def _normalize_map_template(template: str) -> str:
+    return " ".join(template.casefold().split())
 
 
 class _H3MReader:

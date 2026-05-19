@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from tools import h3_map_parser
@@ -289,6 +290,85 @@ class H3MapParserContractTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("VCMI Battle Estimator", result.stdout)
+        self.assertIn("--map-file", result.stdout)
+
+    def test_parse_random_map_stamp_finds_embedded_timestamp(self):
+        stamp = h3_map_parser.parse_random_map_stamp(
+            "PlayerOne,PlayerTwo 2026.04.26 18;45 Diamond"
+        )
+
+        self.assertEqual(stamp, (datetime(2026, 4, 26, 18, 45), "Diamond"))
+
+    def test_resolve_h3m_map_uses_explicit_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            map_path = Path(temp_dir) / "manual.h3m"
+            map_path.write_bytes(b"not parsed by resolver")
+
+            selected = h3_map_parser.resolve_h3m_map(
+                Path(temp_dir) / "game",
+                explicit_map_file=map_path,
+            )
+
+        self.assertEqual(selected, map_path)
+
+    def test_resolve_h3m_map_rejects_missing_explicit_file(self):
+        missing_path = Path("/tmp/vcmi-missing-map-for-selection-test.h3m")
+
+        with self.assertRaises(h3_map_parser.H3MapSelectionError) as raised:
+            h3_map_parser.resolve_h3m_map(
+                "/tmp/game",
+                explicit_map_file=missing_path,
+            )
+
+        self.assertEqual(raised.exception.path, missing_path)
+        self.assertIn("not a file", raised.exception.reason)
+
+    def test_resolve_h3m_map_matches_random_map_by_template_and_nearest_time(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "HoMM 3 Complete"
+            game_dir = (
+                root
+                / "Games"
+                / "Random"
+                / "PlayerTwo"
+                / "2026.04.26 20;45 Diamond"
+            )
+            random_maps = root / "random_maps"
+            game_dir.mkdir(parents=True)
+            random_maps.mkdir()
+            expected = (
+                random_maps
+                / "PlayerOne,PlayerTwo 2026.04.26 18;45 Diamond.h3m"
+            )
+            expected.write_bytes(b"selected")
+            (random_maps / "PlayerOne,PlayerTwo 2026.04.26 18;45 Jebus Cross.h3m").write_bytes(
+                b"wrong template"
+            )
+            (random_maps / "PlayerOne,PlayerTwo 2026.04.26 10;45 Diamond.h3m").write_bytes(
+                b"outside tolerance"
+            )
+
+            selected = h3_map_parser.resolve_h3m_map(game_dir)
+
+        self.assertEqual(selected, expected)
+
+    def test_resolve_h3m_map_reports_missing_random_maps_with_map_file_hint(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = (
+                Path(temp_dir)
+                / "HoMM 3 Complete"
+                / "Games"
+                / "Random"
+                / "PlayerTwo"
+                / "2026.04.26 20;45 Diamond"
+            )
+            game_dir.mkdir(parents=True)
+
+            with self.assertRaises(h3_map_parser.H3MapSelectionError) as raised:
+                h3_map_parser.resolve_h3m_map(game_dir)
+
+        self.assertIn("random_maps", str(raised.exception.path))
+        self.assertIn("--map-file", raised.exception.reason)
 
     def test_parse_neutral_monster_from_sequential_sod_stream(self):
         payload = _build_minimal_sod_h3m_with_monster()
