@@ -37,6 +37,7 @@ DEFAULT_AUTOSAVE_ROOT = (
 CONFIG_PATH = Path.home() / ".config" / "vcmi-battle-estimator" / "config.json"
 
 SAVE_EXTENSIONS = (".GM1", ".GM2")
+RECENT_HERO_LIMIT = 8
 H3SVG_SIGNATURE = b"H3SVG"
 GAME_FOLDER_DATE_PATTERN = re.compile(
     r"^(?P<year>\d{4})\.(?P<month>\d{2})\.(?P<day>\d{2})"
@@ -94,6 +95,7 @@ class BattleEstimatorConfig:
 
     autosave_dir: Path | None = None
     last_hero: str | None = None
+    recent_heroes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -273,6 +275,7 @@ def load_config(config_path: str | Path = CONFIG_PATH) -> BattleEstimatorConfig:
     return BattleEstimatorConfig(
         autosave_dir=_read_optional_path(data, "autosave_dir", path),
         last_hero=_read_optional_text(data, "last_hero", path),
+        recent_heroes=_read_recent_heroes(data, path),
     )
 
 
@@ -309,6 +312,7 @@ def set_config_autosave_dir(
     updated = BattleEstimatorConfig(
         autosave_dir=autosave_path,
         last_hero=current.last_hero,
+        recent_heroes=current.recent_heroes,
     )
     save_config(updated, config_path)
     return updated
@@ -323,6 +327,7 @@ def clear_config_autosave_dir(
     updated = BattleEstimatorConfig(
         autosave_dir=None,
         last_hero=current.last_hero,
+        recent_heroes=current.recent_heroes,
     )
     save_config(updated, config_path)
     return updated
@@ -339,6 +344,35 @@ def set_config_last_hero(
     updated = BattleEstimatorConfig(
         autosave_dir=current.autosave_dir,
         last_hero=normalized_hero or None,
+        recent_heroes=current.recent_heroes,
+    )
+    save_config(updated, config_path)
+    return updated
+
+
+def set_config_selected_hero(
+    hero_name: str | None,
+    config_path: str | Path = CONFIG_PATH,
+    limit: int = RECENT_HERO_LIMIT,
+) -> BattleEstimatorConfig:
+    """Save a GUI-selected hero and update recent hero history."""
+
+    if limit <= 0:
+        raise ValueError(f"recent hero limit must be positive: {limit}")
+
+    current = load_config(config_path)
+    normalized_hero = hero_name.strip() if hero_name else ""
+    recent_heroes = current.recent_heroes
+    if normalized_hero:
+        recent_heroes = _prepend_recent_hero(
+            normalized_hero,
+            recent_heroes,
+            limit,
+        )
+    updated = BattleEstimatorConfig(
+        autosave_dir=current.autosave_dir,
+        last_hero=normalized_hero or None,
+        recent_heroes=recent_heroes,
     )
     save_config(updated, config_path)
     return updated
@@ -881,10 +915,50 @@ def _read_optional_text(data: dict, key: str, path: Path) -> str | None:
     return normalized or None
 
 
+def _read_recent_heroes(data: dict, path: Path) -> tuple[str, ...]:
+    value = data.get("recent_heroes")
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigError(path, "invalid config: recent_heroes must be a list")
+
+    recent_heroes = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ConfigError(
+                path,
+                f"invalid config: recent_heroes[{index}] must be a string",
+            )
+        normalized = item.strip()
+        if normalized:
+            recent_heroes.append(normalized)
+    return tuple(recent_heroes)
+
+
+def _prepend_recent_hero(
+    hero_name: str,
+    recent_heroes,
+    limit: int = RECENT_HERO_LIMIT,
+) -> tuple[str, ...]:
+    deduped = [hero_name]
+    seen = {hero_name.casefold()}
+    for recent_hero in recent_heroes:
+        key = recent_hero.casefold()
+        if key in seen:
+            continue
+        deduped.append(recent_hero)
+        seen.add(key)
+        if len(deduped) >= limit:
+            break
+    return tuple(deduped[:limit])
+
+
 def _config_to_json(config: BattleEstimatorConfig) -> dict:
     data = {}
     if config.autosave_dir is not None:
         data["autosave_dir"] = str(config.autosave_dir)
     if config.last_hero is not None:
         data["last_hero"] = config.last_hero
+    if config.recent_heroes:
+        data["recent_heroes"] = list(config.recent_heroes)
     return data

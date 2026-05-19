@@ -152,6 +152,7 @@ class H3SaveParserContractTests(unittest.TestCase):
             home / ".config" / "vcmi-battle-estimator" / "config.json",
         )
         self.assertEqual(h3_save_parser.SAVE_EXTENSIONS, (".GM1", ".GM2"))
+        self.assertEqual(h3_save_parser.RECENT_HERO_LIMIT, 8)
 
     def test_named_hero_offsets_are_derived_from_struct_offsets(self):
         self.assertEqual(h3_save_parser.HERO_ARMY_SLOT_COUNT, 7)
@@ -573,6 +574,7 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(updated.autosave_dir, autosave_dir)
         self.assertEqual(loaded.autosave_dir, autosave_dir)
         self.assertIsNone(loaded.last_hero)
+        self.assertEqual(loaded.recent_heroes, ())
 
     def test_clear_config_autosave_dir_removes_key_and_preserves_last_hero(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -581,6 +583,7 @@ class H3SaveParserContractTests(unittest.TestCase):
                 h3_save_parser.BattleEstimatorConfig(
                     autosave_dir=Path(temp_dir) / "game",
                     last_hero="Isra",
+                    recent_heroes=("Isra", "Marius"),
                 ),
                 config_path,
             )
@@ -592,8 +595,10 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertIsNone(updated.autosave_dir)
         self.assertIsNone(loaded.autosave_dir)
         self.assertEqual(loaded.last_hero, "Isra")
+        self.assertEqual(loaded.recent_heroes, ("Isra", "Marius"))
         self.assertNotIn("autosave_dir", raw_config)
         self.assertEqual(raw_config["last_hero"], "Isra")
+        self.assertEqual(raw_config["recent_heroes"], ["Isra", "Marius"])
 
     def test_set_config_last_hero_saves_stripped_name(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -601,6 +606,7 @@ class H3SaveParserContractTests(unittest.TestCase):
             h3_save_parser.save_config(
                 h3_save_parser.BattleEstimatorConfig(
                     autosave_dir=Path(temp_dir) / "game",
+                    recent_heroes=("Marius",),
                 ),
                 config_path,
             )
@@ -611,12 +617,16 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(updated.last_hero, "Isra")
         self.assertEqual(loaded.last_hero, "Isra")
         self.assertEqual(loaded.autosave_dir, Path(temp_dir) / "game")
+        self.assertEqual(loaded.recent_heroes, ("Marius",))
 
     def test_set_config_last_hero_blank_clears_value(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
             h3_save_parser.save_config(
-                h3_save_parser.BattleEstimatorConfig(last_hero="Isra"),
+                h3_save_parser.BattleEstimatorConfig(
+                    last_hero="Isra",
+                    recent_heroes=("Isra",),
+                ),
                 config_path,
             )
 
@@ -624,7 +634,131 @@ class H3SaveParserContractTests(unittest.TestCase):
             raw_config = json.loads(config_path.read_text(encoding="utf-8"))
 
         self.assertIsNone(updated.last_hero)
+        self.assertEqual(updated.recent_heroes, ("Isra",))
         self.assertNotIn("last_hero", raw_config)
+        self.assertEqual(raw_config["recent_heroes"], ["Isra"])
+
+    def test_set_config_selected_hero_updates_last_hero_and_recent_list(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    autosave_dir=Path(temp_dir) / "game",
+                    last_hero="Isra",
+                    recent_heroes=("Isra", "Marius"),
+                ),
+                config_path,
+            )
+
+            updated = h3_save_parser.set_config_selected_hero(
+                "  Aenain  ",
+                config_path,
+            )
+            loaded = h3_save_parser.load_config(config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(updated, loaded)
+        self.assertEqual(loaded.autosave_dir, Path(temp_dir) / "game")
+        self.assertEqual(loaded.last_hero, "Aenain")
+        self.assertEqual(loaded.recent_heroes, ("Aenain", "Isra", "Marius"))
+        self.assertEqual(raw_config["last_hero"], "Aenain")
+        self.assertEqual(raw_config["recent_heroes"], ["Aenain", "Isra", "Marius"])
+
+    def test_set_config_selected_hero_dedupes_case_insensitively_and_caps(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    recent_heroes=(
+                        "Isra",
+                        "Marius",
+                        "Aenain",
+                        "Gunnar",
+                        "Kyrre",
+                        "Crag Hack",
+                    ),
+                ),
+                config_path,
+            )
+
+            updated = h3_save_parser.set_config_selected_hero(
+                "  isra  ",
+                config_path,
+                limit=4,
+            )
+
+        self.assertEqual(updated.last_hero, "isra")
+        self.assertEqual(updated.recent_heroes, ("isra", "Marius", "Aenain", "Gunnar"))
+
+    def test_set_config_selected_hero_uses_default_recent_hero_cap(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    recent_heroes=(
+                        "Hero 1",
+                        "Hero 2",
+                        "Hero 3",
+                        "Hero 4",
+                        "Hero 5",
+                        "Hero 6",
+                        "Hero 7",
+                        "Hero 8",
+                        "Hero 9",
+                    ),
+                ),
+                config_path,
+            )
+
+            updated = h3_save_parser.set_config_selected_hero(
+                "Selected",
+                config_path,
+            )
+
+        self.assertEqual(len(updated.recent_heroes), h3_save_parser.RECENT_HERO_LIMIT)
+        self.assertEqual(
+            updated.recent_heroes,
+            (
+                "Selected",
+                "Hero 1",
+                "Hero 2",
+                "Hero 3",
+                "Hero 4",
+                "Hero 5",
+                "Hero 6",
+                "Hero 7",
+            ),
+        )
+
+    def test_set_config_selected_hero_blank_clears_last_hero_without_adding_recent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    last_hero="Isra",
+                    recent_heroes=("Isra", "Marius"),
+                ),
+                config_path,
+            )
+
+            updated = h3_save_parser.set_config_selected_hero("  ", config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertIsNone(updated.last_hero)
+        self.assertEqual(updated.recent_heroes, ("Isra", "Marius"))
+        self.assertNotIn("last_hero", raw_config)
+        self.assertEqual(raw_config["recent_heroes"], ["Isra", "Marius"])
+
+    def test_set_config_selected_hero_rejects_non_positive_limit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+
+            with self.assertRaisesRegex(ValueError, "must be positive"):
+                h3_save_parser.set_config_selected_hero(
+                    "Isra",
+                    config_path,
+                    limit=0,
+                )
 
     def test_save_config_creates_parent_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -673,10 +807,12 @@ class H3SaveParserContractTests(unittest.TestCase):
 
     def test_load_config_reports_invalid_field_types(self):
         cases = (
-            {"autosave_dir": 123},
-            {"last_hero": []},
+            ({"autosave_dir": 123}, "must be a string"),
+            ({"last_hero": []}, "must be a string"),
+            ({"recent_heroes": "Isra"}, "must be a list"),
+            ({"recent_heroes": ["Isra", 42]}, "recent_heroes[1] must be a string"),
         )
-        for data in cases:
+        for data, expected_reason in cases:
             with self.subTest(data=data):
                 with tempfile.TemporaryDirectory() as temp_dir:
                     config_path = Path(temp_dir) / "config.json"
@@ -686,13 +822,17 @@ class H3SaveParserContractTests(unittest.TestCase):
                         h3_save_parser.load_config(config_path)
 
                 self.assertEqual(raised.exception.path, config_path)
-                self.assertIn("must be a string", raised.exception.reason)
+                self.assertIn(expected_reason, raised.exception.reason)
 
     def test_load_config_treats_null_and_blank_values_as_unset(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
             config_path.write_text(
-                json.dumps({"autosave_dir": "  ", "last_hero": None}),
+                json.dumps({
+                    "autosave_dir": "  ",
+                    "last_hero": None,
+                    "recent_heroes": None,
+                }),
                 encoding="utf-8",
             )
 
@@ -700,6 +840,19 @@ class H3SaveParserContractTests(unittest.TestCase):
 
         self.assertIsNone(config.autosave_dir)
         self.assertIsNone(config.last_hero)
+        self.assertEqual(config.recent_heroes, ())
+
+    def test_load_config_strips_recent_heroes_and_ignores_blank_entries(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps({"recent_heroes": [" Isra ", " ", "Marius"]}),
+                encoding="utf-8",
+            )
+
+            config = h3_save_parser.load_config(config_path)
+
+        self.assertEqual(config.recent_heroes, ("Isra", "Marius"))
 
     def test_load_config_ignores_unknown_keys(self):
         with tempfile.TemporaryDirectory() as temp_dir:

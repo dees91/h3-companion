@@ -433,6 +433,18 @@ payloads are stable.
 1. Unit tests for loading old config without `recent_heroes`.
 2. Unit tests for adding, deduping, ordering, and capping recent heroes.
 
+**Completion Notes (2026-05-19):**
+- Extended `BattleEstimatorConfig` with backward-compatible
+  `recent_heroes`.
+- Added `set_config_selected_hero()` for GUI selections while preserving
+  existing CLI `set_config_last_hero()` behavior.
+- Recent heroes are stripped, deduplicated case-insensitively on selection,
+  moved to the front, and capped at `RECENT_HERO_LIMIT` (8).
+- Verified with `python3 -m unittest tests.test_h3_save_parser`,
+  `python3 -m unittest discover -s tests`,
+  `python3 tools/battle_estimator.py --help`, `git diff --check`, and a
+  standalone config helper smoke test.
+
 ---
 
 ### GUI-T04: JSON API Endpoints
@@ -755,8 +767,8 @@ structure and frontend test strategy.
 |---|---|---|---|---|
 | GUI-T01: GUI Server + Static Asset Skeleton | done | -- | Codex | Local stdlib server, static shell, and health endpoint added. |
 | GUI-T02: Snapshot Builder Service | done | GUI-T01 | Codex | Snapshot builder supports follow-latest, pinned saves, map dimensions, heroes, neutrals, and fingerprints. |
-| GUI-T03: Config Recent Heroes | todo | -- | unassigned | Independent config extension. |
-| GUI-T04: JSON API Endpoints | blocked | GUI-T02, GUI-T03 | unassigned | Frontend/backend contract. |
+| GUI-T03: Config Recent Heroes | done | -- | Codex | Config now tracks capped, deduped recent heroes for GUI selections. |
+| GUI-T04: JSON API Endpoints | todo | GUI-T02, GUI-T03 | unassigned | Frontend/backend contract. |
 | GUI-T05: Frontend Layout Shell | todo | GUI-T01 | unassigned | First usable browser screen. |
 | GUI-T06: Canvas Map Rendering | blocked | GUI-T04, GUI-T05 | unassigned | Full map grid, pan, zoom, markers. |
 | GUI-T07: Hero Search + Recent Selection | blocked | GUI-T03, GUI-T04, GUI-T05 | unassigned | Search/recent/select workflow. |
