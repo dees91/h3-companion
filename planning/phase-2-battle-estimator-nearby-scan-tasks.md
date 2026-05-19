@@ -770,6 +770,23 @@ identity model.
 2. Run focused CLI tests.
 3. Run `python3 tools/battle_estimator.py --help`.
 
+**Completion Notes (2026-05-19):**
+- Updated `planning/battle-estimator-autosave-brief.md` with Phase 2 nearby
+  scan commands, map auto-detection notes, hybrid save/H3M data sources, scan
+  defaults, and known limitations.
+- Updated `tools/battle_estimator_save_parsing_checkpoint.md` with the
+  implemented Phase 2 parser/scan/estimation/CLI pieces and the real-file
+  verification command shape without committing real save or map files.
+- Verified with `python3 -m unittest tests.test_h3_save_parser
+  tests.test_h3_map_parser`, `python3 -m unittest tests.test_battle_estimator_cli
+  tests.test_nearby_scan`, `python3 tools/battle_estimator.py --help`,
+  `git diff --check`, and `python3 -m unittest discover -s tests`.
+- Re-ran the local real-file command
+  `python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --save-file
+  ".../post_attack_2.GM1" --map-file ".../Diamond.h3m"`. It printed Isra at
+  `(39,69,1)`, radius `10`, filter `all`, simulation count `500`, supported
+  target `win%` rows, and an unsupported H3M mapping note.
+
 ---
 
 ## Risks and Mitigations
@@ -813,4 +830,4 @@ H3M-to-save object identity.
 | NS-T07: Nearby Target Scan Service | done | NS-T02, NS-T03, NS-T04, NS-T05, NS-T06 | Codex | Nearby scan service implemented. |
 | NS-T08: Per-Target Estimation Runner | done | NS-T07 | Codex | Compact per-target estimation implemented. |
 | NS-T09: CLI Output and Arguments | done | NS-T08 | Codex | Nearby scan CLI implemented. |
-| NS-T10: Documentation and Verification Pass | todo | NS-T09 | unassigned | Final docs and tests. |
+| NS-T10: Documentation and Verification Pass | done | NS-T09 | Codex | Final docs and verification completed. |

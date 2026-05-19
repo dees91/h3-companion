@@ -351,6 +351,67 @@ Selected hero armies are converted into the existing battle estimator creature
 model before simulation, avoiding duplicate module identity when the estimator
 is run as a script.
 
+## Implemented Phase 2 Nearby Scan Direction
+
+Nearby scan support is implemented as a hybrid save + H3M workflow:
+
+```bash
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --target-type neutral
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --target-type hero
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --map-file "/path/to/map.h3m"
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --include-removed
+```
+
+Examples without `--map-file` depend on random-map auto-detection. Use the
+explicit map path when auto-detection cannot resolve the generated `.h3m`.
+
+Implemented pieces:
+
+1. H3M map loading and neutral target parsing in `tools/h3_map_parser.py`
+   - detects generated-map H3M headers at offset `0` or `43`
+   - resolves matching random maps from the autosave game folder
+   - parses object templates and neutral monster objects sequentially
+   - maps supported neutral creatures by DEF/template name
+
+2. Save-side current-position and target state in `tools/h3_save_parser.py`
+   - decodes hero position from the XOR `0x01` hero struct
+   - builds other-hero target records from parsed hero armies and positions
+   - detects removed neutral monster records from the late save log
+
+3. Scan and estimation in `tools/battle_estimator.py`
+   - filters targets to the selected hero's `z` level
+   - uses Manhattan distance, `abs(dx) + abs(dy)`
+   - filters removed neutrals by default, with `--include-removed` for debug
+   - estimates neutral targets as one mapped creature stack
+   - estimates hero targets as army-only and marks them `army-only`
+   - uses `500` simulations per scan target by default; `--simulations/-n`
+     overrides this
+   - keeps unsupported targets in the output with a clear note instead of
+     crashing the whole scan
+
+Known Phase 2 limitations:
+
+- `.h3m` neutral counts are base map object counts; save-side split/upgraded
+  neutral compositions are not reconstructed.
+- Scan distance is not pathfinding. It ignores terrain, roads, obstacles,
+  guards, movement points, and reachability.
+- Only same-level (`z`) targets are included.
+- Hero-vs-hero estimates use creature stacks only. Hero stats, skills,
+  artifacts, spells, morale, luck, terrain, and tactics are still not modeled.
+- Unsupported H3M DEF/template mappings are reported as unsupported notes.
+
+Local real-file verification used this command shape; real save and map files
+remain outside the repository:
+
+```bash
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --save-file "/path/to/post_attack_2.GM1" --map-file "/path/to/Diamond.h3m"
+```
+
+The observed local result printed Isra at `(39,69,1)`, radius `10`, simulation
+count `500`, and distance-sorted rows where supported targets had `win%` values
+and unsupported H3M mappings had an unsupported note.
+
 ## Important Caveats
 
 - This checkpoint only proves army extraction for the observed Porting Kit /

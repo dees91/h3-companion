@@ -109,6 +109,50 @@ python3 tools/battle_estimator.py --list-save-heroes --all-heroes
 `--hero HERO` without `vs enemy` is a usage error. Use the wizard or
 `--list-save-heroes` when no enemy army is being supplied.
 
+### Nearby Scan Extension
+
+Phase 2 adds a nearby target scan that combines the current save with the
+generated `.h3m` map:
+
+```bash
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --target-type neutral
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --target-type hero
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --map-file "/path/to/map.h3m"
+python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra --include-removed
+```
+
+Examples without `--map-file` rely on the random-map auto-detection matching
+the selected autosave folder to a generated `.h3m`. Use `--map-file` when
+auto-detection cannot resolve the map or when debugging a specific map file.
+
+Scan mode uses:
+
+- save data for the selected hero army, selected hero position, other hero
+  armies/positions, and removed neutral records;
+- `.h3m` map data for neutral monster positions, base counts, and template
+  creature mapping;
+- Manhattan distance, `abs(dx) + abs(dy)`, on the selected hero's current map
+  level;
+- scan-specific default simulations of `500` battles per target, overridden
+  by `--simulations/-n`.
+
+`--target-type {all,neutral,hero}` controls which target classes are listed.
+Removed neutral monsters are filtered by default. `--include-removed` keeps
+them in the table and marks them for debugging.
+
+Known scan limitations:
+
+- only targets on the same `z` level as the selected hero are included;
+- Manhattan distance ignores roads, terrain, obstacles, guards, movement
+  points, and pathfinding;
+- neutral monster count comes from the static `.h3m` base object count;
+- split or upgraded neutral compositions are not reconstructed from saves;
+- hero targets are estimated as army-only: no hero stats, skills, artifacts,
+  spells, morale, luck, terrain, or tactics;
+- unsupported H3M DEF/template mappings are listed with an unsupported note
+  instead of being silently mapped to the wrong creature.
+
 This terminal wizard is the Phase 1 substitute for GUI. A separate GUI is out
 of scope until the parser and CLI behavior are stable.
 
