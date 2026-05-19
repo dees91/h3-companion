@@ -226,6 +226,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
         for expected in (
             'id="hero-search"',
             'id="recent-heroes"',
+            'class="panel-section detected-heroes-section"',
             'id="hero-list"',
             'id="save-picker"',
             'id="follow-latest-button"',
@@ -246,6 +247,13 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".scan-result",
             ".scan-result.strong",
             ".top-actions",
+            "height: calc(100vh - 73px);",
+            ".detected-heroes-section",
+            "flex: 1 1 auto;",
+            "min-height: 0;",
+            "overflow-y: auto;",
+            "grid-template-rows: auto minmax(0, 1fr);",
+            "place-items: start center;",
         ):
             self.assertIn(expected, style_css)
         self.assertNotIn("owner_id", app_js)
