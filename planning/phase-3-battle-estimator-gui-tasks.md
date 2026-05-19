@@ -352,6 +352,16 @@ payloads are stable.
 2. Manual check opens the printed URL and loads the static shell.
 3. Run `python3 tools/battle_estimator.py --help`.
 
+**Completion Notes (2026-05-19):**
+- Added `tools/battle_estimator_gui.py` using stdlib `ThreadingHTTPServer`.
+- Added whitelisted static routes for `/`, `/index.html`, `/app.js`, and
+  `/style.css`, plus JSON `GET /api/health`.
+- Added static GUI shell files under `tools/battle_estimator_gui/`.
+- Verified with `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest discover -s tests`,
+  `python3 tools/battle_estimator.py --help`, `git diff --check`, and an
+  entrypoint smoke test using `--port 0`.
+
 ---
 
 ### GUI-T02: Snapshot Builder Service
@@ -731,11 +741,11 @@ structure and frontend test strategy.
 
 | Task | Status | Blocked By | Owner | Notes |
 |---|---|---|---|---|
-| GUI-T01: GUI Server + Static Asset Skeleton | todo | -- | unassigned | Defines local server and static file layout. |
-| GUI-T02: Snapshot Builder Service | blocked | GUI-T01 | unassigned | Central backend state model. |
+| GUI-T01: GUI Server + Static Asset Skeleton | done | -- | Codex | Local stdlib server, static shell, and health endpoint added. |
+| GUI-T02: Snapshot Builder Service | todo | GUI-T01 | unassigned | Central backend state model. |
 | GUI-T03: Config Recent Heroes | todo | -- | unassigned | Independent config extension. |
 | GUI-T04: JSON API Endpoints | blocked | GUI-T02, GUI-T03 | unassigned | Frontend/backend contract. |
-| GUI-T05: Frontend Layout Shell | blocked | GUI-T01 | unassigned | First usable browser screen. |
+| GUI-T05: Frontend Layout Shell | todo | GUI-T01 | unassigned | First usable browser screen. |
 | GUI-T06: Canvas Map Rendering | blocked | GUI-T04, GUI-T05 | unassigned | Full map grid, pan, zoom, markers. |
 | GUI-T07: Hero Search + Recent Selection | blocked | GUI-T03, GUI-T04, GUI-T05 | unassigned | Search/recent/select workflow. |
 | GUI-T08: Click Target Simulation | blocked | GUI-T04, GUI-T06, GUI-T07 | unassigned | Single target estimate. |

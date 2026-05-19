@@ -1,0 +1,99 @@
+:root {
+  color-scheme: light;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #f4f5f7;
+  color: #1f2933;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.topbar {
+  min-height: 64px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #c8ced7;
+  background: #ffffff;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+h2 {
+  margin-bottom: 12px;
+  font-size: 16px;
+}
+
+.topbar p,
+.muted {
+  margin-top: 6px;
+  color: #5d6877;
+  font-size: 13px;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(420px, 1fr) minmax(240px, 320px);
+  gap: 1px;
+  min-height: calc(100vh - 65px);
+  background: #c8ced7;
+}
+
+.panel,
+.map-stage {
+  background: #ffffff;
+}
+
+.panel {
+  padding: 16px;
+}
+
+input {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid #b9c1cc;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.map-stage {
+  display: grid;
+  min-width: 0;
+  place-items: center;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  width: min(100%, 960px);
+  height: min(100%, 640px);
+  background:
+    linear-gradient(#dde3ea 1px, transparent 1px),
+    linear-gradient(90deg, #dde3ea 1px, transparent 1px),
+    #edf1f5;
+  background-size: 32px 32px;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .map-stage {
+    min-height: 360px;
+  }
+}

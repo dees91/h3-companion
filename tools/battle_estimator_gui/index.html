@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VCMI Battle Estimator</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>VCMI Battle Estimator</h1>
+        <p id="health-status">Checking local server...</p>
+      </div>
+    </header>
+    <main class="app-shell">
+      <aside class="panel">
+        <h2>Heroes</h2>
+        <input type="search" placeholder="Search heroes" disabled>
+        <p class="muted">Hero selection will appear here.</p>
+      </aside>
+      <section class="map-stage" aria-label="Map preview">
+        <canvas id="battle-map" width="960" height="640"></canvas>
+      </section>
+      <aside class="panel">
+        <h2>Estimate</h2>
+        <p class="muted">Target details and scan results will appear here.</p>
+      </aside>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
