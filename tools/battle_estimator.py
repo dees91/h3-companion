@@ -25,7 +25,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import Any, List, Tuple, Optional
 
 try:
     from tools import h3_map_parser, h3_save_parser
@@ -397,6 +397,31 @@ class Stack:
         self.has_acted = False
 
 
+VALID_SCAN_TARGET_TYPES = ("all", "neutral", "hero")
+_SCAN_RESULT_TYPE_ORDER = {
+    "neutral": 0,
+    "hero": 1,
+}
+
+
+@dataclass(frozen=True)
+class NearbyScanTarget:
+    target_type: str
+    distance: int
+    x: int
+    y: int
+    z: int
+    target: Any
+
+    @property
+    def position(self) -> Tuple[int, int, int]:
+        return self.x, self.y, self.z
+
+
+class NearbyScanError(ValueError):
+    """Raised when nearby scan inputs are incomplete or invalid."""
+
+
 # ---------------------------------------------------------------------------
 # Formuła obrażeń z DamageCalculator.cpp (linie 556-593)
 # ---------------------------------------------------------------------------
@@ -563,6 +588,107 @@ def ai_value_total(army: List[Tuple[Creature, int]]) -> int:
 
 def hp_total(army: List[Tuple[Creature, int]]) -> int:
     return sum(c.hit_points * n for c, n in army)
+
+
+def build_nearby_scan_targets(
+    selected_hero: h3_save_parser.HeroArmy,
+    neutral_targets=(),
+    hero_targets=(),
+    removed_records=(),
+    radius: int = 0,
+    target_type: str = "all",
+    include_removed: bool = False,
+) -> Tuple[NearbyScanTarget, ...]:
+    """Build distance-sorted nearby attack targets for one selected hero."""
+
+    if selected_hero.position is None:
+        raise NearbyScanError("selected hero has no parsed position")
+    if radius < 0:
+        raise NearbyScanError(f"scan radius must be non-negative: {radius}")
+    if target_type not in VALID_SCAN_TARGET_TYPES:
+        expected = ", ".join(VALID_SCAN_TARGET_TYPES)
+        raise NearbyScanError(
+            f"invalid target_type {target_type!r}; expected one of: {expected}"
+        )
+
+    selected_position = selected_hero.position
+    results = []
+
+    if target_type in ("all", "neutral"):
+        active_neutrals = h3_map_parser.filter_removed_neutral_targets(
+            neutral_targets,
+            removed_records,
+            include_removed=include_removed,
+        )
+        for target in active_neutrals:
+            scan_target = _build_scan_target(
+                "neutral",
+                target,
+                selected_position,
+                radius,
+            )
+            if scan_target is not None:
+                results.append(scan_target)
+
+    if target_type in ("all", "hero"):
+        for target in hero_targets:
+            scan_target = _build_scan_target(
+                "hero",
+                target,
+                selected_position,
+                radius,
+            )
+            if scan_target is not None:
+                results.append(scan_target)
+
+    return tuple(sorted(results, key=_nearby_scan_sort_key))
+
+
+def _build_scan_target(
+    target_type: str,
+    target,
+    selected_position: h3_save_parser.HeroPosition,
+    radius: int,
+) -> Optional[NearbyScanTarget]:
+    if target.z != selected_position.z:
+        return None
+
+    distance = (
+        abs(target.x - selected_position.x)
+        + abs(target.y - selected_position.y)
+    )
+    if distance > radius:
+        return None
+
+    return NearbyScanTarget(
+        target_type=target_type,
+        distance=distance,
+        x=target.x,
+        y=target.y,
+        z=target.z,
+        target=target,
+    )
+
+
+def _nearby_scan_sort_key(scan_target: NearbyScanTarget):
+    return (
+        scan_target.distance,
+        _SCAN_RESULT_TYPE_ORDER[scan_target.target_type],
+        scan_target.y,
+        scan_target.x,
+        scan_target.z,
+        _nearby_scan_stable_key(scan_target),
+    )
+
+
+def _nearby_scan_stable_key(scan_target: NearbyScanTarget):
+    if scan_target.target_type == "neutral":
+        return (scan_target.target.object_index,)
+
+    source_offset = scan_target.target.army.source_offset
+    if source_offset is None:
+        source_offset = -1
+    return (scan_target.target.hero_name.casefold(), source_offset)
 
 
 def print_static_analysis(player: List[Tuple[Creature, int]],

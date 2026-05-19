@@ -614,6 +614,25 @@ identity model.
 2. Manual local check around `post_attack_2.GM1` radius 10 includes known
    nearby neutral targets in distance order.
 
+**Completion Notes (2026-05-19):**
+- Added a pure nearby scan service in `tools/battle_estimator.py` with
+  `NearbyScanTarget`, `NearbyScanError`, `VALID_SCAN_TARGET_TYPES`, and
+  `build_nearby_scan_targets()`.
+- The service validates selected-hero position, non-negative radius, and
+  `target_type=all|neutral|hero`; it applies removed-neutral filtering, same
+  map-level filtering, Manhattan radius, and deterministic distance sorting.
+- Added `tests/test_nearby_scan.py` for same-level/radius filtering,
+  Manhattan distance ordering, stable tie-breakers, target-type filtering,
+  removed-neutral default exclusion, `include_removed` debug marking, and
+  validation errors.
+- Verified with `python3 -m unittest tests.test_nearby_scan
+  tests.test_h3_map_parser tests.test_h3_save_parser`, `git diff --check`,
+  and `python3 -m unittest discover -s tests`.
+- Manual `post_attack_2.GM1` radius-10 neutral scan selected Isra at
+  `(39,69,1)`, excluded removed object `#2393/subid 98` (Gnoll), and returned
+  nearby targets in distance order including `#2330/subid 29` Master Gremlin
+  at distance 5 and `#2331/subid 28` Gremlin at distance 6.
+
 ---
 
 ### NS-T08: Per-Target Estimation Runner
@@ -749,7 +768,7 @@ H3M-to-save object identity.
 | NS-T04: Hero Position Parsing | done | -- | Codex | Hero x,y,z parsing implemented. |
 | NS-T05: Other Hero Target Extraction | done | NS-T04 | Codex | Other-hero target records implemented. |
 | NS-T06: Removed Neutral Detection | done | NS-T02 | Codex | Removed neutral detection and filtering implemented. |
-| NS-T07: Nearby Target Scan Service | todo | NS-T02, NS-T03, NS-T04, NS-T05, NS-T06 | unassigned | Combines all inputs. |
-| NS-T08: Per-Target Estimation Runner | blocked | NS-T07 | unassigned | Compact scan estimates. |
+| NS-T07: Nearby Target Scan Service | done | NS-T02, NS-T03, NS-T04, NS-T05, NS-T06 | Codex | Nearby scan service implemented. |
+| NS-T08: Per-Target Estimation Runner | todo | NS-T07 | unassigned | Compact scan estimates. |
 | NS-T09: CLI Output and Arguments | blocked | NS-T08 | unassigned | User-facing scan command. |
 | NS-T10: Documentation and Verification Pass | blocked | NS-T09 | unassigned | Final docs and tests. |
