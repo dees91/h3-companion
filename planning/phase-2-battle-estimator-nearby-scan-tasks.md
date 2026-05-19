@@ -385,6 +385,19 @@ identity model.
    - `(39,75,1)`: `47x Gremlin`
    - `(40,73,1)`: `32x Master Gremlin`
 
+**Completion Notes (2026-05-19):**
+- Extended `tools/h3_map_parser.py` with sequential SoD H3M section skipping,
+  object template parsing, object table parsing, and neutral monster target
+  extraction.
+- Added DEF-name-based mapping for the observed neutral targets; unknown DEF
+  names remain unsupported instead of falling back to `CREATURES[subid]`.
+- Verified with `python3 -m unittest tests.test_h3_map_parser`,
+  `python3 -m unittest tests.test_h3_save_parser`,
+  `python3 tools/battle_estimator.py --help`, `git diff --check`, and
+  `python3 -m unittest discover -s tests`.
+- Manual Diamond check found `37x Gnoll` at `(39,70,1)`, `47x Gremlin` at
+  `(39,75,1)`, and `32x Master Gremlin` at `(40,73,1)`.
+
 ---
 
 ### NS-T03: H3M Map Auto-Detection
@@ -668,11 +681,11 @@ H3M-to-save object identity.
 | Task | Status | Blocked By | Owner | Notes |
 |---|---|---|---|---|
 | NS-T01: H3M Format Contracts | done | -- | Codex | H3M contracts and smoke loader implemented. |
-| NS-T02: H3M Neutral Monster Parser | todo | NS-T01 | unassigned | High-risk: sequential H3M parsing and creature mapping. |
+| NS-T02: H3M Neutral Monster Parser | done | NS-T01 | Codex | Sequential H3M neutral parser implemented. |
 | NS-T03: H3M Map Auto-Detection | todo | NS-T01 | unassigned | Needs map contracts and path resolver. |
 | NS-T04: Hero Position Parsing | todo | -- | unassigned | Can be done independently from H3M work. |
 | NS-T05: Other Hero Target Extraction | blocked | NS-T04 | unassigned | Army-only hero targets. |
-| NS-T06: Removed Neutral Detection | blocked | NS-T02 | unassigned | Needs neutral identity model. |
+| NS-T06: Removed Neutral Detection | todo | NS-T02 | unassigned | Needs neutral identity model. |
 | NS-T07: Nearby Target Scan Service | blocked | NS-T02, NS-T03, NS-T04, NS-T05, NS-T06 | unassigned | Combines all inputs. |
 | NS-T08: Per-Target Estimation Runner | blocked | NS-T07 | unassigned | Compact scan estimates. |
 | NS-T09: CLI Output and Arguments | blocked | NS-T08 | unassigned | User-facing scan command. |
