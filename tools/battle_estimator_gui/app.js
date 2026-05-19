@@ -1355,9 +1355,10 @@
 
     elements.savePicker.appendChild(savePickerOption("", "Pin a save..."));
     saves.forEach((save) => {
+      const saveName = save.name || fileName(save.path);
       const label = save.path === payload.latest_save_file
-        ? `${fileName(save.path)} (latest)`
-        : fileName(save.path);
+        ? `${saveName} (latest)`
+        : saveName;
       elements.savePicker.appendChild(savePickerOption(save.path, label));
     });
     syncSaveControls(mapView.snapshot);
@@ -1378,9 +1379,10 @@
 
     elements.gameFolderPicker.appendChild(gameFolderOption("", "Detected folders..."));
     folders.forEach((folder) => {
+      const folderName = folder.relative_path || folder.name || folder.path;
       const label = folder.path === activePath
-        ? `${folder.name} (${folder.save_count} saves, active)`
-        : `${folder.name} (${folder.save_count} saves)`;
+        ? `${folderName} (${folder.save_count} saves, active)`
+        : `${folderName} (${folder.save_count} saves)`;
       elements.gameFolderPicker.appendChild(gameFolderOption(folder.path, label));
     });
     elements.gameFolderPicker.value = activePath;

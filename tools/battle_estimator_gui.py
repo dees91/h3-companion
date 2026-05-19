@@ -250,7 +250,9 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
     def _api_game_folder(self, payload: dict) -> dict:
         if _optional_bool(payload, "use_latest_game_folder", False):
             active_game_dir = _active_game_dir_for_app(self.app_state)
-            game_dir = _select_latest_game_folder(active_game_dir.parent)
+            game_dir = _select_latest_game_folder(
+                _game_folders_root_for_active_dir(active_game_dir)
+            )
         else:
             game_dir = _validate_game_dir_for_api(_required_text(payload, "autosave_dir"))
 
@@ -726,12 +728,12 @@ def _resolve_follow_latest_save(
 ) -> h3_save_parser.SaveContext:
     if autosave_dir is not None:
         game_dir = Path(autosave_dir).expanduser()
-        autosave_root = game_dir.parent
+        autosave_root = _game_folders_root_for_active_dir(game_dir)
     else:
         config = h3_save_parser.load_config(config_path)
         if config.autosave_dir is not None:
             game_dir = config.autosave_dir.expanduser()
-            autosave_root = game_dir.parent
+            autosave_root = _game_folders_root_for_active_dir(game_dir)
         else:
             autosave_root = h3_save_parser.DEFAULT_AUTOSAVE_ROOT
             game_dir = h3_save_parser.select_game_dir(autosave_root=autosave_root)
@@ -1045,7 +1047,7 @@ def _clear_snapshot_cache(app_state: GuiAppState) -> None:
 
 
 def _game_folders_payload(active_game_dir: Path) -> dict:
-    autosave_root = active_game_dir.parent
+    autosave_root = _game_folders_root_for_active_dir(active_game_dir)
     game_folders = _list_game_folders(autosave_root)
     return {
         "autosave_root": str(autosave_root),
@@ -1061,50 +1063,40 @@ def _select_latest_game_folder(autosave_root: str | Path) -> Path:
         root = Path(autosave_root)
         raise h3_save_parser.SaveSelectionError(
             root,
-            "no game folders with numeric non-symlink GM1/GM2 saves found",
+            "no game folders with supported non-symlink GM1/GM2 saves found",
         )
     return Path(game_folders[0]["path"])
 
 
+def _game_folders_root_for_active_dir(active_game_dir: str | Path) -> Path:
+    default_root = Path(h3_save_parser.DEFAULT_AUTOSAVE_ROOT).expanduser()
+    active_path = Path(active_game_dir).expanduser()
+    if _path_is_relative_to(active_path, default_root):
+        return default_root
+    return active_path.parent
+
+
+def _path_is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _list_game_folders(autosave_root: str | Path) -> list[dict]:
     root = Path(autosave_root).expanduser()
-    if not root.is_dir():
-        raise h3_save_parser.SaveSelectionError(
-            root,
-            "autosave root is not a directory",
-        )
-    try:
-        children = list(root.iterdir())
-    except OSError as exc:
-        raise h3_save_parser.SaveSelectionError(
-            root,
-            f"failed to list autosave root: {exc}",
-        ) from exc
-
-    dated_folders = []
-    other_folders = []
-    for child in children:
-        if child.is_symlink() or not child.is_dir():
-            continue
-        saves = _list_numeric_saves(child)
-        if not saves:
-            continue
-        latest_save = saves[-1]
-        entry = {
-            "path": str(child),
-            "name": child.name,
-            "save_count": len(saves),
-            "latest_save_file": latest_save["path"],
+    return [
+        {
+            "path": str(folder.path),
+            "name": folder.relative_path,
+            "relative_path": folder.relative_path,
+            "save_count": folder.save_count,
+            "latest_save_file": str(folder.latest_save_file),
+            "latest_save_mtime_ns": folder.latest_save_mtime_ns,
         }
-        folder_date = h3_save_parser.parse_game_folder_datetime(child.name)
-        if folder_date is None:
-            other_folders.append((child.name.casefold(), entry))
-        else:
-            dated_folders.append((folder_date, child.name, entry))
-
-    dated_folders.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    other_folders.sort(key=lambda item: item[0])
-    return [item[2] for item in dated_folders] + [item[1] for item in other_folders]
+        for folder in h3_save_parser.list_save_folders(root)
+    ]
 
 
 def _validate_game_dir_for_api(game_dir: str) -> Path:
@@ -1119,7 +1111,7 @@ def _validate_game_dir_for_api(game_dir: str) -> Path:
     if not saves:
         raise ApiError(
             HTTPStatus.BAD_REQUEST,
-            "autosave_dir has no numeric non-symlink GM1/GM2 saves",
+            "autosave_dir has no supported non-symlink GM1/GM2 saves",
         )
     return resolved_folder
 
@@ -1130,12 +1122,12 @@ def _select_latest_gui_save(game_dir: str | Path) -> Path:
         folder = Path(game_dir)
         raise h3_save_parser.SaveSelectionError(
             folder,
-            "no numeric non-symlink GM1/GM2 saves found",
+            "no supported non-symlink GM1/GM2 saves found",
         )
-    return saves[-1][3]
+    return saves[-1][4]
 
 
-def _list_numeric_save_paths(game_dir: str | Path) -> list[tuple[int, int, str, Path]]:
+def _list_numeric_save_paths(game_dir: str | Path) -> list[tuple[int, int, str, str, Path]]:
     folder = Path(game_dir)
     if not folder.is_dir():
         raise h3_save_parser.SaveSelectionError(
@@ -1158,13 +1150,19 @@ def _list_numeric_save_paths(game_dir: str | Path) -> list[tuple[int, int, str, 
         if numeric_save is None:
             continue
         number, extension_rank = numeric_save
-        saves.append((number, extension_rank, child.name, child))
-    return sorted(saves, key=lambda item: item[:3])
+        saves.append((
+            number,
+            extension_rank,
+            h3_save_parser.normalize_save_name(child),
+            child.name,
+            child,
+        ))
+    return sorted(saves, key=lambda item: item[:4])
 
 
 def _list_numeric_saves(game_dir: str | Path) -> list[dict]:
     saves = []
-    for number, extension_rank, name, child in _list_numeric_save_paths(game_dir):
+    for number, extension_rank, name, _, child in _list_numeric_save_paths(game_dir):
         fingerprint = _file_fingerprint(child)
         saves.append((
             number,
@@ -1195,7 +1193,10 @@ def _validate_pinned_save_for_app(app_state: GuiAppState, save_file: str) -> Pat
     if not resolved_save_path.is_file():
         raise ApiError(HTTPStatus.BAD_REQUEST, "save_file is not a file")
     if h3_save_parser.parse_numeric_save_name(resolved_save_path) is None:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "save_file must be numeric .GM1/.GM2")
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            "save_file must be numeric or GAME_BEGIN .GM1/.GM2",
+        )
 
     active_game_dir = _active_game_dir_for_app(app_state)
     if resolved_save_path.parent != active_game_dir.resolve():

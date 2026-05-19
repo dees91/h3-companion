@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -826,6 +827,56 @@ assert.strictEqual(
 
             self._with_server(check, app_state=app_state)
 
+    def test_saves_endpoint_orders_game_begin_before_hotseat_saves(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "2026.05.19 17;18 Diamond"
+            game_dir.mkdir()
+            game_begin = _write_gui_save(
+                game_dir,
+                "GAME_BEGIN.GM2",
+                hero_name="Begin",
+            )
+            hotseat_111 = _write_gui_save(
+                game_dir,
+                "[hotseat] 111.GM2",
+                hero_name="Hot111",
+            )
+            hotseat_112 = _write_gui_save(
+                game_dir,
+                "[hotseat] 112.GM2",
+                hero_name="Hot112",
+            )
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                status, saves_payload = self._get_json(base_url, "/api/saves")
+                self.assertEqual(status, 200)
+                self.assertEqual(saves_payload["latest_save_file"], str(hotseat_112))
+                self.assertEqual(
+                    [save["path"] for save in saves_payload["saves"]],
+                    [str(game_begin), str(hotseat_111), str(hotseat_112)],
+                )
+                self.assertEqual(
+                    [save["name"] for save in saves_payload["saves"]],
+                    ["GAME_BEGIN.GM2", "111.GM2", "112.GM2"],
+                )
+                self.assertEqual(
+                    [save["number"] for save in saves_payload["saves"]],
+                    [battle_estimator_gui.h3_save_parser.GAME_BEGIN_SAVE_NUMBER, 111, 112],
+                )
+
+                status, state_payload = self._get_json(base_url, "/api/state")
+                self.assertEqual(status, 200)
+                self.assertEqual(state_payload["save_file"], str(hotseat_112))
+                self.assertEqual(state_payload["heroes"][0]["name"], "Hot112")
+
+            self._with_server(check, app_state=app_state)
+
     def test_saves_endpoint_and_follow_latest_ignore_numeric_symlinks(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -874,6 +925,9 @@ assert.strictEqual(
             active_save = _write_gui_save(active_dir, "001.GM2", hero_name="Active")
             newer_save = _write_gui_save(newer_dir, "003.GM1", hero_name="Newer")
             manual_save = _write_gui_save(manual_dir, "002.GM2", hero_name="Manual")
+            os.utime(active_save, ns=(2_000, 2_000))
+            os.utime(newer_save, ns=(3_000, 3_000))
+            os.utime(manual_save, ns=(1_000, 1_000))
             (root / "not-a-game.txt").write_text("ignored", encoding="utf-8")
             (empty_dir / "autosave.GM2").write_bytes(b"ignored")
             map_path = _write_h3m_map(temp_path / "map.h3m")
@@ -894,6 +948,10 @@ assert.strictEqual(
                     [str(newer_dir), str(active_dir), str(manual_dir)],
                 )
                 self.assertEqual(
+                    [folder["relative_path"] for folder in payload["game_folders"]],
+                    [newer_dir.name, active_dir.name, manual_dir.name],
+                )
+                self.assertEqual(
                     [folder["latest_save_file"] for folder in payload["game_folders"]],
                     [str(newer_save), str(active_save), str(manual_save)],
                 )
@@ -903,6 +961,64 @@ assert.strictEqual(
                 )
 
             self._with_server(check, app_state=app_state)
+
+    def test_game_folders_endpoint_scans_configured_games_root_recursively(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            root = temp_path / "Games"
+            active_dir = root / "Random" / "PlayerTwo" / "2026.05.18 10;00 Active"
+            latest_dir = root / "Hotseat" / "2026.05.19 17;18 Diamond"
+            active_dir.mkdir(parents=True)
+            latest_dir.mkdir(parents=True)
+            active_save = _write_gui_save(active_dir, "001.GM2", hero_name="Active")
+            latest_save = _write_gui_save(
+                latest_dir,
+                "[hotseat] 112.GM2",
+                hero_name="Latest",
+            )
+            os.utime(active_save, ns=(1_000, 1_000))
+            os.utime(latest_save, ns=(2_000, 2_000))
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=active_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/game-folders")
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["autosave_root"], str(root))
+                self.assertEqual(payload["latest_game_folder"], str(latest_dir))
+                self.assertEqual(
+                    [folder["relative_path"] for folder in payload["game_folders"]],
+                    [
+                        "Hotseat/2026.05.19 17;18 Diamond",
+                        "Random/PlayerTwo/2026.05.18 10;00 Active",
+                    ],
+                )
+
+                status, _, latest_payload = self._post_json(
+                    base_url,
+                    "/api/game-folder",
+                    {"use_latest_game_folder": True},
+                )
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+
+                self.assertEqual(status, 200)
+                self.assertEqual(latest_payload["autosave_dir"], str(latest_dir))
+                self.assertEqual(latest_payload["save_file"], str(latest_save))
+                self.assertEqual(config.autosave_dir, latest_dir)
+                self.assertEqual(app_state.autosave_dir, latest_dir)
+
+            with patch.object(
+                battle_estimator_gui.h3_save_parser,
+                "DEFAULT_AUTOSAVE_ROOT",
+                root,
+            ):
+                self._with_server(check, app_state=app_state)
 
     def test_game_folder_endpoint_switches_folder_and_persists_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -962,8 +1078,10 @@ assert.strictEqual(
             latest_dir = root / "2026.05.19 11;00 Latest"
             older_dir.mkdir()
             latest_dir.mkdir()
-            _write_gui_save(older_dir, "001.GM2", hero_name="Older")
+            older_save = _write_gui_save(older_dir, "001.GM2", hero_name="Older")
             latest_save = _write_gui_save(latest_dir, "002.GM2", hero_name="Latest")
+            os.utime(older_save, ns=(1_000, 1_000))
+            os.utime(latest_save, ns=(2_000, 2_000))
             map_path = _write_h3m_map(temp_path / "map.h3m")
             config_path = temp_path / "config.json"
             app_state = battle_estimator_gui.GuiAppState(

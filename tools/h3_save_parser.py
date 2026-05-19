@@ -22,7 +22,7 @@ if TYPE_CHECKING:
         from battle_estimator import Creature
 
 
-DEFAULT_AUTOSAVE_ROOT = (
+DEFAULT_GAMES_ROOT = (
     Path.home()
     / "Applications"
     / "Heroes of Might and Magic 3.app"
@@ -33,9 +33,8 @@ DEFAULT_AUTOSAVE_ROOT = (
     / "GOG Games"
     / "HoMM 3 Complete"
     / "Games"
-    / "Random"
-    / "PlayerTwo"
 )
+DEFAULT_AUTOSAVE_ROOT = DEFAULT_GAMES_ROOT
 CONFIG_PATH = Path.home() / ".config" / "vcmi-battle-estimator" / "config.json"
 CACHE_ROOT = Path.home() / ".cache" / "vcmi-battle-estimator"
 
@@ -48,6 +47,9 @@ GAME_FOLDER_DATE_PATTERN = re.compile(
     r"(?P<hour>\d{2})[;:](?P<minute>\d{2})(?:\b|$)"
 )
 NUMERIC_SAVE_PATTERN = re.compile(r"^(?P<number>\d+)\.(?P<ext>gm[12])$", re.I)
+GAME_BEGIN_SAVE_PATTERN = re.compile(r"^GAME_BEGIN\.(?P<ext>gm[12])$", re.I)
+HOTSEAT_SAVE_PREFIX_PATTERN = re.compile(r"^\[hotseat\]\s+", re.I)
+GAME_BEGIN_SAVE_NUMBER = -1
 HIDDEN_NEUTRAL_TARGET_PATTERN = re.compile(r"^neutral:(?P<object_index>\d+)$")
 HERO_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9 '\-]{0,12}$")
 HERO_NAME_FIRST_CHARS = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -995,13 +997,21 @@ def _removed_neutral_history_save_paths(
         if numeric_save is None:
             continue
         if numeric_save <= selected_key:
-            candidates.append((*numeric_save, child.name, child))
+            candidates.append((
+                *numeric_save,
+                normalize_save_name(child),
+                child.name,
+                child,
+            ))
 
     if not candidates:
         return (save_file,)
     return tuple(
-        item[3]
-        for item in sorted(candidates, key=lambda item: (item[0], item[1], item[2]))
+        item[4]
+        for item in sorted(
+            candidates,
+            key=lambda item: (item[0], item[1], item[2], item[3]),
+        )
     )
 
 
@@ -1246,7 +1256,7 @@ def select_game_dir(
     explicit_game_dir: str | Path | None = None,
     autosave_root: str | Path = DEFAULT_AUTOSAVE_ROOT,
 ) -> Path:
-    """Return an explicit game folder or the newest dated child folder."""
+    """Return an explicit game folder or the folder with the newest save."""
 
     if explicit_game_dir is not None:
         game_dir = Path(explicit_game_dir)
@@ -1255,29 +1265,98 @@ def select_game_dir(
         return game_dir
 
     root = Path(autosave_root)
-    if not root.is_dir():
-        raise SaveSelectionError(root, "autosave root is not a directory")
+    candidates = list_save_folders(root)
+    if not candidates:
+        raise SaveSelectionError(root, "no autosave game folders with saves found")
+    return candidates[0].path
 
+
+@dataclass(frozen=True)
+class SaveFolderInfo:
+    """Discovered save folder under a scan root."""
+
+    path: Path
+    relative_path: str
+    save_count: int
+    latest_save_file: Path
+    latest_save_mtime_ns: int
+
+
+def list_save_folders(root: str | Path) -> tuple[SaveFolderInfo, ...]:
+    """Return save folders below root, sorted by latest save mtime descending."""
+
+    scan_root = Path(root).expanduser()
+    if not scan_root.is_dir():
+        raise SaveSelectionError(scan_root, "autosave root is not a directory")
+
+    folders = []
     try:
-        child_dirs = [path for path in root.iterdir() if path.is_dir()]
+        candidates = [scan_root, *scan_root.rglob("*")]
     except OSError as exc:
-        raise SaveSelectionError(root, f"failed to list autosave root: {exc}") from exc
+        raise SaveSelectionError(scan_root, f"failed to scan autosave root: {exc}") from exc
 
-    dated_dirs = []
-    for child_dir in child_dirs:
-        folder_date = parse_game_folder_datetime(child_dir.name)
-        if folder_date is not None:
-            dated_dirs.append((folder_date, child_dir.name, child_dir))
+    for candidate in candidates:
+        if candidate.is_symlink() or not candidate.is_dir():
+            continue
+        save_files = _supported_save_files_in_folder(candidate)
+        if not save_files:
+            continue
+        latest_save = max(
+            save_files,
+            key=lambda path: (path.stat().st_mtime_ns, path.name),
+        )
+        relative_path = _relative_save_folder_path(scan_root, candidate)
+        folders.append(SaveFolderInfo(
+            path=candidate,
+            relative_path=relative_path,
+            save_count=len(save_files),
+            latest_save_file=latest_save,
+            latest_save_mtime_ns=latest_save.stat().st_mtime_ns,
+        ))
 
-    if not dated_dirs:
-        raise SaveSelectionError(root, "no dated autosave game folders found")
-    return max(dated_dirs, key=lambda item: (item[0], item[1]))[2]
+    return tuple(sorted(
+        folders,
+        key=lambda item: (
+            -item.latest_save_mtime_ns,
+            item.relative_path.casefold(),
+        ),
+    ))
+
+
+def _supported_save_files_in_folder(folder: Path) -> tuple[Path, ...]:
+    try:
+        children = list(folder.iterdir())
+    except OSError:
+        return ()
+
+    save_files = []
+    for child in children:
+        if child.is_symlink() or not child.is_file():
+            continue
+        if parse_numeric_save_name(child) is not None:
+            save_files.append(child)
+    return tuple(save_files)
+
+
+def _relative_save_folder_path(root: Path, folder: Path) -> str:
+    try:
+        relative = folder.relative_to(root)
+    except ValueError:
+        return folder.name
+    if str(relative) == ".":
+        return folder.name
+    return str(relative)
 
 
 def parse_numeric_save_name(path_or_name: str | Path) -> tuple[int, int] | None:
-    """Return numeric save number and extension rank for GM1/GM2 names."""
+    """Return sortable save number and extension rank for supported GM1/GM2 names."""
 
-    name = Path(path_or_name).name
+    name = normalize_save_name(path_or_name)
+    game_begin_match = GAME_BEGIN_SAVE_PATTERN.match(name)
+    if game_begin_match:
+        extension_rank = 2 if game_begin_match.group("ext").lower() == "gm2" else 1
+        return GAME_BEGIN_SAVE_NUMBER, extension_rank
+
     match = NUMERIC_SAVE_PATTERN.match(name)
     if not match:
         return None
@@ -1285,8 +1364,14 @@ def parse_numeric_save_name(path_or_name: str | Path) -> tuple[int, int] | None:
     return int(match.group("number")), extension_rank
 
 
+def normalize_save_name(path_or_name: str | Path) -> str:
+    """Return the save filename without GUI-only prefixes such as hotseat."""
+
+    return HOTSEAT_SAVE_PREFIX_PATTERN.sub("", Path(path_or_name).name)
+
+
 def select_latest_save(game_dir: str | Path) -> Path:
-    """Return the highest numeric GM1/GM2 save in a game folder."""
+    """Return the latest supported GM1/GM2 save in a game folder."""
 
     folder = Path(game_dir)
     if not folder.is_dir():
@@ -1303,11 +1388,16 @@ def select_latest_save(game_dir: str | Path) -> Path:
             continue
         numeric_save = parse_numeric_save_name(child)
         if numeric_save is not None:
-            candidates.append((*numeric_save, child.name, child))
+            candidates.append((
+                *numeric_save,
+                normalize_save_name(child),
+                child.name,
+                child,
+            ))
 
     if not candidates:
-        raise SaveSelectionError(folder, "no numeric GM1/GM2 saves found")
-    return max(candidates, key=lambda item: (item[0], item[1], item[2]))[3]
+        raise SaveSelectionError(folder, "no numeric/GAME_BEGIN GM1/GM2 saves found")
+    return max(candidates, key=lambda item: (item[0], item[1], item[2], item[3]))[4]
 
 
 def select_numbered_save(game_dir: str | Path, save_number: str | int) -> Path:
@@ -1336,14 +1426,19 @@ def select_numbered_save(game_dir: str | Path, save_number: str | int) -> Path:
             continue
         number, extension_rank = numeric_save
         if number == requested_number:
-            candidates.append((extension_rank, child.name, child))
+            candidates.append((
+                extension_rank,
+                normalize_save_name(child),
+                child.name,
+                child,
+            ))
 
     if not candidates:
         raise SaveSelectionError(
             folder,
             f"no GM1/GM2 save found for number {requested_number}",
         )
-    return max(candidates, key=lambda item: (item[0], item[1]))[2]
+    return max(candidates, key=lambda item: (item[0], item[1], item[2]))[3]
 
 
 def resolve_save_context(

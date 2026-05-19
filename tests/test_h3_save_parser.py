@@ -164,7 +164,7 @@ class H3SaveParserContractTests(unittest.TestCase):
         home = Path.home()
 
         self.assertEqual(
-            h3_save_parser.DEFAULT_AUTOSAVE_ROOT,
+            h3_save_parser.DEFAULT_GAMES_ROOT,
             home
             / "Applications"
             / "Heroes of Might and Magic 3.app"
@@ -175,8 +175,10 @@ class H3SaveParserContractTests(unittest.TestCase):
             / "GOG Games"
             / "HoMM 3 Complete"
             / "Games"
-            / "Random"
-            / "PlayerTwo",
+        )
+        self.assertEqual(
+            h3_save_parser.DEFAULT_AUTOSAVE_ROOT,
+            h3_save_parser.DEFAULT_GAMES_ROOT,
         )
         self.assertEqual(
             h3_save_parser.CONFIG_PATH,
@@ -526,42 +528,91 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(raised.exception.path, missing_dir)
         self.assertIn("not a directory", raised.exception.reason)
 
-    def test_select_game_dir_picks_newest_dated_child(self):
+    def test_select_game_dir_picks_folder_with_newest_save_recursively(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            older = root / "2026.04.26 20;45 Diamond"
-            newest = root / "2026.05.01 09;15 Crystal"
+            older = root / "Random" / "PlayerTwo" / "2026.04.26 20;45 Diamond"
+            newest = root / "Hotseat" / "2026.05.01 09;15 Crystal"
             ignored = root / "Manual Saves"
             malformed = root / "2026.99.99 20;45 Bad"
             for folder in (older, newest, ignored, malformed):
-                folder.mkdir()
+                folder.mkdir(parents=True)
+            older_save = older / "001.GM2"
+            newest_save = newest / "[hotseat] 111.GM2"
+            older_save.write_bytes(b"")
+            newest_save.write_bytes(b"")
+            os.utime(older_save, ns=(1_000, 1_000))
+            os.utime(newest_save, ns=(2_000, 2_000))
 
             selected = h3_save_parser.select_game_dir(autosave_root=root)
+            folders = h3_save_parser.list_save_folders(root)
 
         self.assertEqual(selected, newest)
+        self.assertEqual(
+            [folder.relative_path for folder in folders],
+            [
+                "Hotseat/2026.05.01 09;15 Crystal",
+                "Random/PlayerTwo/2026.04.26 20;45 Diamond",
+            ],
+        )
 
     def test_parse_numeric_save_name(self):
         self.assertEqual(h3_save_parser.parse_numeric_save_name("415.GM1"), (415, 1))
         self.assertEqual(h3_save_parser.parse_numeric_save_name("415.gm2"), (415, 2))
+        self.assertEqual(
+            h3_save_parser.parse_numeric_save_name("GAME_BEGIN.GM2"),
+            (h3_save_parser.GAME_BEGIN_SAVE_NUMBER, 2),
+        )
+        self.assertEqual(
+            h3_save_parser.parse_numeric_save_name("[hotseat] 111.GM2"),
+            (111, 2),
+        )
+        self.assertEqual(
+            h3_save_parser.normalize_save_name("[hotseat] 111.GM2"),
+            "111.GM2",
+        )
         self.assertIsNone(h3_save_parser.parse_numeric_save_name("415_moved.GM1"))
         self.assertIsNone(h3_save_parser.parse_numeric_save_name("BATTLE.GM2"))
 
-    def test_select_latest_save_ignores_non_numeric_names(self):
+    def test_select_latest_save_accepts_game_begin_but_uses_latest_numbered_save(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             game_dir = Path(temp_dir)
             (game_dir / "1.GM1").write_bytes(b"")
             (game_dir / "415.GM1").write_bytes(b"")
             expected = game_dir / "416.gm1"
             expected.write_bytes(b"")
-            for ignored_name in (
+            for extra_name in (
                 "GAME_BEGIN.GM2",
                 "BATTLE.GM2",
                 "AUTOSAVE.GM2",
                 "415_moved.GM1",
                 "notes.txt",
             ):
-                (game_dir / ignored_name).write_bytes(b"")
+                (game_dir / extra_name).write_bytes(b"")
             (game_dir / "999.GM2").mkdir()
+
+            selected = h3_save_parser.select_latest_save(game_dir)
+
+        self.assertEqual(selected, expected)
+
+    def test_select_latest_save_uses_hotseat_prefix_and_game_begin_ordering(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            game_begin = game_dir / "GAME_BEGIN.GM2"
+            game_begin.write_bytes(b"")
+            (game_dir / "[hotseat] 111.GM2").write_bytes(b"")
+            expected = game_dir / "[hotseat] 112.GM2"
+            expected.write_bytes(b"")
+
+            selected = h3_save_parser.select_latest_save(game_dir)
+
+        self.assertEqual(selected, expected)
+
+    def test_select_latest_save_accepts_game_begin_as_only_save(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            expected = game_dir / "GAME_BEGIN.GM2"
+            expected.write_bytes(b"")
 
             selected = h3_save_parser.select_latest_save(game_dir)
 
@@ -600,6 +651,16 @@ class H3SaveParserContractTests(unittest.TestCase):
             expected.write_bytes(b"")
 
             selected = h3_save_parser.select_numbered_save(game_dir, "415")
+
+        self.assertEqual(selected, expected)
+
+    def test_select_numbered_save_accepts_hotseat_prefix(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir)
+            expected = game_dir / "[hotseat] 111.GM2"
+            expected.write_bytes(b"")
+
+            selected = h3_save_parser.select_numbered_save(game_dir, "111")
 
         self.assertEqual(selected, expected)
 
