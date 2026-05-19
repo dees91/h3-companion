@@ -398,6 +398,7 @@ class Stack:
 
 
 VALID_SCAN_TARGET_TYPES = ("all", "neutral", "hero")
+DEFAULT_SCAN_SIMULATIONS = 500
 _SCAN_RESULT_TYPE_ORDER = {
     "neutral": 0,
     "hero": 1,
@@ -416,6 +417,39 @@ class NearbyScanTarget:
     @property
     def position(self) -> Tuple[int, int, int]:
         return self.x, self.y, self.z
+
+
+@dataclass(frozen=True)
+class NearbyScanEstimate:
+    scan_target: NearbyScanTarget
+    enemy_army: Tuple[Tuple[Creature, int], ...]
+    enemy_ai_value: int
+    win_pct: Optional[float] = None
+    note: str = ""
+
+    @property
+    def target_type(self) -> str:
+        return self.scan_target.target_type
+
+    @property
+    def distance(self) -> int:
+        return self.scan_target.distance
+
+    @property
+    def x(self) -> int:
+        return self.scan_target.x
+
+    @property
+    def y(self) -> int:
+        return self.scan_target.y
+
+    @property
+    def z(self) -> int:
+        return self.scan_target.z
+
+    @property
+    def position(self) -> Tuple[int, int, int]:
+        return self.scan_target.position
 
 
 class NearbyScanError(ValueError):
@@ -642,6 +676,148 @@ def build_nearby_scan_targets(
                 results.append(scan_target)
 
     return tuple(sorted(results, key=_nearby_scan_sort_key))
+
+
+def estimate_nearby_scan_targets(
+    selected_hero: h3_save_parser.HeroArmy,
+    scan_targets,
+    simulations: int = DEFAULT_SCAN_SIMULATIONS,
+) -> Tuple[NearbyScanEstimate, ...]:
+    """Run compact battle estimates for nearby scan targets."""
+
+    if simulations <= 0:
+        raise NearbyScanError(f"simulations must be positive: {simulations}")
+
+    player_army = _hero_army_to_combat_army(selected_hero)
+    if not player_army:
+        raise NearbyScanError("selected hero has no army stacks")
+
+    estimates = []
+    for scan_target in scan_targets:
+        try:
+            enemy_army, note = _scan_target_enemy_army(scan_target)
+        except Exception as exc:
+            estimates.append(
+                NearbyScanEstimate(
+                    scan_target=scan_target,
+                    enemy_army=(),
+                    enemy_ai_value=0,
+                    win_pct=None,
+                    note=f"estimation failed: {exc}",
+                )
+            )
+            continue
+
+        enemy_ai_value = ai_value_total(list(enemy_army)) if enemy_army else 0
+        if not enemy_army:
+            estimates.append(
+                NearbyScanEstimate(
+                    scan_target=scan_target,
+                    enemy_army=(),
+                    enemy_ai_value=enemy_ai_value,
+                    win_pct=None,
+                    note=note,
+                )
+            )
+            continue
+
+        try:
+            win_pct = run_simulations(
+                list(player_army),
+                list(enemy_army),
+                simulations,
+                verbose_first=False,
+            )
+        except Exception as exc:
+            estimates.append(
+                NearbyScanEstimate(
+                    scan_target=scan_target,
+                    enemy_army=enemy_army,
+                    enemy_ai_value=enemy_ai_value,
+                    win_pct=None,
+                    note=f"estimation failed: {exc}",
+                )
+            )
+            continue
+
+        estimates.append(
+            NearbyScanEstimate(
+                scan_target=scan_target,
+                enemy_army=enemy_army,
+                enemy_ai_value=enemy_ai_value,
+                win_pct=win_pct,
+                note=note,
+            )
+        )
+
+    return tuple(estimates)
+
+
+def _hero_army_to_combat_army(
+    hero_army: h3_save_parser.HeroArmy,
+) -> Tuple[Tuple[Creature, int], ...]:
+    return tuple(
+        (stack.creature, stack.count)
+        for stack in hero_army.stacks
+        if stack.count > 0
+    )
+
+
+def _scan_target_enemy_army(
+    scan_target: NearbyScanTarget,
+) -> Tuple[Tuple[Tuple[Creature, int], ...], str]:
+    if scan_target.target_type == "neutral":
+        return _neutral_scan_target_enemy_army(scan_target)
+    if scan_target.target_type == "hero":
+        return _hero_scan_target_enemy_army(scan_target)
+    return (), f"unsupported scan target type: {scan_target.target_type}"
+
+
+def _neutral_scan_target_enemy_army(
+    scan_target: NearbyScanTarget,
+) -> Tuple[Tuple[Tuple[Creature, int], ...], str]:
+    target = scan_target.target
+    note = _scan_target_base_note(scan_target)
+    unsupported_note = _unsupported_neutral_note(target)
+
+    if target.estimator_creature_id is None:
+        return (), unsupported_note
+    if (
+        target.estimator_creature_id < 0
+        or target.estimator_creature_id >= len(CREATURES)
+    ):
+        return (), unsupported_note
+    if target.count <= 0:
+        return (), f"unsupported neutral count: {target.count}"
+
+    creature = CREATURES[target.estimator_creature_id]
+    return ((creature, target.count),), note
+
+
+def _hero_scan_target_enemy_army(
+    scan_target: NearbyScanTarget,
+) -> Tuple[Tuple[Tuple[Creature, int], ...], str]:
+    enemy_army = _hero_army_to_combat_army(scan_target.target.army)
+    if not enemy_army:
+        return (), f"unsupported hero target: {scan_target.target.hero_name} has no army"
+    return enemy_army, _scan_target_base_note(scan_target)
+
+
+def _scan_target_base_note(scan_target: NearbyScanTarget) -> str:
+    notes = []
+    if scan_target.target_type == "hero":
+        notes.append("army-only")
+    if scan_target.target_type == "neutral" and scan_target.target.removed:
+        notes.append("removed/debug")
+    return "; ".join(notes)
+
+
+def _unsupported_neutral_note(target) -> str:
+    animation_file = target.template.animation_file
+    return (
+        "unsupported neutral creature: "
+        f"{animation_file}/subid {target.h3m_subid}"
+    )
 
 
 def _build_scan_target(

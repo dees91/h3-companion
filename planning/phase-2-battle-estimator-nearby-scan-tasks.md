@@ -663,6 +663,26 @@ identity model.
 2. CLI smoke test confirms every listed target has a `win%` or an unsupported
    note.
 
+**Completion Notes (2026-05-19):**
+- Added `DEFAULT_SCAN_SIMULATIONS = 500`, `NearbyScanEstimate`, and
+  `estimate_nearby_scan_targets()` in `tools/battle_estimator.py`.
+- Neutral targets are estimated as one mapped enemy stack using
+  `estimator_creature_id` plus H3M count; hero targets are estimated from the
+  parsed target hero army and marked `army-only`.
+- Unsupported neutral mappings, invalid neutral counts, empty hero target
+  armies, and per-target simulation exceptions return `win_pct=None` with a
+  clear note instead of stopping the scan.
+- Added deterministic tests with monkeypatched `run_simulations` for neutral
+  and hero conversion, default scan simulations, `--simulations`-style
+  overrides, unsupported target notes, per-target error isolation, and global
+  input validation.
+- Verified with `python3 -m unittest tests.test_nearby_scan
+  tests.test_h3_map_parser tests.test_h3_save_parser`, `git diff --check`,
+  and `python3 -m unittest discover -s tests`.
+- Helper-level local smoke on `post_attack_2.GM1` radius-10 neutral scan
+  confirmed every estimate has either `win_pct` or an unsupported note. The
+  user-facing CLI smoke remains part of NS-T09, where `--scan-nearby` is added.
+
 ---
 
 ### NS-T09: CLI Output and Arguments
@@ -769,6 +789,6 @@ H3M-to-save object identity.
 | NS-T05: Other Hero Target Extraction | done | NS-T04 | Codex | Other-hero target records implemented. |
 | NS-T06: Removed Neutral Detection | done | NS-T02 | Codex | Removed neutral detection and filtering implemented. |
 | NS-T07: Nearby Target Scan Service | done | NS-T02, NS-T03, NS-T04, NS-T05, NS-T06 | Codex | Nearby scan service implemented. |
-| NS-T08: Per-Target Estimation Runner | todo | NS-T07 | unassigned | Compact scan estimates. |
-| NS-T09: CLI Output and Arguments | blocked | NS-T08 | unassigned | User-facing scan command. |
+| NS-T08: Per-Target Estimation Runner | done | NS-T07 | Codex | Compact per-target estimation implemented. |
+| NS-T09: CLI Output and Arguments | todo | NS-T08 | unassigned | User-facing scan command. |
 | NS-T10: Documentation and Verification Pass | blocked | NS-T09 | unassigned | Final docs and tests. |

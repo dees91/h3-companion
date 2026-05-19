@@ -1,14 +1,21 @@
 import unittest
+from unittest.mock import patch
 
 from tools import battle_estimator
 from tools import h3_map_parser
 from tools import h3_save_parser
 
 
-def _hero_army(hero_name, position=None, source_offset=0):
+_DEFAULT_ESTIMATOR_CREATURE_ID = object()
+
+
+def _hero_army(hero_name, position=None, source_offset=0, stack_specs=((0, 1),)):
     return h3_save_parser.HeroArmy(
         hero_name=hero_name,
-        stacks=(h3_save_parser.HeroStack.from_creature_id(0, 1),),
+        stacks=tuple(
+            h3_save_parser.HeroStack.from_creature_id(creature_id, count)
+            for creature_id, count in stack_specs
+        ),
         source_offset=source_offset,
         position=(
             None
@@ -18,8 +25,8 @@ def _hero_army(hero_name, position=None, source_offset=0):
     )
 
 
-def _hero_target(hero_name, position, source_offset):
-    army = _hero_army(hero_name, position, source_offset)
+def _hero_target(hero_name, position, source_offset, stack_specs=((0, 1),)):
+    army = _hero_army(hero_name, position, source_offset, stack_specs)
     return h3_save_parser.HeroTarget(
         hero_name=hero_name,
         position=army.position,
@@ -33,7 +40,11 @@ def _neutral_target(
     h3m_subid=98,
     count=1,
     creature_name="Gnoll",
+    estimator_creature_id=_DEFAULT_ESTIMATOR_CREATURE_ID,
 ):
+    if estimator_creature_id is _DEFAULT_ESTIMATOR_CREATURE_ID:
+        estimator_creature_id = h3m_subid
+
     template = h3_map_parser.H3ObjectTemplate(
         template_index=object_index,
         animation_file=f"AVW{object_index}.def",
@@ -54,7 +65,7 @@ def _neutral_target(
         h3m_subid=h3m_subid,
         count=count,
         creature_name=creature_name,
-        estimator_creature_id=h3m_subid,
+        estimator_creature_id=estimator_creature_id,
     )
 
 
@@ -209,6 +220,178 @@ class NearbyScanServiceTests(unittest.TestCase):
         self.assertIn("removed-save-record@946676", {
             target.removal_note for target in removed_debug_targets
         })
+
+    def test_estimate_nearby_scan_targets_estimates_neutral_and_hero_targets(self):
+        selected = _hero_army("Isra", (39, 69, 1))
+        neutral = _neutral_target(2393, (39, 70, 1), 98, 37, "Gnoll")
+        hero = _hero_target("Marius", (39, 71, 1), 102, stack_specs=((1, 3),))
+        scan_targets = battle_estimator.build_nearby_scan_targets(
+            selected,
+            neutral_targets=(neutral,),
+            hero_targets=(hero,),
+            radius=10,
+        )
+
+        with patch.object(
+            battle_estimator,
+            "run_simulations",
+            side_effect=(91.5, 72.0),
+        ) as run_mock:
+            estimates = battle_estimator.estimate_nearby_scan_targets(
+                selected,
+                scan_targets,
+                simulations=123,
+            )
+
+        self.assertEqual([estimate.win_pct for estimate in estimates], [91.5, 72.0])
+        self.assertEqual(estimates[0].target_type, "neutral")
+        self.assertEqual(estimates[0].enemy_army, (
+            (battle_estimator.CREATURES[98], 37),
+        ))
+        self.assertEqual(
+            estimates[0].enemy_ai_value,
+            battle_estimator.CREATURES[98].ai_value * 37,
+        )
+        self.assertEqual(estimates[0].note, "")
+        self.assertEqual(estimates[1].target_type, "hero")
+        self.assertEqual(estimates[1].note, "army-only")
+        self.assertEqual(estimates[1].enemy_army, (
+            (battle_estimator.CREATURES[1], 3),
+        ))
+        self.assertEqual(run_mock.call_count, 2)
+        self.assertTrue(all(call.args[2] == 123 for call in run_mock.call_args_list))
+        self.assertEqual(run_mock.call_args_list[1].args[1], [
+            (battle_estimator.CREATURES[1], 3),
+        ])
+        self.assertTrue(all(
+            call.kwargs == {"verbose_first": False}
+            for call in run_mock.call_args_list
+        ))
+
+    def test_estimate_nearby_scan_targets_uses_default_scan_simulations(self):
+        selected = _hero_army("Isra", (39, 69, 1))
+        neutral = _neutral_target(2393, (39, 70, 1), 98, 37, "Gnoll")
+        scan_targets = battle_estimator.build_nearby_scan_targets(
+            selected,
+            neutral_targets=(neutral,),
+            radius=10,
+            target_type="neutral",
+        )
+
+        with patch.object(
+            battle_estimator,
+            "run_simulations",
+            return_value=80.0,
+        ) as run_mock:
+            estimates = battle_estimator.estimate_nearby_scan_targets(
+                selected,
+                scan_targets,
+            )
+
+        self.assertEqual(estimates[0].win_pct, 80.0)
+        self.assertEqual(
+            run_mock.call_args.args[2],
+            battle_estimator.DEFAULT_SCAN_SIMULATIONS,
+        )
+
+    def test_estimate_nearby_scan_targets_marks_unsupported_neutrals(self):
+        selected = _hero_army("Isra", (39, 69, 1))
+        unknown = _neutral_target(
+            2401,
+            (39, 70, 1),
+            104,
+            20,
+            creature_name=None,
+            estimator_creature_id=None,
+        )
+        out_of_range = _neutral_target(
+            2402,
+            (40, 70, 1),
+            104,
+            20,
+            creature_name="Bad Mapping",
+            estimator_creature_id=len(battle_estimator.CREATURES),
+        )
+        scan_targets = battle_estimator.build_nearby_scan_targets(
+            selected,
+            neutral_targets=(unknown, out_of_range),
+            radius=10,
+            target_type="neutral",
+        )
+
+        with patch.object(battle_estimator, "run_simulations") as run_mock:
+            estimates = battle_estimator.estimate_nearby_scan_targets(
+                selected,
+                scan_targets,
+            )
+
+        run_mock.assert_not_called()
+        self.assertEqual([estimate.win_pct for estimate in estimates], [None, None])
+        self.assertTrue(all(estimate.enemy_army == () for estimate in estimates))
+        self.assertTrue(all(estimate.enemy_ai_value == 0 for estimate in estimates))
+        self.assertTrue(all(
+            estimate.note.startswith("unsupported neutral creature:")
+            for estimate in estimates
+        ))
+
+    def test_estimate_nearby_scan_targets_keeps_going_after_target_error(self):
+        selected = _hero_army("Isra", (39, 69, 1))
+        bad_target = _neutral_target(2393, (39, 70, 1), 98, 37, "Gnoll")
+        good_target = _neutral_target(2330, (40, 73, 1), 29, 32, "Master Gremlin")
+        scan_targets = battle_estimator.build_nearby_scan_targets(
+            selected,
+            neutral_targets=(bad_target, good_target),
+            radius=10,
+            target_type="neutral",
+        )
+
+        def fake_run_simulations(player_army, enemy_army, simulations, verbose_first=False):
+            if enemy_army[0][1] == 37:
+                raise RuntimeError("boom")
+            return 64.0
+
+        with patch.object(
+            battle_estimator,
+            "run_simulations",
+            side_effect=fake_run_simulations,
+        ):
+            estimates = battle_estimator.estimate_nearby_scan_targets(
+                selected,
+                scan_targets,
+                simulations=123,
+            )
+
+        self.assertIsNone(estimates[0].win_pct)
+        self.assertEqual(estimates[0].note, "estimation failed: boom")
+        self.assertEqual(estimates[1].win_pct, 64.0)
+        self.assertEqual(estimates[1].note, "")
+        self.assertTrue(all(
+            estimate.win_pct is not None or estimate.note
+            for estimate in estimates
+        ))
+
+    def test_estimate_nearby_scan_targets_validates_global_inputs(self):
+        selected = _hero_army("Isra", (39, 69, 1))
+        empty_selected = h3_save_parser.HeroArmy(
+            hero_name="Isra",
+            stacks=(),
+            position=h3_save_parser.HeroPosition(39, 69, 1),
+        )
+
+        with self.assertRaisesRegex(
+            battle_estimator.NearbyScanError,
+            "positive",
+        ):
+            battle_estimator.estimate_nearby_scan_targets(
+                selected,
+                (),
+                simulations=0,
+            )
+        with self.assertRaisesRegex(
+            battle_estimator.NearbyScanError,
+            "army stacks",
+        ):
+            battle_estimator.estimate_nearby_scan_targets(empty_selected, ())
 
     def test_build_nearby_scan_targets_validates_inputs(self):
         selected_without_position = _hero_army("Isra")
