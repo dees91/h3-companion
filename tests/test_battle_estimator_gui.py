@@ -159,12 +159,19 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             app_js.index("function simulateTarget("):
             app_js.index("function matchRecentHeroName(")
         ]
+        scan_result_body = app_js[
+            app_js.index("function selectScanResult("):
+            app_js.index("function runRadiusScan(")
+        ]
         self.assertNotIn("setHealth(", load_state_body)
         self.assertIn("renderRecentHeroes(heroState.recentHeroes);", select_hero_body)
         self.assertNotIn("selectedHeroId =", simulate_target_body)
         self.assertNotIn("/api/select-hero", simulate_target_body)
         self.assertIn("estimateState.requestId", simulate_target_body)
         self.assertIn("isFreshEstimatePayload(", simulate_target_body)
+        self.assertNotIn("selectedHeroId =", scan_result_body)
+        self.assertNotIn("/api/simulate-target", scan_result_body)
+        self.assertIn("renderEstimateResult({", scan_result_body)
         self.assertIn('setText(elements.mode, "Snapshot unavailable")', app_js)
         self.assertIn('renderRecentHeroes([])', app_js)
         for expected in (
@@ -190,21 +197,33 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "recentHeroChipState",
             "formatWinPct",
             "isFreshEstimatePayload",
+            "isFreshScanPayload",
+            "scanClassForWinPct",
+            "scanResultLookup",
             "simulationClickDecision",
+            "sortedScanResults",
             "verdictForWinPct",
             "typeof winPct === \"number\"",
             "ambiguous in this snapshot",
             "is not in this snapshot",
             "Selected hero is not a simulation target.",
+            "Scan response did not match the current request.",
             'addEventListener("input"',
             '"/api/select-hero"',
-            '"/api/simulate-target"'
+            '"/api/simulate-target"',
+            '"/api/scan-radius"'
         ):
             self.assertIn(expected, app_js)
         for expected in (
             'id="hero-search"',
             'id="recent-heroes"',
             'id="hero-list"',
+            'id="scan-radius"',
+            'id="scan-target-type"',
+            'id="scan-button"',
+            'value="all"',
+            'value="neutral"',
+            'value="hero"',
         ):
             self.assertIn(expected, index_html)
         for expected in (
@@ -213,9 +232,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".hero-item.selected",
             ".estimate-grid",
             ".result-box.error",
+            ".scan-result",
+            ".scan-result.strong",
         ):
             self.assertIn(expected, style_css)
-        self.assertNotIn("/api/scan-radius", app_js)
         self.assertNotIn("owner_id", app_js)
         self.assertNotIn("team_id", app_js)
 
@@ -348,6 +368,48 @@ assert.strictEqual(
     "hero:512"
   ),
   "Marius (hero:512)"
+);
+assert.strictEqual(helpers.scanClassForWinPct(null), "unsupported");
+assert.strictEqual(helpers.scanClassForWinPct(0), "danger");
+assert.strictEqual(helpers.scanClassForWinPct(30), "risky");
+assert.strictEqual(helpers.scanClassForWinPct(70), "likely");
+assert.strictEqual(helpers.scanClassForWinPct(90), "strong");
+const sorted = helpers.sortedScanResults([
+  {{ target_id: "neutral:2", distance: 4 }},
+  {{ target_id: "neutral:1", distance: 1 }},
+  {{ target_id: "hero:3", distance: 1 }}
+]);
+assert.deepStrictEqual(sorted.map((item) => item.target_id), [
+  "hero:3",
+  "neutral:1",
+  "neutral:2"
+]);
+const lookup = helpers.scanResultLookup(sorted);
+assert.strictEqual(lookup.get("neutral:2").distance, 4);
+const scanRequest = {{ requestId: 5, heroId: "hero:256", radius: 10, targetType: "all" }};
+assert.strictEqual(
+  helpers.isFreshScanPayload(
+    {{ hero_id: "hero:256", radius: 10, target_type: "all" }},
+    scanRequest,
+    5
+  ),
+  true
+);
+assert.strictEqual(
+  helpers.isFreshScanPayload(
+    {{ hero_id: "hero:256", radius: 11, target_type: "all" }},
+    scanRequest,
+    5
+  ),
+  false
+);
+assert.strictEqual(
+  helpers.isFreshScanPayload(
+    {{ hero_id: "hero:512", radius: 10, target_type: "all" }},
+    scanRequest,
+    5
+  ),
+  false
 );
 """
         completed = subprocess.run(

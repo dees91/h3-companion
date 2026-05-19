@@ -713,6 +713,28 @@ payloads are stable.
 1. API test for `/api/scan-radius`.
 2. Manual browser check for marker coloring and result-list navigation.
 
+**Completion Notes (2026-05-19):**
+- Replaced placeholder radius controls with enabled scan radius, target type
+  (`all`, `neutral`, `hero`), and run controls once a snapshot and selected
+  hero are available.
+- Wired scans to `POST /api/scan-radius` with selected hero, radius, and target
+  type while relying on the backend default simulation count.
+- Added scan request gating by request id, hero id, radius, and target type;
+  stale or mismatched responses fail visibly and re-enable controls.
+- Rendered distance-sorted scan results with target labels, distance, win
+  percentage or unsupported status, enemy AI value, and notes.
+- Added target-id scan result lookup for canvas marker coloring without mutating
+  snapshot objects; selected hero highlighting remains dominant.
+- Added scan-result clicks that center/activate markers when present, show a
+  no-marker fallback when absent, and render the scan estimate directly without
+  calling `/api/simulate-target`.
+- Added helper smoke coverage for scan classification, sorting, lookup, and
+  stale response checks.
+- Verified with `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest discover -s tests`,
+  `node --check tools/battle_estimator_gui/app.js`,
+  `python3 tools/battle_estimator.py --help`, and `git diff --check`.
+
 ---
 
 ### GUI-T10: Save Picker + Auto Refresh
@@ -855,6 +877,6 @@ structure and frontend test strategy.
 | GUI-T06: Canvas Map Rendering | done | GUI-T04, GUI-T05 | Codex | Canvas grid, pan/zoom, marker drawing, hit testing, and target details added. |
 | GUI-T07: Hero Search + Recent Selection | done | GUI-T03, GUI-T04, GUI-T05 | Codex | Search, recent hero selection, persistence, selected highlighting, and map recentering added. |
 | GUI-T08: Click Target Simulation | done | GUI-T04, GUI-T06, GUI-T07 | Codex | Marker clicks run selected-hero target estimates with stale response guards and structured result rendering. |
-| GUI-T09: Radius Scan Visualization | todo | GUI-T04, GUI-T06, GUI-T07 | unassigned | Scan overlay and result list. |
+| GUI-T09: Radius Scan Visualization | done | GUI-T04, GUI-T06, GUI-T07 | Codex | Radius scans render sorted results, marker coloring, and result navigation. |
 | GUI-T10: Save Picker + Auto Refresh | todo | GUI-T02, GUI-T04, GUI-T05 | unassigned | Follow latest and pinned save. |
 | GUI-T11: End-to-End Polish + Docs | blocked | GUI-T08, GUI-T09, GUI-T10 | unassigned | Final verification pass. |

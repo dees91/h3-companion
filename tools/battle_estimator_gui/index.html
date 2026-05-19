@@ -87,16 +87,19 @@
         <section class="panel-section">
           <h2>Radius Scan</h2>
           <div class="scan-controls" aria-label="Radius scan controls">
-            <label>
+            <label for="scan-radius">
               Radius
-              <input type="number" value="10" min="0" max="200" disabled>
+              <input id="scan-radius" type="number" value="10" min="0" max="200" disabled>
             </label>
-            <label>
+            <label for="scan-target-type">
               Target type
-              <select disabled>
-                <option>All</option>
+              <select id="scan-target-type" disabled>
+                <option value="all">All</option>
+                <option value="neutral">Neutral</option>
+                <option value="hero">Hero</option>
               </select>
             </label>
+            <button id="scan-button" class="secondary-button" type="button" disabled>Run Scan</button>
           </div>
           <div id="scan-state" class="list-stack">
             <p class="empty-state">No scan results.</p>

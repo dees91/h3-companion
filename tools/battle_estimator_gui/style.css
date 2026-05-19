@@ -465,6 +465,48 @@ canvas.has-marker-hover {
   margin-top: 4px;
 }
 
+.scan-controls .secondary-button {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.scan-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scan-result:hover,
+.scan-result:focus-visible {
+  border-color: #758195;
+  background: #f3f6fa;
+}
+
+.scan-result.strong {
+  box-shadow: inset 3px 0 0 #2f9e44;
+}
+
+.scan-result.likely {
+  box-shadow: inset 3px 0 0 #65a30d;
+}
+
+.scan-result.risky {
+  box-shadow: inset 3px 0 0 #d99a21;
+}
+
+.scan-result.danger {
+  box-shadow: inset 3px 0 0 #d34a3f;
+}
+
+.scan-result.unsupported {
+  box-shadow: inset 3px 0 0 #8b95a3;
+}
+
+.error-text {
+  color: #8a2c2c;
+}
+
 @media (max-width: 1080px) {
   .topbar {
     grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);

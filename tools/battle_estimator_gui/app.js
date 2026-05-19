@@ -18,6 +18,9 @@
     mapOverlayDetail: document.getElementById("map-overlay-detail"),
     targetState: document.getElementById("target-state"),
     estimateState: document.getElementById("estimate-state"),
+    scanRadius: document.getElementById("scan-radius"),
+    scanTargetType: document.getElementById("scan-target-type"),
+    scanButton: document.getElementById("scan-button"),
     scanState: document.getElementById("scan-state"),
     canvas: document.getElementById("battle-map"),
     zoom: document.getElementById("zoom-status")
@@ -45,6 +48,15 @@
   const estimateState = {
     requestId: 0,
     runningTargetId: null
+  };
+  const scanState = {
+    requestId: 0,
+    running: false,
+    heroId: null,
+    radius: null,
+    targetType: "all",
+    results: [],
+    resultByTargetId: new Map()
   };
 
   function setHealth(text, className) {
@@ -268,6 +280,18 @@
     const marker = mapView.markers.find((candidate) => (
       candidate.type === "hero" && candidate.id === heroId
     ));
+    return centerOnMarker(marker);
+  }
+
+  function centerOnMarkerId(targetId) {
+    const marker = mapView.markers.find((candidate) => candidate.id === targetId);
+    if (centerOnMarker(marker)) {
+      return marker;
+    }
+    return null;
+  }
+
+  function centerOnMarker(marker) {
     if (!marker) {
       return false;
     }
@@ -335,14 +359,19 @@
       const radius = markerScreenRadius(marker, mapView) - 3;
       const isActive = marker.id === mapView.activeMarkerId;
       const isHover = marker.id === mapView.hoveredMarkerId;
+      const scanColors = scanColorsForMarker(marker);
 
       canvasContext.save();
       canvasContext.globalAlpha = marker.removed ? 0.45 : 1;
       if (marker.type === "hero") {
         canvasContext.translate(screen.x, screen.y);
         canvasContext.rotate(Math.PI / 4);
-        canvasContext.fillStyle = marker.selected ? "#f5c542" : "#2d6cdf";
-        canvasContext.strokeStyle = marker.selected ? "#7a4d00" : "#143a75";
+        canvasContext.fillStyle = marker.selected
+          ? "#f5c542"
+          : (scanColors ? scanColors.fill : "#2d6cdf");
+        canvasContext.strokeStyle = marker.selected
+          ? "#7a4d00"
+          : (scanColors ? scanColors.stroke : "#143a75");
         canvasContext.lineWidth = marker.selected ? 3 : 2;
         canvasContext.fillRect(-radius, -radius, radius * 2, radius * 2);
         canvasContext.strokeRect(-radius, -radius, radius * 2, radius * 2);
@@ -357,8 +386,12 @@
         }
       } else {
         canvasContext.beginPath();
-        canvasContext.fillStyle = marker.unsupported ? "#8b95a3" : "#c2413d";
-        canvasContext.strokeStyle = marker.removed ? "#4b5563" : "#7a1f1c";
+        canvasContext.fillStyle = scanColors
+          ? scanColors.fill
+          : (marker.unsupported ? "#8b95a3" : "#c2413d");
+        canvasContext.strokeStyle = scanColors
+          ? scanColors.stroke
+          : (marker.removed ? "#4b5563" : "#7a1f1c");
         canvasContext.lineWidth = marker.unsupported || marker.removed ? 3 : 2;
         canvasContext.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
         canvasContext.fill();
@@ -487,6 +520,49 @@
     return "Strong advantage";
   }
 
+  function scanClassForWinPct(winPct) {
+    if (typeof winPct !== "number") {
+      return "unsupported";
+    }
+    if (winPct < 30) {
+      return "danger";
+    }
+    if (winPct < 70) {
+      return "risky";
+    }
+    if (winPct < 90) {
+      return "likely";
+    }
+    return "strong";
+  }
+
+  function scanColorsForClass(className) {
+    if (className === "strong") {
+      return { fill: "#2f9e44", stroke: "#14532d" };
+    }
+    if (className === "likely") {
+      return { fill: "#65a30d", stroke: "#365314" };
+    }
+    if (className === "risky") {
+      return { fill: "#d99a21", stroke: "#7c4a03" };
+    }
+    if (className === "danger") {
+      return { fill: "#d34a3f", stroke: "#7f1d1d" };
+    }
+    return { fill: "#8b95a3", stroke: "#4b5563" };
+  }
+
+  function scanColorsForMarker(marker) {
+    if (!marker || marker.selected) {
+      return null;
+    }
+    const result = scanState.resultByTargetId.get(marker.id);
+    if (!result) {
+      return null;
+    }
+    return scanColorsForClass(scanClassForWinPct(result.win_pct));
+  }
+
   function estimateTargetLabel(estimate, targetId) {
     const target = estimate.target || {};
     if (estimate.target_type === "neutral") {
@@ -599,6 +675,201 @@
       .finally(() => {
         if (requestId === estimateState.requestId) {
           estimateState.runningTargetId = null;
+        }
+      });
+  }
+
+  function parseScanRadius() {
+    const rawValue = String(elements.scanRadius.value || "").trim();
+    if (!rawValue) {
+      return null;
+    }
+    const value = Number(rawValue);
+    if (!Number.isInteger(value) || value < 0 || value > 200) {
+      return null;
+    }
+    return value;
+  }
+
+  function sortedScanResults(results) {
+    return (results || []).slice().sort((left, right) => {
+      const leftDistance = typeof left.distance === "number" ? left.distance : Number.MAX_SAFE_INTEGER;
+      const rightDistance = typeof right.distance === "number" ? right.distance : Number.MAX_SAFE_INTEGER;
+      if (leftDistance !== rightDistance) {
+        return leftDistance - rightDistance;
+      }
+      return String(left.target_id || "").localeCompare(String(right.target_id || ""));
+    });
+  }
+
+  function scanResultLookup(results) {
+    const lookup = new Map();
+    (results || []).forEach((result) => {
+      if (result.target_id) {
+        lookup.set(result.target_id, result);
+      }
+    });
+    return lookup;
+  }
+
+  function isFreshScanPayload(payload, request, currentRequestId) {
+    return Boolean(
+      payload
+      && request
+      && request.requestId === currentRequestId
+      && payload.hero_id === request.heroId
+      && payload.radius === request.radius
+      && payload.target_type === request.targetType
+    );
+  }
+
+  function updateScanControls() {
+    const hasSnapshot = Boolean(mapView.snapshot);
+    const canRun = hasSnapshot && Boolean(heroState.selectedHeroId) && !scanState.running;
+    elements.scanRadius.disabled = !hasSnapshot || scanState.running;
+    elements.scanTargetType.disabled = !hasSnapshot || scanState.running;
+    elements.scanButton.disabled = !canRun;
+  }
+
+  function clearScanResults(message) {
+    scanState.requestId += 1;
+    scanState.running = false;
+    scanState.heroId = null;
+    scanState.radius = null;
+    scanState.targetType = elements.scanTargetType.value || "all";
+    scanState.results = [];
+    scanState.resultByTargetId = new Map();
+    appendEmpty(elements.scanState, message || "No scan results.");
+    updateScanControls();
+    drawMap();
+  }
+
+  function setScanMessage(message, className) {
+    clearNode(elements.scanState);
+    const item = document.createElement("p");
+    item.className = className || "empty-state";
+    item.textContent = message;
+    elements.scanState.appendChild(item);
+  }
+
+  function renderScanResults(payload) {
+    const results = sortedScanResults(payload.results || []);
+    scanState.running = false;
+    scanState.heroId = payload.hero_id;
+    scanState.radius = payload.radius;
+    scanState.targetType = payload.target_type;
+    scanState.results = results;
+    scanState.resultByTargetId = scanResultLookup(results);
+    clearNode(elements.scanState);
+
+    if (results.length === 0) {
+      appendEmpty(elements.scanState, "No targets in radius.");
+      updateScanControls();
+      drawMap();
+      return;
+    }
+
+    results.forEach((result) => {
+      const row = document.createElement("button");
+      const scanClass = scanClassForWinPct(result.win_pct);
+      row.type = "button";
+      row.className = `list-item scan-result ${scanClass}`.trim();
+      row.dataset.targetId = result.target_id || "";
+      row.addEventListener("click", () => selectScanResult(result));
+
+      const title = document.createElement("div");
+      title.className = "item-title";
+      title.textContent = estimateTargetLabel(result, result.target_id);
+      title.title = title.textContent;
+
+      const meta = document.createElement("div");
+      meta.className = "item-meta";
+      meta.textContent = [
+        `d ${formatNumber(result.distance)}`,
+        formatWinPct(result.win_pct),
+        `AI ${formatNumber(result.enemy_ai_value)}`,
+        result.note || verdictForWinPct(result.win_pct)
+      ].join(" | ");
+      meta.title = meta.textContent;
+
+      row.appendChild(title);
+      row.appendChild(meta);
+      elements.scanState.appendChild(row);
+    });
+
+    updateScanControls();
+    drawMap();
+  }
+
+  function selectScanResult(result) {
+    const marker = centerOnMarkerId(result.target_id);
+    mapView.activeMarkerId = result.target_id || null;
+    if (marker) {
+      setTargetDetails(marker);
+    } else {
+      elements.targetState.textContent = `${result.target_type || "target"} ${result.target_id || "unknown"} | no map marker`;
+      elements.targetState.title = "Scan result has no marker in the current snapshot.";
+    }
+    renderEstimateResult({
+      hero_id: scanState.heroId || heroState.selectedHeroId,
+      target_id: result.target_id,
+      estimate: result
+    });
+    drawMap();
+  }
+
+  function runRadiusScan() {
+    const radius = parseScanRadius();
+    const targetType = elements.scanTargetType.value || "all";
+    if (!heroState.selectedHeroId) {
+      setScanMessage("Select a hero before scanning.");
+      return;
+    }
+    if (radius === null) {
+      setScanMessage("Radius must be an integer from 0 to 200.", "empty-state error-text");
+      return;
+    }
+
+    const request = {
+      requestId: scanState.requestId + 1,
+      heroId: heroState.selectedHeroId,
+      radius,
+      targetType
+    };
+    scanState.requestId = request.requestId;
+    scanState.running = true;
+    updateScanControls();
+    setScanMessage("Running scan...", "empty-state");
+
+    postJson(
+      "/api/scan-radius",
+      {
+        hero_id: request.heroId,
+        radius: request.radius,
+        target_type: request.targetType
+      },
+      "radius scan failed"
+    )
+      .then((payload) => {
+        if (!isFreshScanPayload(payload, request, scanState.requestId)) {
+          if (request.requestId === scanState.requestId) {
+            scanState.running = false;
+            setScanMessage("Scan response did not match the current request.", "empty-state error-text");
+            updateScanControls();
+          }
+          return;
+        }
+        renderScanResults(payload);
+      })
+      .catch((error) => {
+        if (request.requestId !== scanState.requestId) {
+          return;
+        }
+        scanState.running = false;
+        setScanMessage(`Scan error: ${error.message}`, "empty-state error-text");
+        updateScanControls();
+        if (error.status === 409) {
+          loadState();
         }
       });
   }
@@ -733,6 +1004,7 @@
       drawMap();
     }
     setEstimateMessage("No simulation run.");
+    clearScanResults("No scan results.");
   }
 
   function selectHero(heroId) {
@@ -800,7 +1072,7 @@
     drawMap();
 
     setEstimateMessage("No simulation run.");
-    appendEmpty(elements.scanState, "No scan results.");
+    clearScanResults("No scan results.");
   }
 
   function renderError(message) {
@@ -816,7 +1088,6 @@
     elements.heroSearch.disabled = true;
     renderRecentHeroes([]);
     appendEmpty(elements.heroList, "Unable to load heroes.");
-    appendEmpty(elements.scanState, "No scan results.");
     setText(elements.mapSummary, "Snapshot unavailable");
     setText(elements.objectCount, "0 targets");
     setText(elements.mapOverlayTitle, "Snapshot unavailable");
@@ -828,11 +1099,13 @@
     invalidateEstimateRequests();
     setTargetDetails(null);
     setEstimateMessage("No simulation run.");
+    clearScanResults("No scan results.");
     drawMap();
   }
 
   function loadState() {
     invalidateEstimateRequests();
+    clearScanResults("No scan results.");
     setText(elements.refresh, "Loading");
     elements.refreshButton.disabled = true;
 
@@ -879,6 +1152,18 @@
   elements.heroSearch.addEventListener("input", () => {
     heroState.searchQuery = elements.heroSearch.value;
     renderHeroes();
+  });
+
+  elements.scanButton.addEventListener("click", () => {
+    runRadiusScan();
+  });
+
+  elements.scanRadius.addEventListener("input", () => {
+    updateScanControls();
+  });
+
+  elements.scanTargetType.addEventListener("change", () => {
+    updateScanControls();
   });
 
   elements.canvas.addEventListener("pointerdown", (event) => {
@@ -972,9 +1257,13 @@
     markerContainsScreenPoint,
     markerScreenRadius,
     recentHeroChipState,
+    scanClassForWinPct,
+    scanResultLookup,
+    sortedScanResults,
     screenToWorld,
     centerOnHero,
     isFreshEstimatePayload,
+    isFreshScanPayload,
     simulationClickDecision,
     verdictForWinPct,
     worldToScreen,
