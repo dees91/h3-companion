@@ -343,6 +343,15 @@ identity model.
 2. Unit test for a synthetic H3M-like byte stream with a prefix before the format ID.
 3. Import smoke test for `battle_estimator.py --help`.
 
+**Completion Notes (2026-05-19):**
+- Added `tools/h3_map_parser.py` with H3M map/header/template/object/neutral
+  target contracts plus a gzip loader for RoE/AB/SoD smoke-level metadata.
+- Added `tests/test_h3_map_parser.py` for offset `0`, offset `43`,
+  path-aware errors, and `battle_estimator.py --help` import smoke.
+- Verified with `python3 -m unittest tests.test_h3_map_parser`,
+  `python3 -m unittest tests.test_h3_save_parser`, and
+  `python3 tools/battle_estimator.py --help`.
+
 ---
 
 ### NS-T02: H3M Neutral Monster Parser
@@ -658,9 +667,9 @@ H3M-to-save object identity.
 
 | Task | Status | Blocked By | Owner | Notes |
 |---|---|---|---|---|
-| NS-T01: H3M Format Contracts | todo | -- | unassigned | Define contracts before parser work. |
-| NS-T02: H3M Neutral Monster Parser | blocked | NS-T01 | unassigned | High-risk: sequential H3M parsing and creature mapping. |
-| NS-T03: H3M Map Auto-Detection | blocked | NS-T01 | unassigned | Needs map contracts and path resolver. |
+| NS-T01: H3M Format Contracts | done | -- | Codex | H3M contracts and smoke loader implemented. |
+| NS-T02: H3M Neutral Monster Parser | todo | NS-T01 | unassigned | High-risk: sequential H3M parsing and creature mapping. |
+| NS-T03: H3M Map Auto-Detection | todo | NS-T01 | unassigned | Needs map contracts and path resolver. |
 | NS-T04: Hero Position Parsing | todo | -- | unassigned | Can be done independently from H3M work. |
 | NS-T05: Other Hero Target Extraction | blocked | NS-T04 | unassigned | Army-only hero targets. |
 | NS-T06: Removed Neutral Detection | blocked | NS-T02 | unassigned | Needs neutral identity model. |
