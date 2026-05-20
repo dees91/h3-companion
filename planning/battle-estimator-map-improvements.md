@@ -384,6 +384,22 @@ subid/faction, initial owner, optional custom name, and garrison presence.
 - [ ] Add parser tests for town extraction and town visitable position.
 - [ ] Run `python3 -m unittest tests.test_h3_map_parser`.
 
+**Completion Notes (2026-05-20):**
+- Added `H3TownTarget` records and `LoadedH3Map.town_targets` for
+  `parse_objects=True`.
+- Parse town-like object IDs `98` and `77` into separate town targets while
+  keeping neutral-monster targets unchanged.
+- Project town marker positions from the first VCMI-order visitable mask tile,
+  falling back to the raw anchor when no visitable tile is present.
+- Exposed stable `object_index`, anchor position, object ID, raw H3M subid,
+  concrete-town faction subid, initial owner, optional custom name, and garrison
+  presence.
+- Added parser tests for SoD town extraction with a later neutral object, random
+  towns, RoE town payloads, visitable-position projection, and
+  `parse_h3m_neutral_monsters` compatibility.
+- Verification: `python3 -m unittest tests.test_h3_map_parser` and
+  `python3 -m unittest`.
+
 **Dependencies:** Task 1
 
 **Files likely touched:**
@@ -802,8 +818,8 @@ After Tasks 9 and 17:
 | 2 | Build The Static Route Layer | done | 1 |
 | 3 | Expose Route Layers In The GUI Snapshot | done | 2 |
 | 4 | Render The Route Overlay | done | 3 |
-| 5 | Parse Town Targets | todo | 1 |
-| 6 | Show Town Markers In The GUI | blocked | 5 |
+| 5 | Parse Town Targets | done | 1 |
+| 6 | Show Town Markers In The GUI | todo | 5 |
 | 7 | Parse Portal Targets And Edges | todo | 1 |
 | 8 | Show Portal Markers And Destinations In The GUI | blocked | 7 |
 | 9 | End-To-End Map Verification | blocked | 4, 6, 8 |

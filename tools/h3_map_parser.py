@@ -40,6 +40,8 @@ H3M_OBJECT_RANDOM_MONSTER_L1 = 72
 H3M_OBJECT_RANDOM_MONSTER_L2 = 73
 H3M_OBJECT_RANDOM_MONSTER_L3 = 74
 H3M_OBJECT_RANDOM_MONSTER_L4 = 75
+H3M_OBJECT_RANDOM_TOWN = 77
+H3M_OBJECT_TOWN = 98
 H3M_OBJECT_ARTIFACT = 5
 H3M_OBJECT_RANDOM_ARTIFACT = 65
 H3M_OBJECT_RANDOM_TREASURE_ARTIFACT = 66
@@ -67,6 +69,11 @@ H3M_MONSTER_OBJECT_IDS = frozenset((
     H3M_OBJECT_RANDOM_MONSTER_L2,
     H3M_OBJECT_RANDOM_MONSTER_L3,
     H3M_OBJECT_RANDOM_MONSTER_L4,
+))
+
+H3M_TOWN_OBJECT_IDS = frozenset((
+    H3M_OBJECT_RANDOM_TOWN,
+    H3M_OBJECT_TOWN,
 ))
 
 H3M_ROUTE_TRANSPARENT_OBJECT_IDS = H3M_MONSTER_OBJECT_IDS | frozenset((
@@ -354,6 +361,26 @@ class H3NeutralMonsterTarget:
 
 
 @dataclass(frozen=True)
+class H3TownTarget:
+    """Town-like target derived from an H3M object."""
+
+    object_index: int
+    x: int
+    y: int
+    z: int
+    anchor_x: int
+    anchor_y: int
+    anchor_z: int
+    template: H3ObjectTemplate
+    object_id: int
+    h3m_subid: int
+    faction_subid: int | None
+    initial_owner: int | None = None
+    custom_name: str | None = None
+    has_garrison: bool = False
+
+
+@dataclass(frozen=True)
 class LoadedH3Map:
     """Decompressed H3M map bytes and parsed smoke-level metadata."""
 
@@ -368,6 +395,7 @@ class LoadedH3Map:
     templates: tuple[H3ObjectTemplate, ...] = field(default_factory=tuple)
     objects: tuple[H3MapObject, ...] = field(default_factory=tuple)
     neutral_targets: tuple[H3NeutralMonsterTarget, ...] = field(default_factory=tuple)
+    town_targets: tuple[H3TownTarget, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -396,6 +424,13 @@ class _ParsedH3MStructures:
     templates: tuple[H3ObjectTemplate, ...]
     objects: tuple[H3MapObject, ...]
     neutral_targets: tuple[H3NeutralMonsterTarget, ...]
+    town_targets: tuple[H3TownTarget, ...]
+
+
+@dataclass(frozen=True)
+class _ObjectPayloadResult:
+    neutral_target: H3NeutralMonsterTarget | None = None
+    town_target: H3TownTarget | None = None
 
 
 class H3MapLoadError(ValueError):
@@ -508,6 +543,7 @@ def load_h3m_bytes(
             templates=parsed.templates,
             objects=parsed.objects,
             neutral_targets=parsed.neutral_targets,
+            town_targets=parsed.town_targets,
         )
 
     header = parse_h3m_header(data, h3m_offset, map_path)
@@ -818,7 +854,7 @@ def _parse_h3m_structures(
     _skip_predefined_heroes(reader, features)
     terrain_tiles = _read_terrain(reader, header)
     templates = _read_object_templates(reader)
-    objects, targets = _read_objects(reader, templates, features)
+    objects, targets, town_targets = _read_objects(reader, templates, features)
     route_tiles = _build_route_tiles(header, terrain_tiles, templates, objects)
     return _ParsedH3MStructures(
         header=header,
@@ -829,6 +865,7 @@ def _parse_h3m_structures(
         templates=templates,
         objects=objects,
         neutral_targets=targets,
+        town_targets=town_targets,
     )
 
 
@@ -1227,10 +1264,15 @@ def _read_objects(
     reader: _H3MReader,
     templates: tuple[H3ObjectTemplate, ...],
     features: _H3MFeatures,
-) -> tuple[tuple[H3MapObject, ...], tuple[H3NeutralMonsterTarget, ...]]:
+) -> tuple[
+    tuple[H3MapObject, ...],
+    tuple[H3NeutralMonsterTarget, ...],
+    tuple[H3TownTarget, ...],
+]:
     count = reader.read_u32("object count")
     objects = []
     neutral_targets = []
+    town_targets = []
     for object_index in range(count):
         x = reader.read_u8(f"object {object_index} x")
         y = reader.read_u8(f"object {object_index} y")
@@ -1252,16 +1294,18 @@ def _read_objects(
         objects.append(map_object)
 
         template = templates[template_index]
-        target = _read_object_payload(
+        payload = _read_object_payload(
             reader,
             features,
             map_object,
             template,
         )
-        if target is not None:
-            neutral_targets.append(target)
+        if payload.neutral_target is not None:
+            neutral_targets.append(payload.neutral_target)
+        if payload.town_target is not None:
+            town_targets.append(payload.town_target)
 
-    return tuple(objects), tuple(neutral_targets)
+    return tuple(objects), tuple(neutral_targets), tuple(town_targets)
 
 
 def _read_object_payload(
@@ -1269,12 +1313,14 @@ def _read_object_payload(
     features: _H3MFeatures,
     map_object: H3MapObject,
     template: H3ObjectTemplate,
-) -> H3NeutralMonsterTarget | None:
+) -> _ObjectPayloadResult:
     object_id = template.object_id
     subid = template.subid
 
     if object_id in H3M_MONSTER_OBJECT_IDS:
-        return _read_monster_target(reader, features, map_object, template)
+        return _ObjectPayloadResult(
+            neutral_target=_read_monster_target(reader, features, map_object, template),
+        )
     if object_id in (34, 62, 70):
         _skip_hero(reader, features, map_object.object_index)
     elif object_id == 26:
@@ -1316,9 +1362,11 @@ def _read_object_payload(
         _skip_quest_guard(reader, features, map_object.object_index)
     elif object_id in (42, 87):
         reader.skip(4, f"object {map_object.object_index} owner")
-    elif object_id in (77, 98):
-        _skip_town(reader, features, map_object.object_index)
-    return None
+    elif object_id in H3M_TOWN_OBJECT_IDS:
+        return _ObjectPayloadResult(
+            town_target=_read_town_target(reader, features, map_object, template),
+        )
+    return _ObjectPayloadResult()
 
 
 def _read_monster_target(
@@ -1651,40 +1699,82 @@ def _skip_quest(
     return mission
 
 
-def _skip_town(
+def _read_town_target(
     reader: _H3MReader,
     features: _H3MFeatures,
-    object_index: int,
-) -> None:
+    map_object: H3MapObject,
+    template: H3ObjectTemplate,
+) -> H3TownTarget:
     if features.level_ab:
-        reader.skip(4, f"object {object_index} town identifier")
-    reader.skip(1, f"object {object_index} town owner")
-    if reader.read_u8(f"object {object_index} town name flag"):
-        reader.read_base_string(f"object {object_index} town name")
-    if reader.read_u8(f"object {object_index} town garrison flag"):
-        _skip_creature_set(reader, features, f"object {object_index} town garrison")
-    reader.skip(1, f"object {object_index} town formation")
-    if reader.read_u8(f"object {object_index} town custom buildings flag"):
-        reader.skip(features.buildings_bytes, f"object {object_index} town built buildings")
-        reader.skip(features.buildings_bytes, f"object {object_index} town forbidden buildings")
+        reader.skip(4, f"object {map_object.object_index} town identifier")
+    raw_owner = reader.read_u8(f"object {map_object.object_index} town owner")
+    initial_owner = raw_owner if 0 <= raw_owner < len(PLAYER_COLOR_NAMES) else None
+    custom_name = None
+    if reader.read_u8(f"object {map_object.object_index} town name flag"):
+        custom_name = reader.read_base_string(f"object {map_object.object_index} town name")
+    has_garrison = bool(reader.read_u8(f"object {map_object.object_index} town garrison flag"))
+    if has_garrison:
+        _skip_creature_set(reader, features, f"object {map_object.object_index} town garrison")
+    reader.skip(1, f"object {map_object.object_index} town formation")
+    if reader.read_u8(f"object {map_object.object_index} town custom buildings flag"):
+        reader.skip(features.buildings_bytes, f"object {map_object.object_index} town built buildings")
+        reader.skip(features.buildings_bytes, f"object {map_object.object_index} town forbidden buildings")
     else:
-        reader.skip(1, f"object {object_index} town fort flag")
+        reader.skip(1, f"object {map_object.object_index} town fort flag")
     if features.level_ab:
-        reader.skip(features.spells_bytes, f"object {object_index} town obligatory spells")
-    reader.skip(features.spells_bytes, f"object {object_index} town possible spells")
-    event_count = reader.read_u32(f"object {object_index} town event count")
+        reader.skip(features.spells_bytes, f"object {map_object.object_index} town obligatory spells")
+    reader.skip(features.spells_bytes, f"object {map_object.object_index} town possible spells")
+    event_count = reader.read_u32(f"object {map_object.object_index} town event count")
     for event_index in range(event_count):
         _skip_map_event_common(
             reader,
             features,
-            f"object {object_index} town event {event_index}",
+            f"object {map_object.object_index} town event {event_index}",
         )
-        reader.skip(features.buildings_bytes, f"object {object_index} town event buildings")
-        reader.skip(14, f"object {object_index} town event creatures")
-        reader.skip(4, f"object {object_index} town event unused")
+        reader.skip(features.buildings_bytes, f"object {map_object.object_index} town event buildings")
+        reader.skip(14, f"object {map_object.object_index} town event creatures")
+        reader.skip(4, f"object {map_object.object_index} town event unused")
     if features.level_sod:
-        reader.skip(1, f"object {object_index} town alignment")
-    reader.skip(3, f"object {object_index} town unused")
+        reader.skip(1, f"object {map_object.object_index} town alignment")
+    reader.skip(3, f"object {map_object.object_index} town unused")
+
+    x, y, z = _project_first_visitable_mask_tile(map_object, template)
+    return H3TownTarget(
+        object_index=map_object.object_index,
+        x=x,
+        y=y,
+        z=z,
+        anchor_x=map_object.x,
+        anchor_y=map_object.y,
+        anchor_z=map_object.z,
+        template=template,
+        object_id=template.object_id,
+        h3m_subid=template.subid,
+        faction_subid=template.subid if template.object_id == H3M_OBJECT_TOWN else None,
+        initial_owner=initial_owner,
+        custom_name=custom_name,
+        has_garrison=has_garrison,
+    )
+
+
+def _project_first_visitable_mask_tile(
+    map_object: H3MapObject,
+    template: H3ObjectTemplate,
+) -> tuple[int, int, int]:
+    for offset_y in range(6):
+        raw_row = 5 - offset_y
+        if raw_row >= len(template.visit_mask):
+            continue
+        row_mask = template.visit_mask[raw_row]
+        for offset_x in range(8):
+            raw_bit = 7 - offset_x
+            if (row_mask >> raw_bit) & 1:
+                return (
+                    map_object.x - offset_x,
+                    map_object.y - offset_y,
+                    map_object.z,
+                )
+    return map_object.x, map_object.y, map_object.z
 
 
 def _skip_map_event_common(

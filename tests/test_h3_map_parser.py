@@ -157,6 +157,134 @@ def _build_minimal_sod_h3m_with_terrain(terrain_tiles, map_size=2, levels=2):
     ))
 
 
+def _object_template_bytes(
+    animation_file,
+    object_id,
+    subid=0,
+    object_type=0,
+    block_mask=b"\xff" * 6,
+    visit_mask=b"\x00" * 6,
+):
+    return b"".join((
+        _base_string(animation_file),
+        block_mask,
+        visit_mask,
+        b"\x00" * 2,
+        (0x01FF).to_bytes(2, "little"),
+        int(object_id).to_bytes(4, "little"),
+        int(subid).to_bytes(4, "little"),
+        bytes([object_type]),
+        b"\x00",
+        b"\x00" * 16,
+    ))
+
+
+def _object_bytes(position, template_index, payload):
+    return b"".join((
+        bytes(position),
+        int(template_index).to_bytes(4, "little"),
+        b"\x00" * 5,
+        payload,
+    ))
+
+
+def _minimal_h3m_with_templates_and_objects(
+    format_version,
+    templates,
+    objects,
+    map_size=1,
+    levels=1,
+):
+    is_sod = format_version == h3_map_parser.H3M_FORMAT_SOD
+    is_ab_or_sod = format_version in (
+        h3_map_parser.H3M_FORMAT_AB,
+        h3_map_parser.H3M_FORMAT_SOD,
+    )
+    header = b"".join((
+        _build_minimal_h3m_header(
+            format_version=format_version,
+            map_size=map_size,
+            levels=levels,
+        ),
+        _base_string("Synthetic Objects"),
+        _base_string(""),
+        b"\x00",  # difficulty
+        b"\x00" if is_ab_or_sod else b"",  # level limit
+    ))
+    disabled_player_tail = 13 if is_sod else (12 if is_ab_or_sod else 6)
+    return b"".join((
+        header,
+        (b"\x00\x00" + (b"\x00" * disabled_player_tail)) * 8,
+        b"\xff",  # standard victory
+        b"\xff",  # standard loss
+        b"\x00",  # no teams
+        b"\x00" * (20 if is_ab_or_sod else 16),  # allowed heroes
+        (0).to_bytes(4, "little") if is_ab_or_sod else b"",  # placeholder heroes
+        b"\x00" if is_sod else b"",  # disposed heroes
+        b"\x00" * 31,  # map options
+        (b"\x00" * 18) if is_sod else ((b"\x00" * 17) if is_ab_or_sod else b""),
+        (b"\x00" * 9 + b"\x00" * 4) if is_sod else b"",  # allowed spells/skills
+        (0).to_bytes(4, "little"),  # rumors
+        b"\x00" * 156 if is_sod else b"",  # predefined heroes
+        b"\x00" * (map_size * map_size * levels * 7),
+        len(templates).to_bytes(4, "little"),
+        b"".join(templates),
+        len(objects).to_bytes(4, "little"),
+        b"".join(objects),
+    ))
+
+
+def _town_payload(
+    format_version=h3_map_parser.H3M_FORMAT_SOD,
+    owner=0,
+    custom_name=None,
+    has_garrison=False,
+):
+    is_sod = format_version == h3_map_parser.H3M_FORMAT_SOD
+    is_ab_or_sod = format_version in (
+        h3_map_parser.H3M_FORMAT_AB,
+        h3_map_parser.H3M_FORMAT_SOD,
+    )
+    payload = []
+    if is_ab_or_sod:
+        payload.append((4321).to_bytes(4, "little"))
+    payload.append(bytes([owner]))
+    if custom_name is None:
+        payload.append(b"\x00")
+    else:
+        payload.append(b"\x01")
+        payload.append(_base_string(custom_name))
+    payload.append(b"\x01" if has_garrison else b"\x00")
+    if has_garrison:
+        payload.append(b"\x00" * (7 * (4 if is_ab_or_sod else 3)))
+    payload.append(b"\x00")  # formation
+    payload.append(b"\x00")  # custom buildings flag
+    payload.append(b"\x00")  # fort flag
+    if is_ab_or_sod:
+        payload.append(b"\x00" * 9)  # obligatory spells
+    payload.append(b"\x00" * 9)  # possible spells
+    payload.append((0).to_bytes(4, "little"))  # events
+    if is_sod:
+        payload.append(b"\xff")  # alignment: same as owner/random
+    payload.append(b"\x00" * 3)
+    return b"".join(payload)
+
+
+def _monster_payload(format_version=h3_map_parser.H3M_FORMAT_SOD, count=37):
+    payload = []
+    if format_version in (h3_map_parser.H3M_FORMAT_AB, h3_map_parser.H3M_FORMAT_SOD):
+        payload.append((1234).to_bytes(4, "little"))
+    payload.extend((
+        int(count).to_bytes(2, "little"),
+        b"\x00",  # character
+        b"\x00",  # has_message
+        b"\x00",  # never flees
+        b"\x00",  # not growing team
+        b"\x00" * 2,
+    ))
+    return b"".join(payload)
+
+
 def _template(
     template_index,
     object_id,
@@ -324,6 +452,22 @@ class H3MapParserContractTests(unittest.TestCase):
             creature_name="Gnoll",
             estimator_creature_id=98,
         )
+        town_target = h3_map_parser.H3TownTarget(
+            object_index=11,
+            x=37,
+            y=70,
+            z=1,
+            anchor_x=39,
+            anchor_y=70,
+            anchor_z=1,
+            template=template,
+            object_id=h3_map_parser.H3M_OBJECT_TOWN,
+            h3m_subid=0,
+            faction_subid=0,
+            initial_owner=2,
+            custom_name="Synthetic Town",
+            has_garrison=True,
+        )
         terrain_tile = h3_map_parser.H3TerrainTile(
             x=1,
             y=2,
@@ -343,6 +487,10 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(target.count, 37)
         self.assertFalse(target.removed)
         self.assertIsNone(target.removal_note)
+        self.assertEqual(town_target.anchor_x, 39)
+        self.assertEqual(town_target.initial_owner, 2)
+        self.assertEqual(town_target.custom_name, "Synthetic Town")
+        self.assertTrue(town_target.has_garrison)
         self.assertEqual(terrain_tile.terrain_type, 8)
         self.assertEqual(terrain_tile.road_direction, 4)
 
@@ -899,6 +1047,151 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(loaded.objects[0].template_index, 0)
         self.assertEqual(loaded.neutral_targets[0].object_index, 1)
         self.assertEqual(loaded.neutral_targets[0].count, 37)
+
+    def test_parse_sod_town_target_uses_visitable_tile_and_keeps_stream_offset(self):
+        visit_mask = bytes((0x01, 0x00, 0x00, 0x00, 0x00, 0x40))
+        templates = (
+            _object_template_bytes(
+                "AVCcasx0.def",
+                h3_map_parser.H3M_OBJECT_TOWN,
+                subid=3,
+                visit_mask=visit_mask,
+            ),
+            _object_template_bytes(
+                "AVWgnll0.def",
+                h3_map_parser.H3M_OBJECT_MONSTER,
+                subid=98,
+                object_type=2,
+            ),
+        )
+        objects = (
+            _object_bytes(
+                (7, 5, 0),
+                0,
+                _town_payload(
+                    owner=2,
+                    custom_name="Castle Keep",
+                    has_garrison=True,
+                ),
+            ),
+            _object_bytes((4, 4, 0), 1, _monster_payload(count=29)),
+        )
+        payload = _minimal_h3m_with_templates_and_objects(
+            h3_map_parser.H3M_FORMAT_SOD,
+            templates,
+            objects,
+            map_size=8,
+        )
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "/tmp/town-and-monster.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(len(loaded.objects), 2)
+        self.assertEqual(len(loaded.town_targets), 1)
+        self.assertEqual(len(loaded.neutral_targets), 1)
+        town = loaded.town_targets[0]
+        self.assertEqual(town.object_index, 0)
+        self.assertEqual((town.x, town.y, town.z), (6, 5, 0))
+        self.assertEqual((town.anchor_x, town.anchor_y, town.anchor_z), (7, 5, 0))
+        self.assertEqual(town.object_id, h3_map_parser.H3M_OBJECT_TOWN)
+        self.assertEqual(town.h3m_subid, 3)
+        self.assertEqual(town.faction_subid, 3)
+        self.assertEqual(town.initial_owner, 2)
+        self.assertEqual(town.custom_name, "Castle Keep")
+        self.assertTrue(town.has_garrison)
+        self.assertEqual(town.template.animation_file, "AVCcasx0.def")
+        self.assertEqual(loaded.neutral_targets[0].object_index, 1)
+        self.assertEqual(loaded.neutral_targets[0].count, 29)
+        self.assertEqual(
+            h3_map_parser.parse_h3m_neutral_monsters(
+                payload,
+                path="/tmp/town-and-monster.h3m",
+            ),
+            loaded.neutral_targets,
+        )
+
+    def test_parse_random_town_target_keeps_raw_subid_without_faction(self):
+        templates = (
+            _object_template_bytes(
+                "AVCrand0.def",
+                h3_map_parser.H3M_OBJECT_RANDOM_TOWN,
+                subid=99,
+                visit_mask=b"\x00" * 6,
+            ),
+        )
+        objects = (
+            _object_bytes((3, 2, 0), 0, _town_payload(owner=255)),
+        )
+        payload = _minimal_h3m_with_templates_and_objects(
+            h3_map_parser.H3M_FORMAT_SOD,
+            templates,
+            objects,
+            map_size=4,
+        )
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "/tmp/random-town.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(loaded.neutral_targets, ())
+        self.assertEqual(len(loaded.town_targets), 1)
+        town = loaded.town_targets[0]
+        self.assertEqual(town.object_index, 0)
+        self.assertEqual((town.x, town.y, town.z), (3, 2, 0))
+        self.assertEqual(town.object_id, h3_map_parser.H3M_OBJECT_RANDOM_TOWN)
+        self.assertEqual(town.h3m_subid, 99)
+        self.assertIsNone(town.faction_subid)
+        self.assertIsNone(town.initial_owner)
+        self.assertIsNone(town.custom_name)
+        self.assertFalse(town.has_garrison)
+
+    def test_parse_roe_town_target_uses_roe_payload_and_preserves_empty_name(self):
+        templates = (
+            _object_template_bytes(
+                "AVCramx0.def",
+                h3_map_parser.H3M_OBJECT_TOWN,
+                subid=5,
+                visit_mask=bytes((0x00, 0x00, 0x00, 0x00, 0x00, 0x80)),
+            ),
+        )
+        objects = (
+            _object_bytes(
+                (2, 1, 0),
+                0,
+                _town_payload(
+                    format_version=h3_map_parser.H3M_FORMAT_ROE,
+                    owner=1,
+                    custom_name="",
+                ),
+            ),
+        )
+        payload = _minimal_h3m_with_templates_and_objects(
+            h3_map_parser.H3M_FORMAT_ROE,
+            templates,
+            objects,
+            map_size=3,
+        )
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "/tmp/roe-town.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(loaded.header.format_version, h3_map_parser.H3M_FORMAT_ROE)
+        self.assertEqual(len(loaded.town_targets), 1)
+        town = loaded.town_targets[0]
+        self.assertEqual(town.object_index, 0)
+        self.assertEqual((town.x, town.y, town.z), (2, 1, 0))
+        self.assertEqual(town.faction_subid, 5)
+        self.assertEqual(town.initial_owner, 1)
+        self.assertEqual(town.custom_name, "")
+        self.assertFalse(town.has_garrison)
 
     def test_filter_removed_neutral_targets_excludes_by_object_index_and_subid(self):
         template = h3_map_parser.H3ObjectTemplate(
