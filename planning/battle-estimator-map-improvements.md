@@ -556,17 +556,45 @@ cross-level subterranean gates, provide a quick way to center the paired gate.
 and existing hero/neutral markers on real generated maps.
 
 **Acceptance criteria:**
-- [ ] Known towns appear at expected visitable positions.
-- [ ] Known monoliths show expected possible exits.
-- [ ] Known subterranean gates pair surface and underground positions.
-- [ ] Underground rock and object bodies appear as blocked route tiles.
-- [ ] Water appears as water route tiles, not as hard blocked terrain.
-- [ ] Existing click-to-simulate behavior still works for neutral and hero
+- [x] Known towns appear at expected visitable positions.
+- [x] Known monoliths show expected possible exits.
+- [x] Known subterranean gates pair surface and underground positions.
+- [x] Underground rock and object bodies appear as blocked route tiles.
+- [x] Water appears as water route tiles, not as hard blocked terrain.
+- [x] Existing click-to-simulate behavior still works for neutral and hero
       targets.
 
 **Verification:**
-- [ ] Run `python3 -m unittest`.
-- [ ] Start the GUI and manually inspect at least one current Diamond save/map.
+- [x] Run `python3 -m unittest`.
+- [x] Start the GUI and manually inspect at least one current Diamond save/map.
+
+**Completion Notes (2026-05-20):**
+- Verified the configured Diamond game
+  `Games/Random/PlayerTwo/2026.05.19 20;00 Diamond` against resolved map
+  `PlayerOne,PlayerTwo 2026.05.19 18;00 Diamond.h3m`.
+- H3M/parser facts: 108 x 108 x 2 map, 24 towns, 289 neutral targets,
+  44 portal targets, 44 portal edges, and route counts `blocked=7568`,
+  `land=7567`, `water=8193`.
+- Known town sample `town:2231` appeared at visitable `(45,46,0)` with anchor
+  `(47,46,0)`, `Faction/subid: 2/2`, `Initial owner: Blue`, and a nonblank
+  marker pixel.
+- Known one-way monolith `portal:2349` at `(22,96,0)` showed both expected exits
+  `(33,82,0)` and `(82,48,1)`.
+- Known subterranean topology included `portal:2282` `(28,5,0)` paired with
+  `portal:2281` `(28,5,1)` and reverse edge present; GUI context-menu check on
+  visible pair `portal:2292 -> portal:2293` switched from level 0 to level 1 and
+  activated the destination marker.
+- Route-layer samples: water `(0,0,1)` was `W` with canvas pixel
+  `[213,233,245,255]`; rock terrain `(107,107,0)`, object body `(0,0,0)`, and
+  underground object body `(43,1,1)` were `B` with blocked canvas pixels.
+- Local real-map corpus note: no `.h3m` under the HoMM 3 Complete directory had
+  a `terrain_type=rock` tile on `z=1`; added a synthetic two-level H3M check
+  where underground rock `(1,0,1)` serialized as route char `B`.
+- Click-to-simulate: selected `Coronius` (`hero:731686`) through the GUI, then
+  clicked supported neutral `neutral:2289` and enemy hero `hero:740438`; both
+  returned estimate results for the clicked target.
+- Verification: `python3 -m unittest`; headless Chrome/CDP GUI check on local
+  port 8769; synthetic underground-rock route-layer check.
 
 **Dependencies:** Tasks 4, 6, 8
 
@@ -881,7 +909,7 @@ After Tasks 9 and 17:
 | 6 | Show Town Markers In The GUI | done | 5 |
 | 7 | Parse Portal Targets And Edges | done | 1 |
 | 8 | Show Portal Markers And Destinations In The GUI | done | 7 |
-| 9 | End-To-End Map Verification | todo | 4, 6, 8 |
+| 9 | End-To-End Map Verification | done | 4, 6, 8 |
 | 10 | Add Hidden Hero Target State | todo | - |
 | 11 | Add Hero Marker Context Actions | blocked | 10 |
 | 12 | Merge Map Filter And Scan Target Type | todo | - |
