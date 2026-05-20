@@ -274,16 +274,21 @@ class PathfindingRequest:
     requested_target_position: PathPosition
     route_map: PathRouteMap
     portal_edges: tuple[PathfindingPortalEdge, ...] = field(default_factory=tuple)
+    terminal_positions: tuple[PathPosition, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         route_map = self.route_map
         if not isinstance(route_map, PathRouteMap):
             route_map = PathRouteMap(route_map)
         start_position = _path_position_from_value(self.start_position)
-        requested_target_position = _path_position_from_value(
+        requested_target_position = path_position_for_target(
             self.requested_target_position
         )
         portal_edges = tuple(self.portal_edges or ())
+        terminal_positions = tuple(
+            path_position_for_target(position)
+            for position in (self.terminal_positions or ())
+        )
 
         if not route_map.contains(start_position):
             raise ValueError(
@@ -308,6 +313,11 @@ class PathfindingRequest:
                     "portal destination position out of bounds: "
                     f"{edge.destination_position.key}"
                 )
+        for position in terminal_positions:
+            if not route_map.contains(position):
+                raise ValueError(
+                    f"terminal position out of bounds: {position.key}"
+                )
 
         object.__setattr__(self, "route_map", route_map)
         object.__setattr__(self, "start_position", start_position)
@@ -317,6 +327,7 @@ class PathfindingRequest:
             requested_target_position,
         )
         object.__setattr__(self, "portal_edges", portal_edges)
+        object.__setattr__(self, "terminal_positions", terminal_positions)
 
 
 @dataclass(frozen=True)
@@ -1268,16 +1279,29 @@ def build_pathfinding_request(
     route_layers,
     portal_targets=(),
     portal_edges=(),
+    terminal_positions=(),
 ) -> PathfindingRequest:
     """Build a validated pathfinding request from parsed GUI snapshot data."""
 
     route_map = PathRouteMap(route_layers)
     return PathfindingRequest(
         start_position=_path_position_from_value(selected_hero_position),
-        requested_target_position=_path_position_from_value(requested_target_position),
+        requested_target_position=path_position_for_target(requested_target_position),
         route_map=route_map,
         portal_edges=_pathfinding_portal_edges(portal_targets, portal_edges),
+        terminal_positions=tuple(
+            path_position_for_target(position)
+            for position in (terminal_positions or ())
+        ),
     )
+
+
+def path_position_for_target(value) -> PathPosition:
+    """Resolve an explicit position or serialized marker-like target to a tile."""
+
+    if isinstance(value, dict) and "position" in value:
+        return _path_position_from_value(value["position"])
+    return _path_position_from_value(value)
 
 
 def find_land_path(request: PathfindingRequest) -> PathfindingResult:
@@ -1299,11 +1323,23 @@ def _find_path_route(
     if not isinstance(request, PathfindingRequest):
         raise ValueError("request must be PathfindingRequest")
 
-    target_position = request.requested_target_position
-    if request.route_map.state_at(target_position) != PATH_ROUTE_LAND:
-        return _path_not_found_result(request, "target is not a land route tile")
-    if request.start_position == target_position:
-        return _pathfinding_result_for_positions(request, (request.start_position,))
+    terminal_keys = frozenset(
+        position.key
+        for position in request.terminal_positions
+    )
+    target_keys, not_found_message = _path_target_keys_for_request(
+        request,
+        terminal_keys,
+    )
+    if not target_keys:
+        return _path_not_found_result(request, not_found_message)
+    target_key_set = frozenset(target_keys)
+    if request.start_position.key in target_key_set:
+        return _pathfinding_result_for_positions(
+            request,
+            (request.start_position,),
+            message=_fallback_message_for_key(request, request.start_position.key),
+        )
 
     portal_edges_by_source = (
         _portal_edges_by_source(request.portal_edges)
@@ -1313,34 +1349,118 @@ def _find_path_route(
     frontier = deque((request.start_position,))
     previous_by_key = {request.start_position.key: (None, None)}
     position_by_key = {request.start_position.key: request.start_position}
-    target_key = target_position.key
+    distance_by_key = {request.start_position.key: 0}
+    best_distance = None
+    found_target_keys = []
 
     while frontier:
         current_position = frontier.popleft()
+        current_distance = distance_by_key[current_position.key]
+        if best_distance is not None and current_distance >= best_distance:
+            break
         for next_position, portal_edge in _path_neighbor_edges(
             request.route_map,
             current_position,
             portal_edges_by_source,
+            target_key_set,
+            terminal_keys,
         ):
             next_key = next_position.key
             if next_key in previous_by_key:
                 continue
             previous_by_key[next_key] = (current_position.key, portal_edge)
             position_by_key[next_key] = next_position
-            if next_key == target_key:
-                positions, transition_edges = _reconstruct_path_positions(
-                    previous_by_key,
-                    position_by_key,
-                    next_key,
-                )
-                return _pathfinding_result_for_positions(
-                    request,
-                    positions,
-                    transition_edges,
-                )
+            next_distance = current_distance + 1
+            distance_by_key[next_key] = next_distance
+            if next_key in target_key_set:
+                if best_distance is None or next_distance < best_distance:
+                    best_distance = next_distance
+                    found_target_keys = []
+                if next_distance == best_distance:
+                    found_target_keys.append(next_key)
+                continue
             frontier.append(next_position)
 
-    return _path_not_found_result(request, "no land path found")
+    if found_target_keys:
+        selected_key = _select_path_target_key(found_target_keys, target_keys)
+        positions, transition_edges = _reconstruct_path_positions(
+            previous_by_key,
+            position_by_key,
+            selected_key,
+        )
+        return _pathfinding_result_for_positions(
+            request,
+            positions,
+            transition_edges,
+            message=_fallback_message_for_key(request, selected_key),
+        )
+
+    return _path_not_found_result(request, not_found_message)
+
+
+def _path_target_keys_for_request(
+    request: PathfindingRequest,
+    terminal_keys: frozenset[tuple[int, int, int]],
+) -> tuple[tuple[tuple[int, int, int], ...], str]:
+    requested_position = request.requested_target_position
+    requested_key = requested_position.key
+    if (
+        request.route_map.state_at(requested_position) == PATH_ROUTE_LAND
+        or requested_key in terminal_keys
+    ):
+        return (requested_key,), "no land path found"
+
+    fallback_positions = _fallback_target_positions(
+        request.route_map,
+        requested_position,
+        terminal_keys,
+    )
+    return (
+        tuple(position.key for position in fallback_positions),
+        "no reachable land neighbor for target",
+    )
+
+
+def _fallback_target_positions(
+    route_map: PathRouteMap,
+    requested_position: PathPosition,
+    terminal_keys: frozenset[tuple[int, int, int]],
+) -> tuple[PathPosition, ...]:
+    positions = []
+    for dx, dy in _LAND_NEIGHBOR_DELTAS:
+        candidate = PathPosition(
+            requested_position.x + dx,
+            requested_position.y + dy,
+            requested_position.z,
+        )
+        if not route_map.contains(candidate):
+            continue
+        if candidate.key in terminal_keys:
+            continue
+        if route_map.state_at(candidate) != PATH_ROUTE_LAND:
+            continue
+        positions.append(candidate)
+    return tuple(positions)
+
+
+def _select_path_target_key(
+    found_target_keys: list[tuple[int, int, int]],
+    target_keys: tuple[tuple[int, int, int], ...],
+) -> tuple[int, int, int]:
+    target_order = {
+        target_key: index
+        for index, target_key in enumerate(target_keys)
+    }
+    return min(found_target_keys, key=lambda target_key: target_order[target_key])
+
+
+def _fallback_message_for_key(
+    request: PathfindingRequest,
+    resolved_key: tuple[int, int, int],
+) -> str | None:
+    if resolved_key == request.requested_target_position.key:
+        return None
+    return f"resolved target to reachable neighbor {resolved_key}"
 
 
 def _portal_edges_by_source(
@@ -1359,29 +1479,41 @@ def _path_neighbor_edges(
     route_map: PathRouteMap,
     position: PathPosition,
     portal_edges_by_source: dict,
+    target_keys: frozenset[tuple[int, int, int]],
+    terminal_keys: frozenset[tuple[int, int, int]],
 ):
-    for next_position in _land_neighbor_positions(route_map, position):
+    for next_position in _neighbor_positions(position):
+        if not route_map.contains(next_position):
+            continue
+        next_key = next_position.key
+        if next_key in target_keys and next_key in terminal_keys:
+            yield next_position, None
+            continue
+        if next_key in terminal_keys:
+            continue
+        if route_map.state_at(next_position) != PATH_ROUTE_LAND:
+            continue
         yield next_position, None
     for portal_edge in portal_edges_by_source.get(position.key, ()):
         destination = portal_edge.destination_position
         if not route_map.contains(destination):
+            continue
+        destination_key = destination.key
+        if destination_key in target_keys and destination_key in terminal_keys:
+            yield destination, portal_edge
+            continue
+        if destination_key in terminal_keys:
             continue
         if route_map.state_at(destination) != PATH_ROUTE_LAND:
             continue
         yield destination, portal_edge
 
 
-def _land_neighbor_positions(
-    route_map: PathRouteMap,
+def _neighbor_positions(
     position: PathPosition,
 ):
     for dx, dy in _LAND_NEIGHBOR_DELTAS:
-        candidate = PathPosition(position.x + dx, position.y + dy, position.z)
-        if not route_map.contains(candidate):
-            continue
-        if route_map.state_at(candidate) != PATH_ROUTE_LAND:
-            continue
-        yield candidate
+        yield PathPosition(position.x + dx, position.y + dy, position.z)
 
 
 def _reconstruct_path_positions(
@@ -1410,6 +1542,7 @@ def _pathfinding_result_for_positions(
     request: PathfindingRequest,
     positions: tuple[PathPosition, ...],
     transition_edges: tuple[PathfindingPortalEdge | None, ...] = (),
+    message: str | None = None,
 ) -> PathfindingResult:
     if not positions:
         raise ValueError("pathfinding result requires at least one position")
@@ -1428,6 +1561,7 @@ def _pathfinding_result_for_positions(
             steps,
             transition_edges,
         ),
+        message=message,
     )
 
 

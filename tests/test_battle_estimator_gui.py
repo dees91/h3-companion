@@ -3566,27 +3566,22 @@ class BattleEstimatorGuiLandPathTests(unittest.TestCase):
         self.assertIsNone(result.resolved_target_position)
         self.assertIn("no land path", result.message)
 
-    def test_find_land_path_returns_not_found_for_water_or_blocked_target(self):
-        for target_position in ((1, 0, 0), (2, 0, 0)):
-            with self.subTest(target_position=target_position):
-                request = self._land_request(
-                    [
-                        ["LWB"],
-                    ],
-                    (0, 0, 0),
-                    target_position,
-                )
+    def test_find_land_path_returns_not_found_without_reachable_fallback(self):
+        request = self._land_request(
+            [
+                ["LWB"],
+            ],
+            (0, 0, 0),
+            (2, 0, 0),
+        )
 
-                result = battle_estimator_gui.find_land_path(request)
+        result = battle_estimator_gui.find_land_path(request)
 
-                self.assertEqual(
-                    result.status,
-                    battle_estimator_gui.PATH_STATUS_NOT_FOUND,
-                )
-                self.assertEqual(result.requested_target_position.key, target_position)
-                self.assertEqual(result.steps, ())
-                self.assertEqual(result.segments, ())
-                self.assertIn("not a land route tile", result.message)
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_NOT_FOUND)
+        self.assertEqual(result.requested_target_position.key, (2, 0, 0))
+        self.assertEqual(result.steps, ())
+        self.assertEqual(result.segments, ())
+        self.assertIn("no reachable land neighbor", result.message)
 
     def test_find_land_path_ignores_portal_edges(self):
         portal_edge = battle_estimator_gui.PathfindingPortalEdge(
@@ -3640,6 +3635,216 @@ class BattleEstimatorGuiLandPathTests(unittest.TestCase):
             target_position,
             route_layers,
         )
+
+    def _step_keys(self, result):
+        return [step.position.key for step in result.steps]
+
+
+class BattleEstimatorGuiTargetResolutionTests(unittest.TestCase):
+    def test_pathfinding_request_accepts_marker_position_targets(self):
+        markers = (
+            {"type": "hero", "position": {"x": 2, "y": 0, "z": 0}},
+            {"type": "neutral", "position": {"x": 2, "y": 0, "z": 0}},
+            {"type": "town", "position": {"x": 2, "y": 0, "z": 0}},
+            {"type": "portal", "position": {"x": 2, "y": 0, "z": 0}},
+        )
+        for marker in markers:
+            with self.subTest(marker_type=marker["type"]):
+                request = battle_estimator_gui.build_pathfinding_request(
+                    (0, 0, 0),
+                    marker,
+                    [
+                        ["LLL"],
+                    ],
+                )
+
+                result = battle_estimator_gui.find_path_route(request)
+
+                self.assertEqual(
+                    result.status,
+                    battle_estimator_gui.PATH_STATUS_FOUND,
+                )
+                self.assertEqual(result.resolved_target_position.key, (2, 0, 0))
+
+    def test_find_path_route_allows_blocked_terminal_target_as_final(self):
+        marker = {"type": "town", "position": {"x": 1, "y": 0, "z": 0}}
+        request = battle_estimator_gui.build_pathfinding_request(
+            (0, 0, 0),
+            marker,
+            [
+                ["LB"],
+            ],
+            terminal_positions=(marker,),
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(self._step_keys(result), [(0, 0, 0), (1, 0, 0)])
+        self.assertEqual(result.resolved_target_position.key, (1, 0, 0))
+
+    def test_find_path_route_does_not_use_terminal_as_intermediate(self):
+        request = battle_estimator_gui.PathfindingRequest(
+            start_position=(0, 0, 0),
+            requested_target_position=(2, 0, 0),
+            route_map=[
+                ["LLL"],
+            ],
+            terminal_positions=((1, 0, 0),),
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_NOT_FOUND)
+        self.assertEqual(result.steps, ())
+        self.assertEqual(result.segments, ())
+
+    def test_find_path_route_falls_back_from_blocked_target_to_neighbor(self):
+        request = battle_estimator_gui.build_pathfinding_request(
+            (0, 0, 0),
+            (2, 0, 0),
+            [
+                ["LLB"],
+            ],
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(result.requested_target_position.key, (2, 0, 0))
+        self.assertEqual(result.resolved_target_position.key, (1, 0, 0))
+        self.assertEqual(self._step_keys(result), [(0, 0, 0), (1, 0, 0)])
+        self.assertIn("reachable neighbor", result.message)
+
+    def test_find_path_route_can_resolve_start_as_blocked_target_fallback(self):
+        request = battle_estimator_gui.build_pathfinding_request(
+            (0, 0, 0),
+            (1, 0, 0),
+            [
+                ["LB"],
+            ],
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(self._step_keys(result), [(0, 0, 0)])
+        self.assertEqual(result.resolved_target_position.key, (0, 0, 0))
+        self.assertIn("reachable neighbor", result.message)
+
+    def test_find_path_route_fallback_tie_uses_target_neighbor_order(self):
+        request = battle_estimator_gui.build_pathfinding_request(
+            (1, 3, 0),
+            (1, 1, 0),
+            [
+                ["LLL", "LBL", "LLL", "LLL"],
+            ],
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(result.resolved_target_position.key, (0, 2, 0))
+
+    def test_find_path_route_excludes_terminal_from_blocked_target_fallback(self):
+        request = battle_estimator_gui.PathfindingRequest(
+            start_position=(0, 0, 0),
+            requested_target_position=(2, 0, 0),
+            route_map=[
+                ["LLB"],
+            ],
+            terminal_positions=((1, 0, 0),),
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_NOT_FOUND)
+        self.assertEqual(result.steps, ())
+        self.assertEqual(result.segments, ())
+
+    def test_find_path_route_returns_not_found_without_reachable_fallback(self):
+        request = battle_estimator_gui.build_pathfinding_request(
+            (0, 0, 0),
+            (2, 0, 0),
+            [
+                ["LWB"],
+            ],
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_NOT_FOUND)
+        self.assertIsNone(result.resolved_target_position)
+        self.assertEqual(result.steps, ())
+        self.assertEqual(result.segments, ())
+        self.assertIn("no reachable land neighbor", result.message)
+
+    def test_pathfinding_request_rejects_out_of_bounds_terminal_position(self):
+        with self.assertRaisesRegex(ValueError, "terminal position out of bounds"):
+            battle_estimator_gui.PathfindingRequest(
+                start_position=(0, 0, 0),
+                requested_target_position=(0, 0, 0),
+                route_map=[
+                    ["L"],
+                ],
+                terminal_positions=((1, 0, 0),),
+            )
+
+    def test_find_path_route_allows_portal_to_active_non_land_terminal(self):
+        marker = {"type": "portal", "position": {"x": 2, "y": 0, "z": 0}}
+        request = battle_estimator_gui.PathfindingRequest(
+            start_position=(0, 0, 0),
+            requested_target_position=marker,
+            route_map=[
+                ["LWB"],
+            ],
+            portal_edges=(
+                battle_estimator_gui.PathfindingPortalEdge(
+                    source_id="portal:0",
+                    destination_id="portal:2",
+                    source_position=(0, 0, 0),
+                    destination_position=(2, 0, 0),
+                    portal_type=h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                    channel_key="monolith-one-way:terminal",
+                ),
+            ),
+            terminal_positions=(marker,),
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(self._step_keys(result), [(0, 0, 0), (2, 0, 0)])
+        self.assertEqual(
+            result.segments[0].segment_type,
+            battle_estimator_gui.PATH_SEGMENT_PORTAL,
+        )
+
+    def test_find_path_route_skips_portal_to_non_target_terminal(self):
+        request = battle_estimator_gui.PathfindingRequest(
+            start_position=(0, 0, 0),
+            requested_target_position=(3, 0, 0),
+            route_map=[
+                ["LWBL"],
+            ],
+            portal_edges=(
+                battle_estimator_gui.PathfindingPortalEdge(
+                    source_id="portal:0",
+                    destination_id="portal:2",
+                    source_position=(0, 0, 0),
+                    destination_position=(2, 0, 0),
+                    portal_type=h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                    channel_key="monolith-one-way:terminal",
+                ),
+            ),
+            terminal_positions=((2, 0, 0),),
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_NOT_FOUND)
+        self.assertEqual(result.steps, ())
+        self.assertEqual(result.segments, ())
 
     def _step_keys(self, result):
         return [step.position.key for step in result.steps]

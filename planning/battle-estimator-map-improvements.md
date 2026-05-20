@@ -1178,20 +1178,31 @@ node, and fall back from blocked clicked tiles to the nearest reachable
 neighbor.
 
 **Acceptance criteria:**
-- [ ] Clicking a land tile routes to that tile.
-- [ ] Clicking a hero, neutral, town, or portal marker routes to that marker's
+- [x] Clicking a land tile routes to that tile.
+- [x] Clicking a hero, neutral, town, or portal marker routes to that marker's
       position in path mode.
-- [ ] Towns and ordinary terminal targets can be final destinations but are not
+- [x] Towns and ordinary terminal targets can be final destinations but are not
       used as ordinary intermediate path nodes.
-- [ ] Clicking a blocked tile resolves to the nearest reachable neighboring
+- [x] Clicking a blocked tile resolves to the nearest reachable neighboring
       tile when one exists.
-- [ ] The result reports the fallback when the resolved target differs from the
+- [x] The result reports the fallback when the resolved target differs from the
       requested target.
 
 **Verification:**
-- [ ] Add tests for marker destinations, terminal destinations, blocked target
+- [x] Add tests for marker destinations, terminal destinations, blocked target
       fallback, and blocked target with no reachable neighbor.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion notes:**
+- Added marker-like target position resolution, terminal-only destination
+  positions, and terminal-aware route traversal.
+- Non-land terminal targets can be final destinations; non-target terminals are
+  skipped for land movement, portal movement, and blocked-target fallback.
+- Ordinary non-land clicked targets resolve to the shortest reachable adjacent
+  land tile, with deterministic target-neighbor tie-breaks and fallback messages.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent plan and code reviews
+  completed with no blocking findings.
 
 **Dependencies:** Task 20
 
@@ -1431,8 +1442,8 @@ After Tasks 9, 17, and 25:
 | 18 | Add Pathfinding Service Contract | done | 3, 8 |
 | 19 | Implement Land-Only Shortest Path Search | done | 18 |
 | 20 | Add Portal And Subterranean Gate Traversal | done | 19 |
-| 21 | Resolve Blocked Targets And Terminal Markers | todo | 20 |
-| 22 | Expose A Pathfinding API Endpoint | blocked | 21 |
+| 21 | Resolve Blocked Targets And Terminal Markers | done | 20 |
+| 22 | Expose A Pathfinding API Endpoint | todo | 21 |
 | 23 | Add Path Mode UI And Route Rendering | blocked | 22 |
 | 24 | Add Path Segment List And Cross-Level Navigation | blocked | 23 |
 | 25 | End-To-End Pathfinding Verification | blocked | 18, 19, 20, 21, 22, 23, 24 |
