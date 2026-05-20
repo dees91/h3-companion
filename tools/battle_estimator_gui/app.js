@@ -24,6 +24,7 @@
     mapLevelControl: document.getElementById("map-level-control"),
     showRemovedToggle: document.getElementById("show-removed-toggle"),
     showHiddenToggle: document.getElementById("show-hidden-toggle"),
+    routeOverlayToggle: document.getElementById("show-route-overlay-toggle"),
     heroRankingButton: document.getElementById("hero-ranking-button"),
     mapStage: document.getElementById("map-stage"),
     mapTooltip: document.getElementById("map-tooltip"),
@@ -56,6 +57,7 @@
     level: 0,
     showRemovedNeutrals: false,
     showHiddenNeutrals: false,
+    showRouteOverlay: true,
     markers: [],
     hoveredMarkerId: null,
     activeMarkerId: null,
@@ -114,6 +116,11 @@
     purple: { fill: "#7c3aed", stroke: "#4c1d95" },
     teal: { fill: "#0f9f9a", stroke: "#115e59" },
     pink: { fill: "#d85fa3", stroke: "#8f2a61" }
+  };
+  const ROUTE_OVERLAY_STYLES = {
+    land: { fill: "#d9ead5", stroke: "#b7cfb0" },
+    water: { fill: "#c8e2f2", stroke: "#9fc4dc" },
+    blocked: { fill: "#87919e", stroke: "#66717e" }
   };
 
   function setHealth(text, className) {
@@ -306,6 +313,33 @@
       && previousMap.height === nextMap.height
       && mapLevelCount(previous) === mapLevelCount(next)
     );
+  }
+
+  function routeRowsForLevel(snapshot, level) {
+    const routeLayers = snapshot && Array.isArray(snapshot.route_layers)
+      ? snapshot.route_layers
+      : [];
+    const activeLevel = normalizeLevelForSnapshot(level, snapshot);
+    const rows = routeLayers[activeLevel];
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  function routeStateForChar(char) {
+    if (char === "L") {
+      return "land";
+    }
+    if (char === "W") {
+      return "water";
+    }
+    if (char === "B") {
+      return "blocked";
+    }
+    return null;
+  }
+
+  function routeStyleForChar(char) {
+    const state = routeStateForChar(char);
+    return state ? ROUTE_OVERLAY_STYLES[state] : null;
   }
 
   function truncateText(value, maxLength) {
@@ -787,6 +821,10 @@
       bottomRight.y - topLeft.y
     );
 
+    if (mapView.showRouteOverlay) {
+      drawRouteOverlay(mapView.snapshot, tileSize, width, height);
+    }
+
     canvasContext.strokeStyle = "#d4dbe4";
     canvasContext.lineWidth = 1;
     canvasContext.beginPath();
@@ -804,6 +842,39 @@
 
     drawMarkers();
     elements.zoom.textContent = `Zoom ${Math.round(mapView.zoom * 100)}%`;
+  }
+
+  function drawRouteOverlay(snapshot, tileSize, width, height) {
+    const rows = routeRowsForLevel(snapshot, mapView.level);
+    if (rows.length === 0) {
+      return;
+    }
+
+    canvasContext.save();
+    canvasContext.globalAlpha = 0.72;
+    for (let y = 0; y < height && y < rows.length; y += 1) {
+      const row = typeof rows[y] === "string" ? rows[y] : "";
+      const rowWidth = Math.min(width, row.length);
+      for (let x = 0; x < rowWidth; x += 1) {
+        const style = routeStyleForChar(row.charAt(x));
+        if (!style) {
+          continue;
+        }
+        const topLeft = worldToScreen({ x: x * tileSize, y: y * tileSize }, mapView);
+        const bottomRight = worldToScreen(
+          { x: (x + 1) * tileSize, y: (y + 1) * tileSize },
+          mapView
+        );
+        canvasContext.fillStyle = style.fill;
+        canvasContext.fillRect(
+          topLeft.x,
+          topLeft.y,
+          bottomRight.x - topLeft.x,
+          bottomRight.y - topLeft.y
+        );
+      }
+    }
+    canvasContext.restore();
   }
 
   function drawMarkers() {
@@ -2263,6 +2334,11 @@
     setShowHiddenNeutrals(elements.showHiddenToggle.checked);
   });
 
+  elements.routeOverlayToggle.addEventListener("change", () => {
+    mapView.showRouteOverlay = elements.routeOverlayToggle.checked;
+    drawMap();
+  });
+
   elements.scanButton.addEventListener("click", () => {
     runRadiusScan();
   });
@@ -2401,7 +2477,12 @@
     nextViewStateForSnapshot,
     rankedMapHeroes,
     recentHeroChipState,
+    renderSnapshot,
     resolveSelectedHeroId,
+    routeRowsForLevel,
+    routeStateForChar,
+    routeStyleForChar,
+    drawRouteOverlay,
     scanClassForWinPct,
     scanResultLookup,
     sameMapGeometry,
@@ -2419,6 +2500,7 @@
   elements.showRemovedToggle.checked = mapView.showRemovedNeutrals;
   elements.showHiddenToggle.checked = mapView.showHiddenNeutrals;
   elements.showHiddenToggle.disabled = true;
+  elements.routeOverlayToggle.checked = mapView.showRouteOverlay;
   syncHeroRankingControls();
   elements.targetContextMenu.addEventListener("click", (event) => {
     event.stopPropagation();

@@ -239,9 +239,16 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "gameFolderInFlight",
             "showFollowLatestDialog",
             "showHiddenToggle",
+            "routeOverlayToggle",
             "targetContextMenu",
             "hiddenTargetInFlight",
             "showHiddenInFlight",
+            "showRouteOverlay",
+            "ROUTE_OVERLAY_STYLES",
+            "drawRouteOverlay",
+            "routeRowsForLevel",
+            "routeStateForChar",
+            "routeStyleForChar",
             "use_latest_game_folder",
             "AUTO_REFRESH_MS = 5000",
             "AUTO_REFRESH_ENABLED = false",
@@ -281,6 +288,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="map-level-control"',
             'id="show-removed-toggle"',
             'id="show-hidden-toggle"',
+            'id="show-route-overlay-toggle"',
+            'Route Overlay',
             'id="map-stage"',
             'id="map-tooltip"',
             'id="target-context-menu"',
@@ -340,7 +349,30 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
         app_js_path = str((Path("tools") / "battle_estimator_gui" / "app.js").resolve())
         script = f"""
 const assert = require("assert");
-const context = new Proxy({{}}, {{
+const drawOperations = [];
+const routeFillStyles = new Set(["#d9ead5", "#c8e2f2", "#87919e"]);
+const context = new Proxy({{
+  save() {{
+    drawOperations.push({{ op: "save" }});
+  }},
+  restore() {{
+    drawOperations.push({{ op: "restore" }});
+  }},
+  clearRect(x, y, width, height) {{
+    drawOperations.push({{ op: "clearRect", x, y, width, height }});
+  }},
+  fillRect(x, y, width, height) {{
+    drawOperations.push({{
+      op: "fillRect",
+      fillStyle: this.fillStyle,
+      globalAlpha: this.globalAlpha,
+      x,
+      y,
+      width,
+      height
+    }});
+  }}
+}}, {{
   get(target, prop) {{
     if (!(prop in target)) {{
       target[prop] = function () {{}};
@@ -362,6 +394,7 @@ class Element {{
     this.height = 640;
     this.hidden = false;
     this.checked = false;
+    this.events = {{}};
     this.style = {{}};
     this.textContent = "";
     this.title = "";
@@ -389,7 +422,15 @@ class Element {{
   getContext() {{
     return context;
   }}
-  addEventListener() {{}}
+  addEventListener(type, handler) {{
+    if (!this.events[type]) {{
+      this.events[type] = [];
+    }}
+    this.events[type].push(handler);
+  }}
+  dispatch(type, event) {{
+    (this.events[type] || []).forEach((handler) => handler({{ target: this, ...event }}));
+  }}
   removeChild(child) {{
     const index = this.children.indexOf(child);
     if (index >= 0) {{
@@ -424,6 +465,7 @@ global.window = {{
     return 1;
   }}
 }};
+let fetchCalls = 0;
 const snapshot = {{
   mode: "follow_latest",
   save_file: null,
@@ -431,20 +473,31 @@ const snapshot = {{
   map_file: null,
   map_fingerprint: null,
   map: {{ width: 4, height: 4, levels: 2 }},
+  route_layers: [
+    ["LWBB", "LLWB", "BWLX", "LLLL"],
+    ["BBBB", "WWWW", "LLLL", "LWBZ"]
+  ],
   heroes: [],
   neutral_targets: [],
   recent_heroes: [],
   selected_hero_id: null
 }};
-global.fetch = (path) => Promise.resolve({{
+global.fetch = (path) => {{
+  fetchCalls += 1;
+  return Promise.resolve({{
   ok: true,
   json: () => Promise.resolve(path === "/api/health" ? {{ ok: true }} : snapshot)
-}});
+  }});
+}};
 require({json.dumps(app_js_path)});
 const helpers = window.__battleEstimatorGuiTest;
 assert.strictEqual(autoRefreshIntervalCalls, 0);
 const markerSnapshot = {{
   map: {{ width: 4, height: 4, levels: 2 }},
+  route_layers: [
+    ["LWBB", "LLWB", "BWLX", "LLLL"],
+    ["BBBB", "WWWW", "LLLL", "LWBZ"]
+  ],
   selected_hero_id: "hero:0",
   heroes: [
     {{
@@ -514,6 +567,16 @@ const markerSnapshot = {{
 }};
 const level0Markers = helpers.buildMarkerCache(markerSnapshot, 10, 0, false);
 assert.deepStrictEqual(level0Markers.map((marker) => marker.id), ["hero:0", "neutral:0"]);
+assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 0), ["LWBB", "LLWB", "BWLX", "LLLL"]);
+assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 1), ["BBBB", "WWWW", "LLLL", "LWBZ"]);
+assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 99), ["BBBB", "WWWW", "LLLL", "LWBZ"]);
+assert.strictEqual(helpers.routeStateForChar("L"), "land");
+assert.strictEqual(helpers.routeStateForChar("W"), "water");
+assert.strictEqual(helpers.routeStateForChar("B"), "blocked");
+assert.strictEqual(helpers.routeStateForChar("X"), null);
+assert.notStrictEqual(helpers.routeStyleForChar("L").fill, helpers.routeStyleForChar("W").fill);
+assert.notStrictEqual(helpers.routeStyleForChar("W").fill, helpers.routeStyleForChar("B").fill);
+assert.strictEqual(helpers.routeStyleForChar("X"), null);
 const level0WithRemoved = helpers.buildMarkerCache(markerSnapshot, 10, 0, true);
 assert.deepStrictEqual(
   level0WithRemoved.map((marker) => marker.id),
@@ -669,6 +732,28 @@ assert.strictEqual(
   ),
   false
 );
+const fetchCallsBeforeRender = fetchCalls;
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+const overlayFillsAfterRender = drawOperations.filter((operation) => (
+  operation.op === "fillRect" && routeFillStyles.has(operation.fillStyle)
+));
+assert.ok(overlayFillsAfterRender.length >= 3);
+drawOperations.length = 0;
+const routeToggle = elements["show-route-overlay-toggle"];
+routeToggle.checked = false;
+routeToggle.dispatch("change");
+const overlayFillsAfterToggleOff = drawOperations.filter((operation) => (
+  operation.op === "fillRect" && routeFillStyles.has(operation.fillStyle)
+));
+assert.strictEqual(overlayFillsAfterToggleOff.length, 0);
+drawOperations.length = 0;
+routeToggle.checked = true;
+routeToggle.dispatch("change");
+const overlayFillsAfterToggleOn = drawOperations.filter((operation) => (
+  operation.op === "fillRect" && routeFillStyles.has(operation.fillStyle)
+));
+assert.ok(overlayFillsAfterToggleOn.length >= 3);
+assert.strictEqual(fetchCalls, fetchCallsBeforeRender);
 """
         completed = subprocess.run(
             [node, "-e", script],

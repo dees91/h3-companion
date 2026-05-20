@@ -341,6 +341,22 @@ tiles, and provide a toggle to show or hide the overlay.
       levels.
 - [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
 
+**Completion Notes (2026-05-20):**
+- Added a `Route Overlay` map-toolbar toggle, enabled by default and handled
+  entirely client-side without reloading the page.
+- Rendered compact `route_layers` under the map grid and existing markers with
+  distinct restrained styles for land, water, and blocked route tiles.
+- Added frontend smoke coverage for route helpers, canvas overlay drawing, and
+  toggling overlay off/on without additional fetches.
+- Manual GUI check: started the local GUI on the configured Diamond game
+  (`2026.05.19 20;00 Diamond`) with the resolved map
+  `PlayerOne,PlayerTwo 2026.05.19 18;00 Diamond.h3m`; verified a 108 x 108 x 2
+  map, route chars `B/L/W`, route overlay canvas changes on both level 0 and
+  level 1 when toggled, levels render differently, and hero/neutral marker
+  pixels remain present above the overlay.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui` and
+  `python3 -m unittest`.
+
 **Dependencies:** Task 3
 
 **Files likely touched:**
@@ -785,7 +801,7 @@ After Tasks 9 and 17:
 | 1 | Parse Terrain Tiles From H3M | done | - |
 | 2 | Build The Static Route Layer | done | 1 |
 | 3 | Expose Route Layers In The GUI Snapshot | done | 2 |
-| 4 | Render The Route Overlay | todo | 3 |
+| 4 | Render The Route Overlay | done | 3 |
 | 5 | Parse Town Targets | todo | 1 |
 | 6 | Show Town Markers In The GUI | blocked | 5 |
 | 7 | Parse Portal Targets And Edges | todo | 1 |
