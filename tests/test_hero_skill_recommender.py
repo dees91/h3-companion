@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import math
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from copy import deepcopy
 
 from tools import hero_skill_recommender as recommender
 
@@ -322,6 +324,209 @@ class VcmiHeroSkillMetadataLoaderTests(unittest.TestCase):
         self.assertIn("basic", earth_magic.level_blocks)
         self.assertEqual(necromancy.index, 12)
         self.assertEqual(necromancy.specialty_tags, ("main",))
+
+
+class RecommendationRuleValidationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.metadata = recommender.load_vcmi_hero_skill_metadata()
+        cls.rules_path = recommender.DEFAULT_RULES_PATH
+        cls.raw_rules = json.loads(cls.rules_path.read_text(encoding="utf-8"))
+
+    def _rules_with(self, mutator):
+        raw_rules = deepcopy(self.raw_rules)
+        mutator(raw_rules)
+        return raw_rules
+
+    def assertInvalidRules(self, raw_rules):
+        with self.assertRaises(recommender.HeroSkillRecommendationError):
+            recommender.validate_recommendation_rules(
+                raw_rules,
+                metadata=self.metadata,
+            )
+
+    def test_default_recommendation_rules_file_exists_and_loads(self):
+        self.assertTrue(self.rules_path.exists())
+
+        rules = recommender.load_recommendation_rules(metadata=self.metadata)
+
+        self.assertEqual(rules.version, 1)
+        self.assertEqual(rules.default_role, "main")
+        self.assertEqual(len(self.metadata.heroes), 144)
+
+    def test_default_rules_cover_all_standard_heroes(self):
+        rules = recommender.load_recommendation_rules(metadata=self.metadata)
+
+        missing = [
+            hero.key
+            for hero in self.metadata.heroes.values()
+            if not recommender._effective_skill_rules_for_hero(
+                rules,
+                hero,
+                rules.default_role,
+            )
+        ]
+
+        self.assertEqual(missing, [])
+
+    def test_rules_derive_tiers_from_scores(self):
+        rules = recommender.validate_recommendation_rules(
+            self.raw_rules,
+            metadata=self.metadata,
+        )
+
+        self.assertEqual(
+            rules.global_rules["main"]["earthMagic"].tier,
+            "S",
+        )
+        self.assertEqual(
+            rules.global_rules["main"]["wisdom"].tier,
+            "B",
+        )
+        self.assertEqual(
+            rules.global_rules["main"]["eagleEye"].tier,
+            "D",
+        )
+
+    def test_recommendation_rules_are_strict_json_not_jsonc(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "rules.json"
+            path.write_text(
+                '{"version": 1} // comment is not allowed\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError):
+                recommender.load_recommendation_rules(
+                    path,
+                    metadata=self.metadata,
+                )
+
+    def test_validation_rejects_unknown_skill_id(self):
+        raw_rules = self._rules_with(
+            lambda data: data["global"]["main"]["skills"].__setitem__(
+                "unknownSkill",
+                {"score": 50, "reason_codes": ["unknown_skill"]},
+            )
+        )
+
+        self.assertInvalidRules(raw_rules)
+
+    def test_validation_rejects_unknown_hero_class_faction_and_specialty_keys(self):
+        invalid_mutators = (
+            lambda data: data["heroes"].__setitem__(
+                "unknownHero",
+                {"main": {"skills": {"earthMagic": {
+                    "score": 50,
+                    "reason_codes": ["bad_hero"],
+                }}}},
+            ),
+            lambda data: data["classes"].__setitem__(
+                "unknownClass",
+                {"main": {"skills": {"earthMagic": {
+                    "score": 50,
+                    "reason_codes": ["bad_class"],
+                }}}},
+            ),
+            lambda data: data["factions"].__setitem__(
+                "unknownFaction",
+                {"main": {"skills": {"earthMagic": {
+                    "score": 50,
+                    "reason_codes": ["bad_faction"],
+                }}}},
+            ),
+            lambda data: data["specialties"].__setitem__(
+                "secondary:unknownSkill",
+                {"main": {"skills": {"earthMagic": {
+                    "score": 50,
+                    "reason_codes": ["bad_specialty"],
+                }}}},
+            ),
+        )
+
+        for mutator in invalid_mutators:
+            with self.subTest(mutator=mutator):
+                self.assertInvalidRules(self._rules_with(mutator))
+
+    def test_validation_rejects_out_of_range_scores(self):
+        for score in (-1, 101, math.inf, True):
+            with self.subTest(score=score):
+                raw_rules = self._rules_with(
+                    lambda data, score=score: data["global"]["main"]["skills"][
+                        "earthMagic"
+                    ].__setitem__("score", score)
+                )
+
+                self.assertInvalidRules(raw_rules)
+
+    def test_validation_rejects_invalid_reason_codes(self):
+        invalid_reason_codes = (
+            [],
+            ["MassSlow"],
+            ["mass slow"],
+            ["mass_slow", "mass_slow"],
+            {"mass_slow": True},
+            None,
+            123,
+        )
+
+        for reason_codes in invalid_reason_codes:
+            with self.subTest(reason_codes=reason_codes):
+                raw_rules = self._rules_with(
+                    lambda data, reason_codes=reason_codes: data["global"][
+                        "main"
+                    ]["skills"]["earthMagic"].__setitem__(
+                        "reason_codes",
+                        reason_codes,
+                    )
+                )
+
+                self.assertInvalidRules(raw_rules)
+
+    def test_validation_rejects_bool_version(self):
+        raw_rules = self._rules_with(
+            lambda data: data.__setitem__("version", True)
+        )
+
+        self.assertInvalidRules(raw_rules)
+
+    def test_validation_rejects_unsupported_rule_shape(self):
+        invalid_mutators = (
+            lambda data: data["global"]["main"]["skills"]["earthMagic"].__setitem__(
+                "tier",
+                "S",
+            ),
+            lambda data: data["global"]["main"]["skills"]["earthMagic"].__setitem__(
+                "reasons",
+                ["mass_slow"],
+            ),
+            lambda data: data["global"]["main"]["skills"]["earthMagic"].__delitem__(
+                "score"
+            ),
+        )
+
+        for mutator in invalid_mutators:
+            with self.subTest(mutator=mutator):
+                self.assertInvalidRules(self._rules_with(mutator))
+
+    def test_validation_rejects_invalid_tiers(self):
+        invalid_mutators = (
+            lambda data: data["tiers"].pop("D"),
+            lambda data: data["tiers"]["D"].__setitem__("min_score", 1),
+            lambda data: data["tiers"]["A"].__setitem__("min_score", 95),
+            lambda data: data["tiers"]["S"].__setitem__("min_score", 101),
+        )
+
+        for mutator in invalid_mutators:
+            with self.subTest(mutator=mutator):
+                self.assertInvalidRules(self._rules_with(mutator))
+
+    def test_validation_rejects_missing_default_role_coverage(self):
+        raw_rules = self._rules_with(
+            lambda data: data["global"].__setitem__("main", {"skills": {}})
+        )
+
+        self.assertInvalidRules(raw_rules)
 
 
 if __name__ == "__main__":

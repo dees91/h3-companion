@@ -234,24 +234,36 @@ merge neighboring JSON tokens. Required tests passed with 22 focused cases.
 
 ## Task 3: Define And Validate Recommendation Rule Schema
 
+**Status:** done
+
 **Description:** Add the custom recommendation rules file and validation logic.
 The schema should support global, faction, class, specialty, and hero layers,
 numeric scores, tier derivation, upgrade priority modifiers, and reason codes.
 
 **Acceptance criteria:**
-- [ ] Rules file exists at
+- [x] Rules file exists at
       `config/battle_estimator/hero_skill_recommendations.json`.
-- [ ] Validation rejects unknown skill IDs.
-- [ ] Validation rejects unknown hero, class, and faction keys.
-- [ ] Validation rejects out-of-range scores.
-- [ ] Validation confirms every reason code is a short stable identifier.
-- [ ] Validation confirms all standard heroes are covered by fallback rules,
+- [x] Validation rejects unknown skill IDs.
+- [x] Validation rejects unknown hero, class, and faction keys.
+- [x] Validation rejects out-of-range scores.
+- [x] Validation confirms every reason code is a short stable identifier.
+- [x] Validation confirms all standard heroes are covered by fallback rules,
       even before hero-specific overrides are complete.
 
 **Verification:**
-- [ ] Add schema validation tests for valid rules and representative invalid
+- [x] Add schema validation tests for valid rules and representative invalid
       rules.
-- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+- [x] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Completion notes:** Added strict JSON recommendation rules at
+`config/battle_estimator/hero_skill_recommendations.json` with global fallback
+main-hero guidance plus focused Necropolis, Death Knight, Necromancy-specialist,
+and Isra overrides. Added validation for exact scoped hero files, tier
+thresholds, layer keys, skill IDs, finite scores, derived tiers, optional
+upgrade priority, short reason codes, and default-role fallback coverage across
+all 144 standard heroes. Plan and code were reviewed by subagents; after code
+review, `reason_codes` now rejects JSON objects/null/scalars and rules
+`version` rejects bool values. Required tests passed with 34 focused cases.
 
 **Dependencies:** Task 2
 

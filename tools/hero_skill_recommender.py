@@ -40,6 +40,12 @@ EXCLUDED_HERO_FILES = (
     "portraitsChronicles.json",
     "special.json",
 )
+DEFAULT_RULES_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "config"
+    / "battle_estimator"
+    / "hero_skill_recommendations.json"
+)
 
 _REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _CAMEL_WORD_RE = re.compile(r"(?<!^)(?=[A-Z])")
@@ -102,6 +108,101 @@ def load_vcmi_hero_skill_metadata(
     )
 
 
+def load_recommendation_rules(
+    path: Optional[Path] = None,
+    metadata: Optional["VcmiHeroSkillMetadata"] = None,
+) -> "RecommendationRules":
+    """Load and validate strict JSON recommendation rules."""
+    rules_path = DEFAULT_RULES_PATH if path is None else Path(path)
+    raw_rules = json.loads(rules_path.read_text(encoding="utf-8"))
+    return validate_recommendation_rules(raw_rules, metadata=metadata)
+
+
+def validate_recommendation_rules(
+    raw_rules: Mapping[str, Any],
+    metadata: Optional["VcmiHeroSkillMetadata"] = None,
+) -> "RecommendationRules":
+    """Validate recommendation rule schema against loaded VCMI metadata."""
+    if not isinstance(raw_rules, Mapping):
+        raise HeroSkillRecommendationError("recommendation rules must be a mapping")
+    metadata = metadata or load_vcmi_hero_skill_metadata()
+    version = _normalize_non_bool_int(
+        _required_mapping_value(raw_rules, "version", "rules"),
+        "version",
+    )
+    if version != 1:
+        raise HeroSkillRecommendationError("rules version must be 1")
+
+    scope = _required_mapping_value(raw_rules, "scope", "rules")
+    _validate_rules_scope(scope, metadata)
+    default_role = _normalize_non_empty_string(
+        raw_rules.get("default_role", DEFAULT_ROLE),
+        "default_role",
+    )
+    tiers = _normalize_rule_tiers(_required_mapping_value(raw_rules, "tiers", "rules"))
+
+    global_rules = _parse_rule_layer_group(
+        raw_rules.get("global", {}),
+        metadata,
+        tiers,
+        "global",
+    )
+    faction_rules = _parse_keyed_rule_groups(
+        raw_rules.get("factions", {}),
+        set(_metadata_factions(metadata)),
+        metadata,
+        tiers,
+        "factions",
+    )
+    class_rules = _parse_keyed_rule_groups(
+        raw_rules.get("classes", {}),
+        set(metadata.hero_classes),
+        metadata,
+        tiers,
+        "classes",
+    )
+    specialty_rules = _parse_keyed_rule_groups(
+        raw_rules.get("specialties", {}),
+        set(_metadata_specialties(metadata)),
+        metadata,
+        tiers,
+        "specialties",
+    )
+    hero_rules = _parse_keyed_rule_groups(
+        raw_rules.get("heroes", {}),
+        set(metadata.heroes),
+        metadata,
+        tiers,
+        "heroes",
+    )
+
+    rules = RecommendationRules(
+        version=version,
+        scope=dict(scope),
+        default_role=default_role,
+        tiers=tiers,
+        global_rules=global_rules,
+        faction_rules=faction_rules,
+        class_rules=class_rules,
+        specialty_rules=specialty_rules,
+        hero_rules=hero_rules,
+    )
+    _validate_rules_coverage(rules, metadata)
+    return rules
+
+
+def derive_tier(
+    score: float,
+    tiers: Mapping[str, "TierRule"],
+) -> str:
+    """Return the display tier for a normalized score."""
+    score = _normalize_score(score)
+    for tier_name in VALID_TIERS:
+        if score >= tiers[tier_name].min_score:
+            return tier_name
+    return "D"
+
+
 def validate_current_skills(values: Iterable[Any]) -> Tuple["CurrentSkill", ...]:
     """Normalize current skill slots and enforce distinct skill IDs."""
     skills = tuple(_current_skill_from_input(value) for value in values)
@@ -142,6 +243,79 @@ class CurrentSkill:
     @property
     def skill(self) -> str:
         return self.skill_id
+
+
+@dataclass(frozen=True)
+class TierRule:
+    """Display tier threshold from recommendation rules."""
+
+    name: str
+    min_score: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _normalize_tier(self.name))
+        object.__setattr__(self, "min_score", _normalize_score(self.min_score))
+
+
+@dataclass(frozen=True)
+class SkillRule:
+    """Validated recommendation rule for a single skill."""
+
+    skill_id: str
+    score: float
+    tier: str
+    reason_codes: Tuple[str, ...]
+    upgrade_priority: float = 0.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "skill_id",
+            _normalize_non_empty_string(self.skill_id, "skill_id"),
+        )
+        object.__setattr__(self, "score", _normalize_score(self.score))
+        object.__setattr__(self, "tier", _normalize_tier(self.tier))
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _normalize_reason_codes(self.reason_codes),
+        )
+        object.__setattr__(
+            self,
+            "upgrade_priority",
+            _normalize_finite_number(self.upgrade_priority, "upgrade_priority"),
+        )
+
+
+@dataclass(frozen=True)
+class RecommendationRules:
+    """Validated layered recommendation rules."""
+
+    version: int
+    scope: Mapping[str, Any]
+    default_role: str
+    tiers: Mapping[str, TierRule]
+    global_rules: Mapping[str, Mapping[str, SkillRule]]
+    faction_rules: Mapping[str, Mapping[str, Mapping[str, SkillRule]]]
+    class_rules: Mapping[str, Mapping[str, Mapping[str, SkillRule]]]
+    specialty_rules: Mapping[str, Mapping[str, Mapping[str, SkillRule]]]
+    hero_rules: Mapping[str, Mapping[str, Mapping[str, SkillRule]]]
+
+    def __post_init__(self) -> None:
+        if self.version != 1:
+            raise HeroSkillRecommendationError("rules version must be 1")
+        object.__setattr__(
+            self,
+            "default_role",
+            _normalize_non_empty_string(self.default_role, "default_role"),
+        )
+        object.__setattr__(self, "scope", dict(self.scope))
+        object.__setattr__(self, "tiers", dict(self.tiers))
+        object.__setattr__(self, "global_rules", dict(self.global_rules))
+        object.__setattr__(self, "faction_rules", dict(self.faction_rules))
+        object.__setattr__(self, "class_rules", dict(self.class_rules))
+        object.__setattr__(self, "specialty_rules", dict(self.specialty_rules))
+        object.__setattr__(self, "hero_rules", dict(self.hero_rules))
 
 
 @dataclass(frozen=True)
@@ -505,6 +679,204 @@ def _current_skill_from_input(value: Any) -> CurrentSkill:
     )
 
 
+def _validate_rules_scope(
+    scope: Any,
+    metadata: VcmiHeroSkillMetadata,
+) -> None:
+    if not isinstance(scope, Mapping):
+        raise HeroSkillRecommendationError("rules scope must be a mapping")
+    hero_files = tuple(_required_mapping_value(scope, "hero_files", "scope"))
+    excluded_files = tuple(_required_mapping_value(
+        scope,
+        "excluded_files",
+        "scope",
+    ))
+    if hero_files != metadata.loaded_hero_files:
+        raise HeroSkillRecommendationError(
+            "rules scope hero_files must match standard hero files"
+        )
+    if excluded_files != metadata.excluded_hero_files:
+        raise HeroSkillRecommendationError(
+            "rules scope excluded_files must match excluded hero files"
+        )
+
+
+def _normalize_rule_tiers(raw_tiers: Any) -> dict:
+    if not isinstance(raw_tiers, Mapping):
+        raise HeroSkillRecommendationError("tiers must be a mapping")
+    if set(raw_tiers) != set(VALID_TIERS):
+        raise HeroSkillRecommendationError("tiers must contain exactly S/A/B/C/D")
+
+    tiers = {}
+    previous_min_score = None
+    for tier_name in VALID_TIERS:
+        raw_tier = raw_tiers[tier_name]
+        if not isinstance(raw_tier, Mapping):
+            raise HeroSkillRecommendationError(f"tier {tier_name} must be a mapping")
+        min_score = _required_mapping_value(
+            raw_tier,
+            "min_score",
+            f"tier {tier_name}",
+        )
+        tier = TierRule(name=tier_name, min_score=min_score)
+        if previous_min_score is not None and tier.min_score >= previous_min_score:
+            raise HeroSkillRecommendationError(
+                "tier min_score values must descend from S to D"
+            )
+        previous_min_score = tier.min_score
+        tiers[tier_name] = tier
+
+    if tiers["D"].min_score != 0:
+        raise HeroSkillRecommendationError("tier D min_score must be 0")
+    return tiers
+
+
+def _parse_keyed_rule_groups(
+    raw_groups: Any,
+    allowed_keys: set,
+    metadata: VcmiHeroSkillMetadata,
+    tiers: Mapping[str, TierRule],
+    context: str,
+) -> dict:
+    if not isinstance(raw_groups, Mapping):
+        raise HeroSkillRecommendationError(f"{context} must be a mapping")
+    parsed = {}
+    for key in sorted(raw_groups):
+        if key not in allowed_keys:
+            raise HeroSkillRecommendationError(f"unknown {context} key: {key}")
+        parsed[key] = _parse_rule_layer_group(
+            raw_groups[key],
+            metadata,
+            tiers,
+            f"{context}.{key}",
+        )
+    return parsed
+
+
+def _parse_rule_layer_group(
+    raw_group: Any,
+    metadata: VcmiHeroSkillMetadata,
+    tiers: Mapping[str, TierRule],
+    context: str,
+) -> dict:
+    if not isinstance(raw_group, Mapping):
+        raise HeroSkillRecommendationError(f"{context} must be a mapping")
+    parsed = {}
+    for role in sorted(raw_group):
+        parsed[role] = _parse_role_skill_rules(
+            role,
+            raw_group[role],
+            metadata,
+            tiers,
+            f"{context}.{role}",
+        )
+    return parsed
+
+
+def _parse_role_skill_rules(
+    role: str,
+    raw_role: Any,
+    metadata: VcmiHeroSkillMetadata,
+    tiers: Mapping[str, TierRule],
+    context: str,
+) -> dict:
+    _normalize_non_empty_string(role, "role")
+    if not isinstance(raw_role, Mapping):
+        raise HeroSkillRecommendationError(f"{context} must be a mapping")
+    raw_skills = _required_mapping_value(raw_role, "skills", context)
+    if not isinstance(raw_skills, Mapping):
+        raise HeroSkillRecommendationError(f"{context}.skills must be a mapping")
+
+    parsed = {}
+    for skill_id in sorted(raw_skills):
+        if skill_id not in metadata.skills:
+            raise HeroSkillRecommendationError(f"unknown skill ID: {skill_id}")
+        parsed[skill_id] = _parse_skill_rule(
+            skill_id,
+            raw_skills[skill_id],
+            tiers,
+            f"{context}.skills.{skill_id}",
+        )
+    return parsed
+
+
+def _parse_skill_rule(
+    skill_id: str,
+    raw_rule: Any,
+    tiers: Mapping[str, TierRule],
+    context: str,
+) -> SkillRule:
+    if not isinstance(raw_rule, Mapping):
+        raise HeroSkillRecommendationError(f"{context} must be a mapping")
+    if "tier" in raw_rule:
+        raise HeroSkillRecommendationError(f"{context}.tier is derived")
+    if "reasons" in raw_rule:
+        raise HeroSkillRecommendationError(
+            f"{context}.reasons is not supported; use reason_codes"
+        )
+    score = _required_mapping_value(raw_rule, "score", context)
+    reason_codes = _required_mapping_value(raw_rule, "reason_codes", context)
+    reason_codes = _normalize_reason_codes(reason_codes)
+    if not reason_codes:
+        raise HeroSkillRecommendationError(f"{context}.reason_codes cannot be empty")
+    upgrade_priority = raw_rule.get("upgrade_priority", 0.0)
+    return SkillRule(
+        skill_id=skill_id,
+        score=score,
+        tier=derive_tier(score, tiers),
+        reason_codes=reason_codes,
+        upgrade_priority=upgrade_priority,
+    )
+
+
+def _validate_rules_coverage(
+    rules: RecommendationRules,
+    metadata: VcmiHeroSkillMetadata,
+) -> None:
+    missing = []
+    for hero_key in sorted(metadata.heroes):
+        if not _effective_skill_rules_for_hero(
+            rules,
+            metadata.heroes[hero_key],
+            rules.default_role,
+        ):
+            missing.append(hero_key)
+
+    if missing:
+        sample = ", ".join(missing[:8])
+        raise HeroSkillRecommendationError(
+            f"missing effective {rules.default_role} rules for heroes: {sample}"
+        )
+
+
+def _effective_skill_rules_for_hero(
+    rules: RecommendationRules,
+    hero: HeroMetadata,
+    role: str,
+) -> dict:
+    effective = {}
+    for layer in (
+        rules.global_rules,
+        rules.faction_rules.get(hero.faction, {}),
+        rules.class_rules.get(hero.class_id, {}),
+        rules.specialty_rules.get(hero.specialty_summary, {}),
+        rules.hero_rules.get(hero.key, {}),
+    ):
+        effective.update(layer.get(role, {}))
+    return effective
+
+
+def _metadata_factions(metadata: VcmiHeroSkillMetadata) -> Tuple[str, ...]:
+    return tuple(sorted({hero.faction for hero in metadata.heroes.values()}))
+
+
+def _metadata_specialties(metadata: VcmiHeroSkillMetadata) -> Tuple[str, ...]:
+    return tuple(sorted({
+        hero.specialty_summary
+        for hero in metadata.heroes.values()
+    }))
+
+
 def _default_config_root() -> Path:
     return Path(__file__).resolve().parents[1] / "config"
 
@@ -716,6 +1088,15 @@ def _normalize_score(value: Any) -> float:
     return score
 
 
+def _normalize_finite_number(value: Any, field_name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise HeroSkillRecommendationError(f"{field_name} must be a number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise HeroSkillRecommendationError(f"{field_name} must be finite")
+    return number
+
+
 def _normalize_non_bool_int(value: Any, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise HeroSkillRecommendationError(f"{field_name} must be an integer")
@@ -741,7 +1122,11 @@ def _normalize_availability(value: Any) -> str:
 
 
 def _normalize_reason_codes(values: Iterable[Any]) -> Tuple[str, ...]:
-    if isinstance(values, str):
+    if isinstance(values, str) or isinstance(values, Mapping):
+        raise HeroSkillRecommendationError(
+            "reason_codes must be an iterable of strings"
+        )
+    if not isinstance(values, Iterable):
         raise HeroSkillRecommendationError(
             "reason_codes must be an iterable of strings"
         )

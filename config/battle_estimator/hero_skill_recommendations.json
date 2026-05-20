@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "scope": {
+    "hero_files": [
+      "castle.json",
+      "conflux.json",
+      "dungeon.json",
+      "fortress.json",
+      "inferno.json",
+      "necropolis.json",
+      "rampart.json",
+      "stronghold.json",
+      "tower.json"
+    ],
+    "excluded_files": [
+      "portraits.json",
+      "portraitsChronicles.json",
+      "special.json"
+    ]
+  },
+  "default_role": "main",
+  "tiers": {
+    "S": { "min_score": 90 },
+    "A": { "min_score": 75 },
+    "B": { "min_score": 55 },
+    "C": { "min_score": 35 },
+    "D": { "min_score": 0 }
+  },
+  "global": {
+    "main": {
+      "skills": {
+        "earthMagic": {
+          "score": 95,
+          "upgrade_priority": 8,
+          "reason_codes": ["mass_slow", "town_portal", "combat_control"]
+        },
+        "logistics": {
+          "score": 92,
+          "upgrade_priority": 7,
+          "reason_codes": ["map_tempo", "more_fights"]
+        },
+        "offence": {
+          "score": 82,
+          "upgrade_priority": 5,
+          "reason_codes": ["physical_damage", "main_army_scaling"]
+        },
+        "armorer": {
+          "score": 80,
+          "upgrade_priority": 5,
+          "reason_codes": ["loss_reduction", "combat_stability"]
+        },
+        "airMagic": {
+          "score": 78,
+          "upgrade_priority": 4,
+          "reason_codes": ["mass_haste", "strategic_spells"]
+        },
+        "wisdom": {
+          "score": 74,
+          "upgrade_priority": 3,
+          "reason_codes": ["higher_level_spells", "main_hero_scaling"]
+        },
+        "tactics": {
+          "score": 68,
+          "upgrade_priority": 3,
+          "reason_codes": ["deployment_control", "combat_tempo"]
+        },
+        "intelligence": {
+          "score": 62,
+          "upgrade_priority": 2,
+          "reason_codes": ["mana_depth", "spell_sustain"]
+        },
+        "pathfinding": {
+          "score": 58,
+          "upgrade_priority": 2,
+          "reason_codes": ["rough_terrain", "movement_efficiency"]
+        },
+        "eagleEye": {
+          "score": 10,
+          "reason_codes": ["low_tempo", "weak_main_slot"]
+        },
+        "learning": {
+          "score": 18,
+          "reason_codes": ["slow_payoff", "weak_main_slot"]
+        },
+        "firstAid": {
+          "score": 15,
+          "reason_codes": ["low_impact", "weak_main_slot"]
+        }
+      }
+    }
+  },
+  "factions": {
+    "necropolis": {
+      "main": {
+        "skills": {
+          "necromancy": {
+            "score": 96,
+            "upgrade_priority": 10,
+            "reason_codes": ["necropolis_core", "army_snowball"]
+          },
+          "leadership": {
+            "score": 20,
+            "reason_codes": ["undead_army", "weak_main_slot"]
+          }
+        }
+      }
+    }
+  },
+  "classes": {
+    "deathknight": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 86,
+            "upgrade_priority": 6,
+            "reason_codes": ["might_affinity", "physical_damage"]
+          },
+          "armorer": {
+            "score": 84,
+            "upgrade_priority": 6,
+            "reason_codes": ["might_affinity", "loss_reduction"]
+          }
+        }
+      }
+    }
+  },
+  "specialties": {
+    "secondary:necromancy": {
+      "main": {
+        "skills": {
+          "necromancy": {
+            "score": 98,
+            "upgrade_priority": 12,
+            "reason_codes": ["hero_specialty", "army_snowball"]
+          }
+        }
+      }
+    }
+  },
+  "heroes": {
+    "isra": {
+      "main": {
+        "skills": {
+          "necromancy": {
+            "score": 99,
+            "upgrade_priority": 14,
+            "reason_codes": ["hero_specialty", "advanced_start", "army_snowball"]
+          }
+        }
+      }
+    }
+  }
+}
