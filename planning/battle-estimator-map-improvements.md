@@ -1347,17 +1347,53 @@ routes, cross-level routes through subterranean gates, and routes through
 monoliths when available.
 
 **Acceptance criteria:**
-- [ ] Same-level land route draws a plausible shortest path.
-- [ ] Blocked target fallback is reported and visualized.
-- [ ] Cross-level route through a subterranean gate is segmented correctly.
-- [ ] Portal route shows portal segment metadata.
-- [ ] Normal simulation clicks still work outside path mode.
-- [ ] Pathfinding does not route over water in MVP.
+- [x] Same-level land route draws a plausible shortest path.
+- [x] Blocked target fallback is reported and visualized.
+- [x] Cross-level route through a subterranean gate is segmented correctly.
+- [x] Portal route shows portal segment metadata.
+- [x] Normal simulation clicks still work outside path mode.
+- [x] Pathfinding does not route over water in MVP.
 
 **Verification:**
-- [ ] Run `python3 -m unittest`.
-- [ ] Start the GUI and manually verify path mode on at least one current
+- [x] Run `python3 -m unittest`.
+- [x] Start the GUI and manually verify path mode on at least one current
       Diamond save/map.
+
+**Completion Notes (2026-05-20):**
+- Verified against the current Diamond save/map:
+  `413.GM2` on `PlayerOne,PlayerTwo 2026.05.19 18;00 Diamond.h3m`
+  (`108x108`, 2 levels).
+- Same-level path: selected Piquedram (`hero:740438`) and clicked tile
+  `(90,59,1)`. The GUI returned a found same-level land route with no portal
+  segment.
+- Blocked fallback: selected Piquedram and clicked blocked tile `(81,62,1)`.
+  The route resolved to reachable land neighbor `(82,61,1)` and displayed the
+  fallback note.
+- Water/no-water MVP: selected Piquedram and clicked water tile `(81,60,1)`.
+  The route resolved to `(82,61,1)`, and API structural checks confirmed every
+  walk step in all verified routes stayed on land route tiles with no water
+  traversal.
+- Monolith route: selected Vokial (`hero:776540`) and clicked `portal:2353`.
+  The returned segment metadata included `monolith_one_way` on
+  `monolith-one-way:0`; clicking the portal segment was client-side navigation
+  only and focused the source-side fragment without another path request.
+- Subterranean gate route: selected Xsi (`hero:789668`) and clicked
+  `portal:2281`. The returned segment metadata included `subterranean_gate` on
+  `subterranean:2282:2281`; clicking the segment focused the level-0 source
+  side without another path request.
+- Normal simulation regression check: with Path Mode off, selected Coronius
+  (`hero:731686`) and clicked `neutral:2289`. The GUI issued one
+  `/api/simulate-target` request, no `/api/path-route` request, selected the
+  target marker, and updated the estimate panel.
+- Real GUI/browser verification used a temporary copy of the active
+  battle-estimator config, a local HTTP server created by `create_server`, and
+  headless Chromium via Playwright. Request counts during the UI pass:
+  `/api/path-route`: 5, `/api/simulate-target`: 1, `/api/select-hero`: 4.
+- Verification: real Diamond API structural/no-water route checks; headless
+  Chromium GUI path-mode smoke on the same server/map; `python3 -m unittest`;
+  `git diff --check`; subagent plan review completed with the requested
+  adjustments applied. No production code changes were needed, so no code
+  review was required.
 
 **Dependencies:** Tasks 18, 19, 20, 21, 22, 23, 24
 
@@ -1372,53 +1408,53 @@ monoliths when available.
 
 After Tasks 1-3:
 
-- [ ] `python3 -m unittest tests.test_h3_map_parser` passes.
-- [ ] `python3 -m unittest tests.test_battle_estimator_gui` passes.
-- [ ] `/api/state` includes valid compact `route_layers`.
+- [x] `python3 -m unittest tests.test_h3_map_parser` passes.
+- [x] `python3 -m unittest tests.test_battle_estimator_gui` passes.
+- [x] `/api/state` includes valid compact `route_layers`.
 
 ### Checkpoint: Static Markers
 
 After Tasks 5-8:
 
-- [ ] `town_targets`, `portal_targets`, and `portal_edges` exist in
+- [x] `town_targets`, `portal_targets`, and `portal_edges` exist in
       `/api/state`.
-- [ ] Town and portal markers render without breaking existing hero/neutral
+- [x] Town and portal markers render without breaking existing hero/neutral
       interactions.
-- [ ] Portal destinations are inspectable in the GUI.
+- [x] Portal destinations are inspectable in the GUI.
 
 ### Checkpoint: Target And Scan UX
 
 After Tasks 10-17:
 
-- [ ] Hidden heroes follow the same semantics as hidden neutral monsters.
-- [ ] The old separate scan target type is gone from the UI.
-- [ ] Scan results can be sorted by distance or easiest target.
-- [ ] Scan result hover highlights without moving the map.
-- [ ] Scan target difficulty is shown as rings/borders without replacing team
+- [x] Hidden heroes follow the same semantics as hidden neutral monsters.
+- [x] The old separate scan target type is gone from the UI.
+- [x] Scan results can be sorted by distance or easiest target.
+- [x] Scan result hover highlights without moving the map.
+- [x] Scan target difficulty is shown as rings/borders without replacing team
       colors.
 
 ### Checkpoint: Pathfinding MVP
 
 After Tasks 18-25:
 
-- [ ] Pathfinding service returns land-only paths, no-path states, and blocked
+- [x] Pathfinding service returns land-only paths, no-path states, and blocked
       target fallback.
-- [ ] Portal and subterranean-gate edges are usable in routes.
-- [ ] Path mode does not interfere with normal click-to-simulate behavior.
-- [ ] Cross-level paths can be inspected through the segment list.
+- [x] Portal and subterranean-gate edges are usable in routes.
+- [x] Path mode does not interfere with normal click-to-simulate behavior.
+- [x] Cross-level paths can be inspected through the segment list.
 
 ### Checkpoint: Complete
 
 After Tasks 9, 17, and 25:
 
-- [ ] `python3 -m unittest` passes.
-- [ ] Route overlay, water, towns, portals, heroes, and neutrals are all
+- [x] `python3 -m unittest` passes.
+- [x] Route overlay, water, towns, portals, heroes, and neutrals are all
       visually distinguishable.
-- [ ] Manual inspection confirms the tool helps understand route corridors
+- [x] Manual inspection confirms the tool helps understand route corridors
       across levels.
-- [ ] Target hiding, map filtering, scan sorting, scan hover, scan click, auto
+- [x] Target hiding, map filtering, scan sorting, scan hover, scan click, auto
       refresh, and scan rings work together in the GUI.
-- [ ] Path mode can find and display same-level and cross-level land routes.
+- [x] Path mode can find and display same-level and cross-level land routes.
 
 ## Risks And Mitigations
 
@@ -1487,4 +1523,4 @@ After Tasks 9, 17, and 25:
 | 22 | Expose A Pathfinding API Endpoint | done | 21 |
 | 23 | Add Path Mode UI And Route Rendering | done | 22 |
 | 24 | Add Path Segment List And Cross-Level Navigation | done | 23 |
-| 25 | End-To-End Pathfinding Verification | todo | 18, 19, 20, 21, 22, 23, 24 |
+| 25 | End-To-End Pathfinding Verification | done | 18, 19, 20, 21, 22, 23, 24 |
