@@ -257,9 +257,15 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "routeStyleForChar",
             "use_latest_game_folder",
             "town_targets",
+            "portal_targets",
+            "portal_edges",
             "TOWN_MARKER_STYLE",
+            "PORTAL_MARKER_STYLES",
             "currentMapViewForTest",
             "Town target is not a battle simulation target.",
+            "Portal target is not a battle simulation target.",
+            "portalDestinationText",
+            "context-menu-note",
             "Initial owner:",
             "AUTO_REFRESH_MS = 5000",
             "AUTO_REFRESH_ENABLED = false",
@@ -363,6 +369,7 @@ const assert = require("assert");
 const drawOperations = [];
 const routeFillStyles = new Set(["#d9ead5", "#c8e2f2", "#87919e"]);
 const townFillStyles = new Set(["#f8c756", "#f4e7c4"]);
+const portalFillStyles = new Set(["#0f9f9a", "#7c3aed", "#d85fa3"]);
 const context = new Proxy({{
   save() {{
     drawOperations.push({{ op: "save" }});
@@ -492,6 +499,8 @@ const snapshot = {{
   heroes: [],
   neutral_targets: [],
   town_targets: [],
+  portal_targets: [],
+  portal_edges: [],
   recent_heroes: [],
   selected_hero_id: null
 }};
@@ -617,12 +626,130 @@ const markerSnapshot = {{
       custom_name: "",
       has_garrison: false
     }}
+  ],
+  portal_targets: [
+    {{
+      id: "portal:100",
+      object_index: 100,
+      position: {{ x: 2, y: 0, z: 0 }},
+      anchor_position: {{ x: 2, y: 0, z: 0 }},
+      object_id: 43,
+      h3m_subid: 7,
+      portal_type: "monolith_one_way",
+      role: "entrance",
+      channel_key: "monolith-one-way:7"
+    }},
+    {{
+      id: "portal:101",
+      object_index: 101,
+      position: {{ x: 0, y: 2, z: 1 }},
+      anchor_position: {{ x: 0, y: 2, z: 1 }},
+      object_id: 44,
+      h3m_subid: 7,
+      portal_type: "monolith_one_way",
+      role: "exit",
+      channel_key: "monolith-one-way:7"
+    }},
+    {{
+      id: "portal:102",
+      object_index: 102,
+      position: {{ x: 1, y: 2, z: 1 }},
+      anchor_position: {{ x: 1, y: 2, z: 1 }},
+      object_id: 44,
+      h3m_subid: 7,
+      portal_type: "monolith_one_way",
+      role: "exit",
+      channel_key: "monolith-one-way:7"
+    }},
+    {{
+      id: "portal:110",
+      object_index: 110,
+      position: {{ x: 3, y: 3, z: 0 }},
+      anchor_position: {{ x: 3, y: 3, z: 0 }},
+      object_id: 45,
+      h3m_subid: 9,
+      portal_type: "monolith_two_way",
+      role: "both",
+      channel_key: "monolith-two-way:9"
+    }},
+    {{
+      id: "portal:111",
+      object_index: 111,
+      position: {{ x: 2, y: 0, z: 1 }},
+      anchor_position: {{ x: 2, y: 0, z: 1 }},
+      object_id: 45,
+      h3m_subid: 9,
+      portal_type: "monolith_two_way",
+      role: "both",
+      channel_key: "monolith-two-way:9"
+    }},
+    {{
+      id: "portal:120",
+      object_index: 120,
+      position: {{ x: 2, y: 1, z: 0 }},
+      anchor_position: {{ x: 2, y: 1, z: 0 }},
+      object_id: 103,
+      h3m_subid: 0,
+      portal_type: "subterranean_gate",
+      role: "both",
+      channel_key: "subterranean:120"
+    }}
+  ],
+  portal_edges: [
+    {{
+      source_id: "portal:100",
+      destination_id: "portal:101",
+      source_object_index: 100,
+      destination_object_index: 101,
+      portal_type: "monolith_one_way",
+      channel_key: "monolith-one-way:7",
+      h3m_subid: 7
+    }},
+    {{
+      source_id: "portal:100",
+      destination_id: "portal:102",
+      source_object_index: 100,
+      destination_object_index: 102,
+      portal_type: "monolith_one_way",
+      channel_key: "monolith-one-way:7",
+      h3m_subid: 7
+    }},
+    {{
+      source_id: "portal:100",
+      destination_id: "portal:999",
+      source_object_index: 100,
+      destination_object_index: 999,
+      portal_type: "monolith_one_way",
+      channel_key: "monolith-one-way:7",
+      h3m_subid: 7
+    }},
+    {{
+      source_id: "portal:110",
+      destination_id: "portal:111",
+      source_object_index: 110,
+      destination_object_index: 111,
+      portal_type: "monolith_two_way",
+      channel_key: "monolith-two-way:9",
+      h3m_subid: 9
+    }},
+    {{
+      source_id: "portal:111",
+      destination_id: "portal:110",
+      source_object_index: 111,
+      destination_object_index: 110,
+      portal_type: "monolith_two_way",
+      channel_key: "monolith-two-way:9",
+      h3m_subid: 9
+    }}
   ]
 }};
 const level0Markers = helpers.buildMarkerCache(markerSnapshot, 10, 0, false);
 assert.deepStrictEqual(level0Markers.map((marker) => marker.id), [
   "town:0",
   "town:random",
+  "portal:100",
+  "portal:110",
+  "portal:120",
   "hero:0",
   "neutral:0"
 ]);
@@ -634,6 +761,21 @@ const randomTown = level0Markers.find((marker) => marker.id === "town:random");
 assert.strictEqual(randomTown.label, "Random town");
 assert.ok(helpers.markerTooltipText(randomTown).includes("Random town subid: 99"));
 assert.ok(!helpers.markerTooltipText(randomTown).includes("null"));
+const portalMarker = level0Markers.find((marker) => marker.id === "portal:100");
+assert.strictEqual(portalMarker.type, "portal");
+assert.strictEqual(portalMarker.label, "One-way monolith entrance");
+assert.deepStrictEqual(
+  portalMarker.destinations.map((destination) => destination.id),
+  ["portal:101", "portal:102"]
+);
+assert.ok(helpers.markerTooltipText(portalMarker).includes("One-way monolith entrance"));
+assert.ok(helpers.markerTooltipText(portalMarker).includes("2,0,0"));
+assert.ok(helpers.markerTooltipText(portalMarker).includes("0,2,1"));
+assert.ok(helpers.markerTooltipText(portalMarker).includes("1,2,1"));
+assert.ok(!helpers.markerTooltipText(portalMarker).includes("portal:999"));
+const impassablePortal = level0Markers.find((marker) => marker.id === "portal:120");
+assert.strictEqual(helpers.portalDestinationText(impassablePortal), "Destinations: none");
+assert.strictEqual(helpers.portalTypeLabel("subterranean_gate"), "Subterranean gate");
 assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 0), ["LWBB", "LLWB", "BWLX", "LLLL"]);
 assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 1), ["BBBB", "WWWW", "LLLL", "LWBZ"]);
 assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 99), ["BBBB", "WWWW", "LLLL", "LWBZ"]);
@@ -647,11 +789,18 @@ assert.strictEqual(helpers.routeStyleForChar("X"), null);
 const level0WithRemoved = helpers.buildMarkerCache(markerSnapshot, 10, 0, true);
 assert.deepStrictEqual(
   level0WithRemoved.map((marker) => marker.id),
-  ["town:0", "town:random", "hero:0", "neutral:0", "neutral:removed"]
+  ["town:0", "town:random", "portal:100", "portal:110", "portal:120", "hero:0", "neutral:0", "neutral:removed"]
 );
 assert.strictEqual(level0WithRemoved.find((marker) => marker.id === "neutral:removed").removed, true);
 const level1Markers = helpers.buildMarkerCache(markerSnapshot, 10, 1, false);
-assert.deepStrictEqual(level1Markers.map((marker) => marker.id), ["town:1", "hero:1", "neutral:1"]);
+assert.deepStrictEqual(level1Markers.map((marker) => marker.id), [
+  "town:1",
+  "portal:101",
+  "portal:102",
+  "portal:111",
+  "hero:1",
+  "neutral:1"
+]);
 const overlapSnapshot = {{
   map: {{ width: 4, height: 4, levels: 1 }},
   selected_hero_id: "hero:0",
@@ -667,13 +816,44 @@ const overlapSnapshot = {{
       faction_subid: 3,
       initial_owner_color_name: "red"
     }}
-  ]
+  ],
+  portal_targets: [
+    {{
+      id: "portal:overlap",
+      object_index: 12,
+      position: {{ x: 1, y: 2, z: 0 }},
+      object_id: 45,
+      h3m_subid: 4,
+      portal_type: "monolith_two_way",
+      role: "both",
+      channel_key: "monolith-two-way:4"
+    }}
+  ],
+  portal_edges: []
 }};
 const overlapMarkers = helpers.buildMarkerCache(overlapSnapshot, 10, 0, false);
-assert.deepStrictEqual(overlapMarkers.map((marker) => marker.id), ["town:overlap", "hero:0"]);
+assert.deepStrictEqual(overlapMarkers.map((marker) => marker.id), [
+  "town:overlap",
+  "portal:overlap",
+  "hero:0"
+]);
 assert.strictEqual(
   helpers.hitTestMarker(overlapMarkers, {{ x: 15, y: 25 }}, {{ zoom: 1, pan: {{ x: 0, y: 0 }} }}).id,
   "hero:0"
+);
+const portalTownOverlapSnapshot = {{
+  map: {{ width: 4, height: 4, levels: 1 }},
+  selected_hero_id: null,
+  heroes: [],
+  neutral_targets: [],
+  town_targets: overlapSnapshot.town_targets,
+  portal_targets: overlapSnapshot.portal_targets,
+  portal_edges: []
+}};
+const portalTownOverlapMarkers = helpers.buildMarkerCache(portalTownOverlapSnapshot, 10, 0, false);
+assert.strictEqual(
+  helpers.hitTestMarker(portalTownOverlapMarkers, {{ x: 15, y: 25 }}, {{ zoom: 1, pan: {{ x: 0, y: 0 }} }}).id,
+  "portal:overlap"
 );
 assert.deepStrictEqual(
   helpers.rankedMapHeroes(markerSnapshot).map((hero) => hero.id),
@@ -767,6 +947,10 @@ assert.deepStrictEqual(
   {{ simulate: false, message: "Town target is not a battle simulation target." }}
 );
 assert.deepStrictEqual(
+  helpers.simulationClickDecision({{ type: "portal", id: "portal:100" }}, "hero:256"),
+  {{ simulate: false, message: "Portal target is not a battle simulation target." }}
+);
+assert.deepStrictEqual(
   helpers.simulationClickDecision({{ type: "neutral", id: "neutral:0" }}, "hero:256"),
   {{ simulate: true, message: "" }}
 );
@@ -845,6 +1029,10 @@ const townFillsAfterRender = drawOperations.filter((operation) => (
   operation.op === "fillRect" && townFillStyles.has(operation.fillStyle)
 ));
 assert.ok(townFillsAfterRender.length >= 1);
+const portalFillsAfterRender = drawOperations.filter((operation) => (
+  operation.op === "fillRect" && portalFillStyles.has(operation.fillStyle)
+));
+assert.ok(portalFillsAfterRender.length >= 1);
 const renderedView = helpers.currentMapViewForTest();
 const renderedTown = renderedView.markers.find((marker) => marker.id === "town:0");
 const renderedTownScreen = helpers.worldToScreen(renderedTown.world, renderedView);
@@ -865,6 +1053,42 @@ assert.strictEqual(fetchCalls, fetchCallsBeforeTownClick);
 assert.ok(elements["target-state"].textContent.includes("town town:0"));
 assert.ok(elements["target-state"].textContent.includes("Initial owner: Red"));
 assert.ok(elements["estimate-state"].textContent.includes("Town target"));
+const renderedPortal = renderedView.markers.find((marker) => marker.id === "portal:100");
+const renderedPortalScreen = helpers.worldToScreen(renderedPortal.world, renderedView);
+const fetchCallsBeforePortalClick = fetchCalls;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 8,
+  clientX: renderedPortalScreen.x,
+  clientY: renderedPortalScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 8,
+  clientX: renderedPortalScreen.x,
+  clientY: renderedPortalScreen.y
+}});
+assert.strictEqual(fetchCalls, fetchCallsBeforePortalClick);
+assert.ok(elements["target-state"].textContent.includes("portal portal:100"));
+assert.ok(elements["target-state"].textContent.includes("Destinations: 0,2,1; 1,2,1"));
+assert.ok(elements["estimate-state"].textContent.includes("Portal target"));
+let contextMenuPrevented = 0;
+elements["battle-map"].dispatch("contextmenu", {{
+  clientX: renderedPortalScreen.x,
+  clientY: renderedPortalScreen.y,
+  preventDefault() {{
+    contextMenuPrevented += 1;
+  }}
+}});
+assert.strictEqual(contextMenuPrevented, 1);
+assert.strictEqual(elements["target-context-menu"].hidden, false);
+const destinationButtons = elements["target-context-menu"].children.filter((child) => child.type === "button");
+assert.strictEqual(destinationButtons.length, 2);
+destinationButtons[0].dispatch("click", {{}});
+const destinationView = helpers.currentMapViewForTest();
+assert.strictEqual(destinationView.level, 1);
+assert.strictEqual(destinationView.activeMarkerId, "portal:101");
+assert.ok(elements["target-state"].textContent.includes("portal portal:101"));
 drawOperations.length = 0;
 const routeToggle = elements["show-route-overlay-toggle"];
 routeToggle.checked = false;
@@ -927,6 +1151,8 @@ assert.strictEqual(fetchCalls, fetchCallsBeforeRender);
                 self.assertEqual(payload["recent_heroes"], ["Isra", "Marius"])
                 self.assertEqual(payload["route_layers"], [["L"]])
                 self.assertEqual(payload["town_targets"], [])
+                self.assertEqual(payload["portal_targets"], [])
+                self.assertEqual(payload["portal_edges"], [])
 
             self._with_server(check, app_state=app_state)
 
@@ -962,6 +1188,59 @@ assert.strictEqual(fetchCalls, fetchCallsBeforeRender);
                 self.assertEqual(town["initial_owner_color_name"], "tan")
                 self.assertEqual(town["custom_name"], "Castle Keep")
                 self.assertTrue(town["has_garrison"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_state_endpoint_includes_portal_targets_and_edges(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map_with_portals(temp_path / "portal-map.h3m")
+            config_path = temp_path / "config.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                self.assertEqual(len(payload["portal_targets"]), 2)
+                entrance = payload["portal_targets"][0]
+                self.assertEqual(entrance["id"], "portal:0")
+                self.assertEqual(entrance["object_index"], 0)
+                self.assertEqual(entrance["position"], {"x": 6, "y": 5, "z": 0})
+                self.assertEqual(entrance["anchor_position"], {"x": 7, "y": 5, "z": 0})
+                self.assertEqual(
+                    entrance["object_id"],
+                    h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+                )
+                self.assertEqual(entrance["h3m_subid"], 2)
+                self.assertEqual(
+                    entrance["portal_type"],
+                    h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                )
+                self.assertEqual(entrance["role"], h3_map_parser.PORTAL_ROLE_ENTRANCE)
+                self.assertEqual(entrance["channel_key"], "monolith-one-way:2")
+                self.assertEqual(
+                    payload["portal_edges"],
+                    [
+                        {
+                            "source_id": "portal:0",
+                            "destination_id": "portal:1",
+                            "source_object_index": 0,
+                            "destination_object_index": 1,
+                            "portal_type": h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                            "channel_key": "monolith-one-way:2",
+                            "h3m_subid": 2,
+                        },
+                    ],
+                )
 
             self._with_server(check, app_state=app_state)
 
@@ -2275,6 +2554,35 @@ def _write_h3m_map_with_town(path: Path) -> Path:
             ),
         ),
         map_size=8,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(gzip.compress(payload))
+    return path
+
+
+def _write_h3m_map_with_portals(path: Path) -> Path:
+    visit_mask = bytes((0x01, 0x00, 0x00, 0x00, 0x00, 0x40))
+    payload = _minimal_h3m_with_templates_and_objects(
+        h3_map_parser.H3M_FORMAT_SOD,
+        (
+            _object_template_bytes(
+                "AVXmn1e.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+                subid=2,
+                visit_mask=visit_mask,
+            ),
+            _object_template_bytes(
+                "AVXmn1x.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+                subid=2,
+            ),
+        ),
+        (
+            _object_bytes((7, 5, 0), 0, b""),
+            _object_bytes((2, 3, 1), 1, b""),
+        ),
+        map_size=8,
+        levels=2,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(gzip.compress(payload))

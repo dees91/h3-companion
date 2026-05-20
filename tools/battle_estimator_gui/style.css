@@ -556,6 +556,12 @@ select:disabled {
   white-space: nowrap;
 }
 
+.context-menu-note {
+  padding: 7px 9px;
+  color: #64748b;
+  font-size: 13px;
+}
+
 .map-overlay {
   position: absolute;
   right: 12px;

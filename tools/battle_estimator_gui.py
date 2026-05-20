@@ -105,6 +105,8 @@ class DomainSnapshot:
     visible_neutral_targets: tuple
     neutral_by_id: dict
     town_targets: tuple
+    portal_targets: tuple
+    portal_edges: tuple
     removed_records: tuple
     team_by_color: dict
 
@@ -690,6 +692,14 @@ def _build_domain_snapshot_from_source(
             _serialize_town_target(target)
             for target in loaded_map.town_targets
         ],
+        "portal_targets": [
+            _serialize_portal_target(target)
+            for target in loaded_map.portal_targets
+        ],
+        "portal_edges": [
+            _serialize_portal_edge(edge)
+            for edge in loaded_map.portal_edges
+        ],
     }
     return DomainSnapshot(
         mode=mode,
@@ -706,6 +716,8 @@ def _build_domain_snapshot_from_source(
             for target in neutral_targets
         },
         town_targets=loaded_map.town_targets,
+        portal_targets=loaded_map.portal_targets,
+        portal_edges=loaded_map.portal_edges,
         removed_records=removed_records,
         team_by_color=team_by_color,
     )
@@ -1009,12 +1021,54 @@ def _serialize_town_target(target) -> dict:
     }
 
 
+def _serialize_portal_target(target) -> dict:
+    return {
+        "id": _portal_target_id(target),
+        "object_index": target.object_index,
+        "position": {
+            "x": target.x,
+            "y": target.y,
+            "z": target.z,
+        },
+        "anchor_position": {
+            "x": target.anchor_x,
+            "y": target.anchor_y,
+            "z": target.anchor_z,
+        },
+        "object_id": target.object_id,
+        "h3m_subid": target.h3m_subid,
+        "portal_type": target.portal_type,
+        "role": target.role,
+        "channel_key": target.channel_key,
+    }
+
+
+def _serialize_portal_edge(edge) -> dict:
+    return {
+        "source_id": _portal_target_id_from_index(edge.source_object_index),
+        "destination_id": _portal_target_id_from_index(edge.destination_object_index),
+        "source_object_index": edge.source_object_index,
+        "destination_object_index": edge.destination_object_index,
+        "portal_type": edge.portal_type,
+        "channel_key": edge.channel_key,
+        "h3m_subid": edge.h3m_subid,
+    }
+
+
 def _neutral_target_id(target) -> str:
     return f"neutral:{target.object_index}"
 
 
 def _town_target_id(target) -> str:
     return f"town:{target.object_index}"
+
+
+def _portal_target_id(target) -> str:
+    return _portal_target_id_from_index(target.object_index)
+
+
+def _portal_target_id_from_index(object_index: int) -> str:
+    return f"portal:{object_index}"
 
 
 def _initial_owner_color_name(initial_owner: int | None) -> str | None:

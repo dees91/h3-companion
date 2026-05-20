@@ -507,18 +507,38 @@ portal markers, and show destination information in tooltip/details. For
 cross-level subterranean gates, provide a quick way to center the paired gate.
 
 **Acceptance criteria:**
-- [ ] `/api/state` includes `portal_targets` and `portal_edges`.
-- [ ] Portal markers render on the correct map level.
-- [ ] Tooltip/details show whether the portal is one-way, two-way, or a
+- [x] `/api/state` includes `portal_targets` and `portal_edges`.
+- [x] Portal markers render on the correct map level.
+- [x] Tooltip/details show whether the portal is one-way, two-way, or a
       subterranean gate.
-- [ ] Destination coordinates are shown for all known exits.
-- [ ] For destinations on another level, the UI can switch level and center the
+- [x] Destination coordinates are shown for all known exits.
+- [x] For destinations on another level, the UI can switch level and center the
       destination marker.
 
 **Verification:**
-- [ ] Add or update GUI snapshot tests.
-- [ ] Manual GUI check on a Diamond map with monoliths and subterranean gates.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Add or update GUI snapshot tests.
+- [x] Manual GUI check on a Diamond map with monoliths and subterranean gates.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion Notes (2026-05-20):**
+- Added `portal_targets` and `portal_edges` to `/api/state`, including stable
+  `portal:<object_index>` IDs and directed edge source/destination IDs.
+- Rendered portal markers on the active map level with distinct styles for
+  one-way monoliths, two-way monoliths, and subterranean gates.
+- Added portal tooltip/details text with type, role, subid, channel key, and all
+  known destination coordinates; malformed destination edges are ignored.
+- Added portal context-menu destination actions that switch map level, center the
+  destination marker, and update the active marker/details. Portal clicks are
+  blocked from battle simulation.
+- Added API/frontend tests for portal serialization, level filtering, multiple
+  one-way exits, two-way destinations, impassable portals, malformed destination
+  edges, hit-test priority, canvas drawing, and real context-menu centering.
+- Manual GUI check: Diamond map `PlayerOne,PlayerTwo 2026.05.19 18;00 Diamond.h3m`
+  exposed 44 portal targets and 44 portal edges; headless Chrome verified a
+  nonblank portal marker pixel, portal click non-simulation, destination menu,
+  and cross-level centering from level 0 to level 1.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui` and
+  `python3 -m unittest`.
 
 **Dependencies:** Task 7
 
@@ -860,8 +880,8 @@ After Tasks 9 and 17:
 | 5 | Parse Town Targets | done | 1 |
 | 6 | Show Town Markers In The GUI | done | 5 |
 | 7 | Parse Portal Targets And Edges | done | 1 |
-| 8 | Show Portal Markers And Destinations In The GUI | todo | 7 |
-| 9 | End-To-End Map Verification | blocked | 4, 6, 8 |
+| 8 | Show Portal Markers And Destinations In The GUI | done | 7 |
+| 9 | End-To-End Map Verification | todo | 4, 6, 8 |
 | 10 | Add Hidden Hero Target State | todo | - |
 | 11 | Add Hero Marker Context Actions | blocked | 10 |
 | 12 | Merge Map Filter And Scan Target Type | todo | - |

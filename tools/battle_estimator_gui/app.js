@@ -128,6 +128,12 @@
     unownedFill: "#f4e7c4",
     unownedStroke: "#8a7654"
   };
+  const PORTAL_MARKER_STYLES = {
+    monolith_one_way: { fill: "#0f9f9a", stroke: "#115e59" },
+    monolith_two_way: { fill: "#7c3aed", stroke: "#4c1d95" },
+    subterranean_gate: { fill: "#d85fa3", stroke: "#8f2a61" },
+    unknown: { fill: "#64748b", stroke: "#334155" }
+  };
 
   function setHealth(text, className) {
     elements.health.textContent = text;
@@ -463,6 +469,98 @@
     return townSummaryParts(marker).join(" | ");
   }
 
+  function portalTypeLabel(portalType) {
+    if (portalType === "monolith_one_way") {
+      return "One-way monolith";
+    }
+    if (portalType === "monolith_two_way") {
+      return "Two-way monolith";
+    }
+    if (portalType === "subterranean_gate") {
+      return "Subterranean gate";
+    }
+    return "Portal";
+  }
+
+  function portalRoleLabel(role) {
+    if (role === "entrance") {
+      return "entrance";
+    }
+    if (role === "exit") {
+      return "exit";
+    }
+    return "";
+  }
+
+  function portalMarkerLabel(portal) {
+    const typeLabel = portalTypeLabel(portal.portal_type);
+    const roleLabel = portalRoleLabel(portal.role);
+    return roleLabel ? `${typeLabel} ${roleLabel}` : typeLabel;
+  }
+
+  function portalDestinationText(marker) {
+    if (!marker || marker.type !== "portal") {
+      return "";
+    }
+    const destinations = marker.destinations || [];
+    if (destinations.length === 0) {
+      return "Destinations: none";
+    }
+    return `Destinations: ${destinations.map((destination) => (
+      positionText(destination.position)
+    )).join("; ")}`;
+  }
+
+  function portalSummaryParts(marker) {
+    if (!marker || marker.type !== "portal") {
+      return [];
+    }
+    return [
+      `${portalTypeLabel(marker.portalType)}${portalRoleLabel(marker.role) ? ` ${portalRoleLabel(marker.role)}` : ""}`,
+      typeof marker.h3mSubid === "number" ? `subid ${marker.h3mSubid}` : "",
+      marker.channelKey ? `channel ${marker.channelKey}` : "",
+      portalDestinationText(marker)
+    ].filter(Boolean);
+  }
+
+  function portalStyleForType(portalType) {
+    return PORTAL_MARKER_STYLES[portalType] || PORTAL_MARKER_STYLES.unknown;
+  }
+
+  function portalTargetsById(snapshot) {
+    const targets = new Map();
+    (snapshot.portal_targets || []).forEach((target) => {
+      if (target && target.id) {
+        targets.set(target.id, target);
+      }
+    });
+    return targets;
+  }
+
+  function portalDestinationsForTarget(snapshot, portal, targetsById) {
+    if (!snapshot || !portal || !portal.id) {
+      return [];
+    }
+    const lookup = targetsById || portalTargetsById(snapshot);
+    return (snapshot.portal_edges || [])
+      .filter((edge) => edge && edge.source_id === portal.id)
+      .map((edge) => {
+        const target = lookup.get(edge.destination_id);
+        if (!target || !target.position) {
+          return null;
+        }
+        return {
+          id: target.id,
+          label: portalMarkerLabel(target),
+          position: target.position,
+          portalType: target.portal_type,
+          role: target.role,
+          edge
+        };
+      })
+      .filter(Boolean);
+  }
+
   function appendColorSwatch(parent, colorName) {
     const swatch = document.createElement("span");
     const style = playerColorStyle(colorName);
@@ -493,6 +591,13 @@
         ...townSummaryParts(marker)
       ].filter(Boolean).join(" | ");
     }
+    if (marker.type === "portal") {
+      return [
+        marker.label,
+        positionText(marker.position),
+        ...portalSummaryParts(marker)
+      ].filter(Boolean).join(" | ");
+    }
 
     const flags = [];
     if (marker.removed) {
@@ -519,6 +624,7 @@
 
     const selectedHeroId = snapshot.selected_hero_id;
     const activeLevel = normalizeLevelForSnapshot(level, snapshot);
+    const portalTargetLookup = portalTargetsById(snapshot);
     const heroMarkers = (snapshot.heroes || [])
       .filter((hero) => hero.position)
       .filter((hero) => positionLevel(hero.position) === activeLevel)
@@ -574,6 +680,37 @@
         return marker;
       });
 
+    const portalMarkers = (snapshot.portal_targets || [])
+      .filter((portal) => portal.position)
+      .filter((portal) => positionLevel(portal.position) === activeLevel)
+      .map((portal) => {
+        const marker = {
+          type: "portal",
+          id: portal.id,
+          label: portalMarkerLabel(portal),
+          position: portal.position,
+          world: {
+            x: (portal.position.x + 0.5) * tileSize,
+            y: (portal.position.y + 0.5) * tileSize
+          },
+          radius: 8,
+          selected: false,
+          removed: false,
+          hidden: false,
+          unsupported: false,
+          objectIndex: portal.object_index,
+          objectId: portal.object_id,
+          h3mSubid: portal.h3m_subid,
+          portalType: portal.portal_type,
+          role: portal.role,
+          channelKey: portal.channel_key,
+          destinations: portalDestinationsForTarget(snapshot, portal, portalTargetLookup),
+          summary: ""
+        };
+        marker.summary = portalSummaryParts(marker).join(" | ");
+        return marker;
+      });
+
     const neutralMarkers = (snapshot.neutral_targets || [])
       .filter((target) => target.position)
       .filter((target) => positionLevel(target.position) === activeLevel)
@@ -595,7 +732,7 @@
         summary: target.removal_note || `subid ${target.h3m_subid}`
       }));
 
-    return townMarkers.concat(heroMarkers, neutralMarkers);
+    return townMarkers.concat(portalMarkers, heroMarkers, neutralMarkers);
   }
 
   function hitTestMarker(markers, screenPoint, view) {
@@ -621,6 +758,9 @@
       return Math.abs(dx) + Math.abs(dy) <= (radius * Math.SQRT2);
     }
     if (marker.type === "town") {
+      return Math.abs(dx) <= radius && Math.abs(dy) <= radius;
+    }
+    if (marker.type === "portal") {
       return Math.abs(dx) <= radius && Math.abs(dy) <= radius;
     }
     return (dx * dx) + (dy * dy) <= radius * radius;
@@ -702,11 +842,13 @@
         counts.heroes += 1;
       } else if (marker.type === "town") {
         counts.towns += 1;
+      } else if (marker.type === "portal") {
+        counts.portals += 1;
       } else if (marker.type === "neutral") {
         counts.neutrals += 1;
       }
       return counts;
-    }, { heroes: 0, towns: 0, neutrals: 0 });
+    }, { heroes: 0, towns: 0, portals: 0, neutrals: 0 });
   }
 
   function snapshotDimensions(snapshot) {
@@ -721,11 +863,14 @@
     const counts = markerCounts(mapView.markers);
     const dimensions = snapshotDimensions(current);
     setText(elements.mapSummary, `${dimensions} | Level ${mapView.level}`);
-    setText(elements.objectCount, `${counts.neutrals} targets | ${counts.towns} towns`);
+    setText(
+      elements.objectCount,
+      `${counts.neutrals} targets | ${counts.towns} towns | ${counts.portals} portals`
+    );
     setText(elements.mapOverlayTitle, dimensions);
     setText(
       elements.mapOverlayDetail,
-      `Level ${mapView.level} | ${counts.heroes} heroes | ${counts.neutrals} neutrals | ${counts.towns} towns`
+      `Level ${mapView.level} | ${counts.heroes} heroes | ${counts.neutrals} neutrals | ${counts.towns} towns | ${counts.portals} portals`
     );
   }
 
@@ -788,7 +933,7 @@
   }
 
   function showTargetContextMenu(marker, event) {
-    if (!marker || marker.type !== "neutral") {
+    if (!marker || (marker.type !== "neutral" && marker.type !== "portal")) {
       hideTargetContextMenu();
       return;
     }
@@ -800,7 +945,20 @@
     title.title = markerTooltipText(marker);
     elements.targetContextMenu.appendChild(title);
 
-    if (!marker.hidden) {
+    if (marker.type === "portal") {
+      const destinations = marker.destinations || [];
+      if (destinations.length === 0) {
+        elements.targetContextMenu.appendChild(contextMenuText("No known destinations"));
+      }
+      destinations.forEach((destination) => {
+        elements.targetContextMenu.appendChild(
+          contextMenuButton(
+            `Center ${positionText(destination.position)}`,
+            () => focusPortalDestination(destination.id)
+          )
+        );
+      });
+    } else if (!marker.hidden) {
       elements.targetContextMenu.appendChild(
         contextMenuButton("Simulate", () => simulateTarget(marker))
       );
@@ -819,6 +977,14 @@
     elements.targetContextMenu.style.left = `${x}px`;
     elements.targetContextMenu.style.top = `${y}px`;
     elements.targetContextMenu.hidden = false;
+  }
+
+  function contextMenuText(text) {
+    const item = document.createElement("div");
+    item.className = "context-menu-note";
+    item.textContent = text;
+    item.title = text;
+    return item;
   }
 
   function contextMenuButton(label, onClick) {
@@ -857,6 +1023,16 @@
     return null;
   }
 
+  function focusPortalDestination(targetId) {
+    const marker = centerOnMarkerId(targetId);
+    mapView.activeMarkerId = marker ? marker.id : (targetId || null);
+    if (marker) {
+      setTargetDetails(marker);
+    }
+    drawMap();
+    return marker;
+  }
+
   function positionForTargetId(snapshot, targetId) {
     if (!snapshot || !targetId) {
       return null;
@@ -870,7 +1046,11 @@
       return neutral.position;
     }
     const town = (snapshot.town_targets || []).find((candidate) => candidate.id === targetId);
-    return town && town.position ? town.position : null;
+    if (town && town.position) {
+      return town.position;
+    }
+    const portal = (snapshot.portal_targets || []).find((candidate) => candidate.id === targetId);
+    return portal && portal.position ? portal.position : null;
   }
 
   function centerOnMarker(marker) {
@@ -1038,6 +1218,30 @@
           radius * 2,
           radius * 1.36
         );
+      } else if (marker.type === "portal") {
+        const portalStyle = portalStyleForType(marker.portalType);
+        canvasContext.fillStyle = portalStyle.fill;
+        canvasContext.strokeStyle = portalStyle.stroke;
+        canvasContext.lineWidth = 2;
+        canvasContext.fillRect(
+          screen.x - radius * 0.82,
+          screen.y - radius * 0.82,
+          radius * 1.64,
+          radius * 1.64
+        );
+        canvasContext.strokeRect(
+          screen.x - radius * 0.82,
+          screen.y - radius * 0.82,
+          radius * 1.64,
+          radius * 1.64
+        );
+        canvasContext.fillStyle = "#f8fafc";
+        canvasContext.fillRect(
+          screen.x - radius * 0.28,
+          screen.y - radius * 0.92,
+          radius * 0.56,
+          radius * 1.84
+        );
       } else {
         canvasContext.beginPath();
         canvasContext.fillStyle = scanColors
@@ -1095,6 +1299,8 @@
       }
     } else if (marker.type === "town") {
       flags.push(...townSummaryParts(marker));
+    } else if (marker.type === "portal") {
+      flags.push(...portalSummaryParts(marker));
     }
     const suffix = flags.length ? ` | ${flags.join(", ")}` : "";
     elements.targetState.textContent = `${marker.type} ${marker.id} | ${marker.label} | ${positionText(marker.position)}${suffix}`;
@@ -1246,6 +1452,9 @@
     if (marker.type === "town") {
       return { simulate: false, message: "Town target is not a battle simulation target." };
     }
+    if (marker.type === "portal") {
+      return { simulate: false, message: "Portal target is not a battle simulation target." };
+    }
     if (!selectedHeroId) {
       return { simulate: false, message: "Select a hero before simulating." };
     }
@@ -1265,6 +1474,8 @@
     return {
       zoom: mapView.zoom,
       pan: { x: mapView.pan.x, y: mapView.pan.y },
+      level: mapView.level,
+      activeMarkerId: mapView.activeMarkerId,
       markers: mapView.markers
     };
   }
@@ -2562,7 +2773,7 @@
   elements.canvas.addEventListener("contextmenu", (event) => {
     const point = canvasPoint(event);
     const marker = hitTestMarker(mapView.markers, point, mapView);
-    if (!marker || marker.type !== "neutral") {
+    if (!marker || (marker.type !== "neutral" && marker.type !== "portal")) {
       hideTargetContextMenu();
       return;
     }
@@ -2629,12 +2840,17 @@
     scanResultLookup,
     sameMapGeometry,
     sortedScanResults,
-    screenToWorld,
-    centerOnHero,
-    currentMapViewForTest,
-    isFreshEstimatePayload,
-    isFreshScanPayload,
-    simulationClickDecision,
+	    screenToWorld,
+	    centerOnHero,
+	    centerOnMarkerId,
+	    currentMapViewForTest,
+	    focusPortalDestination,
+	    isFreshEstimatePayload,
+	    isFreshScanPayload,
+	    portalDestinationText,
+	    portalMarkerLabel,
+	    portalTypeLabel,
+	    simulationClickDecision,
     verdictForWinPct,
     worldToScreen,
     zoomAtPoint
