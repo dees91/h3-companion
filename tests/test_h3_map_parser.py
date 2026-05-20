@@ -157,6 +157,50 @@ def _build_minimal_sod_h3m_with_terrain(terrain_tiles, map_size=2, levels=2):
     ))
 
 
+def _template(
+    template_index,
+    object_id,
+    block_mask=b"\xff" * 6,
+    visit_mask=b"\x00" * 6,
+):
+    return h3_map_parser.H3ObjectTemplate(
+        template_index=template_index,
+        animation_file=f"AVXobj{template_index}.def",
+        block_mask=block_mask,
+        visit_mask=visit_mask,
+        terrain_mask=0x01FF,
+        object_id=object_id,
+        subid=0,
+        object_type=0,
+        print_priority=0,
+    )
+
+
+def _map_object(object_index, position, template_index):
+    return h3_map_parser.H3MapObject(
+        object_index=object_index,
+        x=position[0],
+        y=position[1],
+        z=position[2],
+        template_index=template_index,
+    )
+
+
+def _terrain_tile(x, y, z, terrain_type):
+    return h3_map_parser.H3TerrainTile(
+        x=x,
+        y=y,
+        z=z,
+        terrain_type=terrain_type,
+        terrain_view=0,
+        river_type=0,
+        river_direction=0,
+        road_type=0,
+        road_direction=0,
+        ext_flags=0,
+    )
+
+
 def _enabled_sod_player(position, human=True, computer=True):
     return b"".join((
         bytes([1 if human else 0]),
@@ -302,6 +346,166 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(terrain_tile.terrain_type, 8)
         self.assertEqual(terrain_tile.road_direction, 4)
 
+    def test_route_layer_classifies_terrain_tiles(self):
+        header = h3_map_parser.H3MapHeader(
+            format_version=h3_map_parser.H3M_FORMAT_SOD,
+            format_name="SoD",
+            map_size=2,
+            levels=1,
+            are_any_players=True,
+        )
+        terrain_tiles = (
+            _terrain_tile(0, 0, 0, 0),
+            _terrain_tile(1, 0, 0, h3_map_parser.H3M_TERRAIN_WATER),
+            _terrain_tile(0, 1, 0, h3_map_parser.H3M_TERRAIN_ROCK),
+            _terrain_tile(1, 1, 0, 3),
+        )
+
+        route_tiles = h3_map_parser._build_route_tiles(header, terrain_tiles, (), ())
+
+        self.assertEqual(
+            len(route_tiles),
+            header.map_size * header.map_size * header.levels,
+        )
+        self.assertEqual(
+            [(tile.x, tile.y, tile.z) for tile in route_tiles],
+            [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)],
+        )
+        self.assertEqual(
+            [tile.state for tile in route_tiles],
+            [
+                h3_map_parser.ROUTE_LAND,
+                h3_map_parser.ROUTE_WATER,
+                h3_map_parser.ROUTE_BLOCKED,
+                h3_map_parser.ROUTE_LAND,
+            ],
+        )
+
+    def test_route_layer_projects_object_blocking_masks(self):
+        header = h3_map_parser.H3MapHeader(
+            format_version=h3_map_parser.H3M_FORMAT_SOD,
+            format_name="SoD",
+            map_size=8,
+            levels=1,
+            are_any_players=True,
+        )
+        terrain_tiles = tuple(
+            _terrain_tile(x, y, 0, 0)
+            for y in range(header.map_size)
+            for x in range(header.map_size)
+        )
+        block_mask = bytes((
+            0xFF,
+            0xFF,
+            0xDF,  # row 2, bit 5 -> offset (2, 3) from anchor
+            0xFF,
+            0xFF,
+            0xF7,  # row 5, bit 3 -> offset (4, 0) from anchor
+        ))
+        templates = (_template(0, object_id=147, block_mask=block_mask),)
+        objects = (_map_object(0, (7, 5, 0), 0),)
+
+        route_tiles = h3_map_parser._build_route_tiles(
+            header,
+            terrain_tiles,
+            templates,
+            objects,
+        )
+        blocked_positions = {
+            (tile.x, tile.y, tile.z)
+            for tile in route_tiles
+            if tile.state == h3_map_parser.ROUTE_BLOCKED
+        }
+
+        self.assertEqual(blocked_positions, {(5, 2, 0), (3, 5, 0)})
+
+    def test_route_layer_blocks_water_when_permanent_object_blocks_it(self):
+        header = h3_map_parser.H3MapHeader(
+            format_version=h3_map_parser.H3M_FORMAT_SOD,
+            format_name="SoD",
+            map_size=2,
+            levels=1,
+            are_any_players=True,
+        )
+        terrain_tiles = tuple(
+            _terrain_tile(
+                x,
+                y,
+                0,
+                h3_map_parser.H3M_TERRAIN_WATER,
+            )
+            for y in range(header.map_size)
+            for x in range(header.map_size)
+        )
+        block_anchor_only = bytes((0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F))
+        templates = (_template(0, object_id=147, block_mask=block_anchor_only),)
+        objects = (_map_object(0, (1, 1, 0), 0),)
+
+        route_tiles = h3_map_parser._build_route_tiles(
+            header,
+            terrain_tiles,
+            templates,
+            objects,
+        )
+        states_by_position = {
+            (tile.x, tile.y, tile.z): tile.state
+            for tile in route_tiles
+        }
+
+        self.assertEqual(states_by_position[(1, 1, 0)], h3_map_parser.ROUTE_BLOCKED)
+        self.assertEqual(states_by_position[(0, 0, 0)], h3_map_parser.ROUTE_WATER)
+
+    def test_route_layer_ignores_route_transparent_object_masks(self):
+        header = h3_map_parser.H3MapHeader(
+            format_version=h3_map_parser.H3M_FORMAT_SOD,
+            format_name="SoD",
+            map_size=2,
+            levels=1,
+            are_any_players=True,
+        )
+        terrain_tiles = tuple(
+            _terrain_tile(x, y, 0, 0)
+            for y in range(header.map_size)
+            for x in range(header.map_size)
+        )
+        transparent_ids = (
+            tuple(sorted(h3_map_parser.H3M_MONSTER_OBJECT_IDS))
+            + (
+                h3_map_parser.H3M_OBJECT_RESOURCE,
+                h3_map_parser.H3M_OBJECT_RANDOM_RESOURCE,
+                h3_map_parser.H3M_OBJECT_ARTIFACT,
+                h3_map_parser.H3M_OBJECT_RANDOM_ARTIFACT,
+                h3_map_parser.H3M_OBJECT_RANDOM_TREASURE_ARTIFACT,
+                h3_map_parser.H3M_OBJECT_RANDOM_MINOR_ARTIFACT,
+                h3_map_parser.H3M_OBJECT_RANDOM_MAJOR_ARTIFACT,
+                h3_map_parser.H3M_OBJECT_RANDOM_RELIC_ARTIFACT,
+                h3_map_parser.H3M_OBJECT_SPELL_SCROLL,
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+                h3_map_parser.H3M_OBJECT_MONOLITH_TWO_WAY,
+                h3_map_parser.H3M_OBJECT_SUBTERRANEAN_GATE,
+            )
+        )
+        templates = tuple(
+            _template(index, object_id=object_id, block_mask=b"\x00" * 6)
+            for index, object_id in enumerate(transparent_ids)
+        )
+        objects = tuple(
+            _map_object(index, (1, 1, 0), index)
+            for index in range(len(templates))
+        )
+
+        route_tiles = h3_map_parser._build_route_tiles(
+            header,
+            terrain_tiles,
+            templates,
+            objects,
+        )
+
+        self.assertTrue(
+            all(tile.state == h3_map_parser.ROUTE_LAND for tile in route_tiles)
+        )
+
     def test_load_h3m_reads_player_colors_and_teams(self):
         payload = _build_minimal_sod_h3m_with_teams()
 
@@ -360,6 +564,7 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(loaded.objects, ())
         self.assertEqual(loaded.neutral_targets, ())
         self.assertEqual(loaded.terrain_tiles, ())
+        self.assertEqual(loaded.route_tiles, ())
 
     def test_load_h3m_parse_objects_reads_terrain_tiles_in_vcmi_order(self):
         terrain_records = (
@@ -411,6 +616,19 @@ class H3MapParserContractTests(unittest.TestCase):
                 for tile in loaded.terrain_tiles
             ],
             list(terrain_records),
+        )
+        self.assertEqual(
+            [tile.state for tile in loaded.route_tiles],
+            [
+                h3_map_parser.ROUTE_LAND,
+                h3_map_parser.ROUTE_WATER,
+                h3_map_parser.ROUTE_BLOCKED,
+                h3_map_parser.ROUTE_LAND,
+                h3_map_parser.ROUTE_LAND,
+                h3_map_parser.ROUTE_LAND,
+                h3_map_parser.ROUTE_LAND,
+                h3_map_parser.ROUTE_LAND,
+            ],
         )
 
     def test_load_h3m_reads_gzip_with_prefixed_format_id(self):
@@ -627,6 +845,15 @@ class H3MapParserContractTests(unittest.TestCase):
                 road_type=0,
                 road_direction=0,
                 ext_flags=0,
+            ),
+        )
+        self.assertEqual(
+            loaded.route_tiles[0],
+            h3_map_parser.H3RouteTile(
+                x=0,
+                y=0,
+                z=0,
+                state=h3_map_parser.ROUTE_LAND,
             ),
         )
 

@@ -40,6 +40,25 @@ H3M_OBJECT_RANDOM_MONSTER_L1 = 72
 H3M_OBJECT_RANDOM_MONSTER_L2 = 73
 H3M_OBJECT_RANDOM_MONSTER_L3 = 74
 H3M_OBJECT_RANDOM_MONSTER_L4 = 75
+H3M_OBJECT_ARTIFACT = 5
+H3M_OBJECT_RANDOM_ARTIFACT = 65
+H3M_OBJECT_RANDOM_TREASURE_ARTIFACT = 66
+H3M_OBJECT_RANDOM_MINOR_ARTIFACT = 67
+H3M_OBJECT_RANDOM_MAJOR_ARTIFACT = 68
+H3M_OBJECT_RANDOM_RELIC_ARTIFACT = 69
+H3M_OBJECT_RESOURCE = 76
+H3M_OBJECT_RANDOM_RESOURCE = 79
+H3M_OBJECT_SPELL_SCROLL = 93
+H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE = 43
+H3M_OBJECT_MONOLITH_ONE_WAY_EXIT = 44
+H3M_OBJECT_MONOLITH_TWO_WAY = 45
+H3M_OBJECT_SUBTERRANEAN_GATE = 103
+
+H3M_TERRAIN_WATER = 8
+H3M_TERRAIN_ROCK = 9
+ROUTE_LAND = "land"
+ROUTE_WATER = "water"
+ROUTE_BLOCKED = "blocked"
 
 H3M_MONSTER_OBJECT_IDS = frozenset((
     H3M_OBJECT_MONSTER,
@@ -48,6 +67,22 @@ H3M_MONSTER_OBJECT_IDS = frozenset((
     H3M_OBJECT_RANDOM_MONSTER_L2,
     H3M_OBJECT_RANDOM_MONSTER_L3,
     H3M_OBJECT_RANDOM_MONSTER_L4,
+))
+
+H3M_ROUTE_TRANSPARENT_OBJECT_IDS = H3M_MONSTER_OBJECT_IDS | frozenset((
+    H3M_OBJECT_ARTIFACT,
+    H3M_OBJECT_RANDOM_ARTIFACT,
+    H3M_OBJECT_RANDOM_TREASURE_ARTIFACT,
+    H3M_OBJECT_RANDOM_MINOR_ARTIFACT,
+    H3M_OBJECT_RANDOM_MAJOR_ARTIFACT,
+    H3M_OBJECT_RANDOM_RELIC_ARTIFACT,
+    H3M_OBJECT_RESOURCE,
+    H3M_OBJECT_RANDOM_RESOURCE,
+    H3M_OBJECT_SPELL_SCROLL,
+    H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+    H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+    H3M_OBJECT_MONOLITH_TWO_WAY,
+    H3M_OBJECT_SUBTERRANEAN_GATE,
 ))
 
 SUPPORTED_H3M_FORMATS = {
@@ -240,6 +275,16 @@ class H3TerrainTile:
 
 
 @dataclass(frozen=True)
+class H3RouteTile:
+    """One simplified static route-classification tile."""
+
+    x: int
+    y: int
+    z: int
+    state: str
+
+
+@dataclass(frozen=True)
 class H3ObjectTemplate:
     """One H3M object template entry."""
 
@@ -319,6 +364,7 @@ class LoadedH3Map:
     players: tuple[H3MapPlayer, ...] = field(default_factory=tuple)
     teams: tuple[H3MapTeam, ...] = field(default_factory=tuple)
     terrain_tiles: tuple[H3TerrainTile, ...] = field(default_factory=tuple)
+    route_tiles: tuple[H3RouteTile, ...] = field(default_factory=tuple)
     templates: tuple[H3ObjectTemplate, ...] = field(default_factory=tuple)
     objects: tuple[H3MapObject, ...] = field(default_factory=tuple)
     neutral_targets: tuple[H3NeutralMonsterTarget, ...] = field(default_factory=tuple)
@@ -346,6 +392,7 @@ class _ParsedH3MStructures:
     players: tuple[H3MapPlayer, ...]
     teams: tuple[H3MapTeam, ...]
     terrain_tiles: tuple[H3TerrainTile, ...]
+    route_tiles: tuple[H3RouteTile, ...]
     templates: tuple[H3ObjectTemplate, ...]
     objects: tuple[H3MapObject, ...]
     neutral_targets: tuple[H3NeutralMonsterTarget, ...]
@@ -457,6 +504,7 @@ def load_h3m_bytes(
             players=parsed.players,
             teams=parsed.teams,
             terrain_tiles=parsed.terrain_tiles,
+            route_tiles=parsed.route_tiles,
             templates=parsed.templates,
             objects=parsed.objects,
             neutral_targets=parsed.neutral_targets,
@@ -771,11 +819,13 @@ def _parse_h3m_structures(
     terrain_tiles = _read_terrain(reader, header)
     templates = _read_object_templates(reader)
     objects, targets = _read_objects(reader, templates, features)
+    route_tiles = _build_route_tiles(header, terrain_tiles, templates, objects)
     return _ParsedH3MStructures(
         header=header,
         players=players,
         teams=teams,
         terrain_tiles=terrain_tiles,
+        route_tiles=route_tiles,
         templates=templates,
         objects=objects,
         neutral_targets=targets,
@@ -1082,6 +1132,65 @@ def _read_terrain(reader: _H3MReader, header: H3MapHeader) -> tuple[H3TerrainTil
                     )
                 )
     return tuple(tiles)
+
+
+def _build_route_tiles(
+    header: H3MapHeader,
+    terrain_tiles: tuple[H3TerrainTile, ...],
+    templates: tuple[H3ObjectTemplate, ...],
+    objects: tuple[H3MapObject, ...],
+) -> tuple[H3RouteTile, ...]:
+    states = {
+        (tile.x, tile.y, tile.z): _terrain_route_state(tile)
+        for tile in terrain_tiles
+    }
+    for map_object in objects:
+        template = templates[map_object.template_index]
+        if template.object_id in H3M_ROUTE_TRANSPARENT_OBJECT_IDS:
+            continue
+        for x, y, z in _project_blocked_mask_tiles(map_object, template):
+            if 0 <= x < header.map_size and 0 <= y < header.map_size and 0 <= z < header.levels:
+                states[(x, y, z)] = ROUTE_BLOCKED
+
+    route_tiles = []
+    for z in range(header.levels):
+        for y in range(header.map_size):
+            for x in range(header.map_size):
+                route_tiles.append(
+                    H3RouteTile(
+                        x=x,
+                        y=y,
+                        z=z,
+                        state=states[(x, y, z)],
+                    )
+                )
+    return tuple(route_tiles)
+
+
+def _terrain_route_state(tile: H3TerrainTile) -> str:
+    if tile.terrain_type == H3M_TERRAIN_ROCK:
+        return ROUTE_BLOCKED
+    if tile.terrain_type == H3M_TERRAIN_WATER:
+        return ROUTE_WATER
+    return ROUTE_LAND
+
+
+def _project_blocked_mask_tiles(
+    map_object: H3MapObject,
+    template: H3ObjectTemplate,
+) -> tuple[tuple[int, int, int], ...]:
+    projected = []
+    for row_index, row_mask in enumerate(template.block_mask):
+        for bit_index in range(8):
+            if (row_mask >> bit_index) & 1:
+                continue
+            # VCMI inverts H3M mask row/bit into bottom-right-relative offsets.
+            projected.append((
+                map_object.x - (7 - bit_index),
+                map_object.y - (5 - row_index),
+                map_object.z,
+            ))
+    return tuple(projected)
 
 
 def _read_object_templates(reader: _H3MReader) -> tuple[H3ObjectTemplate, ...]:

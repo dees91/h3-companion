@@ -269,6 +269,18 @@ to the simplified route-visualization semantics.
 - [ ] Add unit tests for mask projection and route classification.
 - [ ] Run `python3 -m unittest tests.test_h3_map_parser`.
 
+**Completion Notes (2026-05-20):**
+- Added `H3RouteTile` records and `LoadedH3Map.route_tiles` for
+  `parse_objects=True`.
+- Built base route states from parsed terrain: land, water, and rock/blocked.
+- Applied VCMI-style projected object block masks, while leaving neutral
+  monsters, pickups, scrolls, monoliths, and subterranean gates route-transparent
+  for this static overlay.
+- Added focused tests for route classification, water blocked by permanent
+  objects, exact asymmetric mask projection, and route-transparent object IDs.
+- Verification: `python3 -m unittest tests.test_h3_map_parser` and
+  `python3 -m unittest`.
+
 **Dependencies:** Task 1
 
 **Files likely touched:**
@@ -761,8 +773,8 @@ After Tasks 9 and 17:
 | Task | Title | Status | Blocked By |
 | --- | --- | --- | --- |
 | 1 | Parse Terrain Tiles From H3M | done | - |
-| 2 | Build The Static Route Layer | todo | 1 |
-| 3 | Expose Route Layers In The GUI Snapshot | blocked | 2 |
+| 2 | Build The Static Route Layer | done | 1 |
+| 3 | Expose Route Layers In The GUI Snapshot | todo | 2 |
 | 4 | Render The Route Overlay | blocked | 3 |
 | 5 | Parse Town Targets | todo | 1 |
 | 6 | Show Town Markers In The GUI | blocked | 5 |
