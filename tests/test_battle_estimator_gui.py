@@ -20,6 +20,12 @@ from tests.test_battle_estimator_cli import (
     _write_h3m_map,
     _write_xor_hero_window,
 )
+from tests.test_h3_map_parser import (
+    _minimal_h3m_with_templates_and_objects,
+    _object_bytes,
+    _object_template_bytes,
+    _town_payload,
+)
 from tools import h3_map_parser
 
 
@@ -250,6 +256,11 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "routeStateForChar",
             "routeStyleForChar",
             "use_latest_game_folder",
+            "town_targets",
+            "TOWN_MARKER_STYLE",
+            "currentMapViewForTest",
+            "Town target is not a battle simulation target.",
+            "Initial owner:",
             "AUTO_REFRESH_MS = 5000",
             "AUTO_REFRESH_ENABLED = false",
             "require manual Refresh until UX settles",
@@ -351,6 +362,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
 const assert = require("assert");
 const drawOperations = [];
 const routeFillStyles = new Set(["#d9ead5", "#c8e2f2", "#87919e"]);
+const townFillStyles = new Set(["#f8c756", "#f4e7c4"]);
 const context = new Proxy({{
   save() {{
     drawOperations.push({{ op: "save" }});
@@ -479,6 +491,7 @@ const snapshot = {{
   ],
   heroes: [],
   neutral_targets: [],
+  town_targets: [],
   recent_heroes: [],
   selected_hero_id: null
 }};
@@ -563,10 +576,64 @@ const markerSnapshot = {{
       estimator_creature_id: null,
       removed: false
     }}
+  ],
+  town_targets: [
+    {{
+      id: "town:0",
+      object_index: 0,
+      position: {{ x: 0, y: 0, z: 0 }},
+      anchor_position: {{ x: 1, y: 0, z: 0 }},
+      object_id: 98,
+      h3m_subid: 3,
+      faction_subid: 3,
+      initial_owner: 0,
+      initial_owner_color_name: "red",
+      custom_name: "Castle Keep",
+      has_garrison: true
+    }},
+    {{
+      id: "town:random",
+      object_index: 5,
+      position: {{ x: 0, y: 1, z: 0 }},
+      anchor_position: {{ x: 0, y: 1, z: 0 }},
+      object_id: 77,
+      h3m_subid: 99,
+      faction_subid: null,
+      initial_owner: null,
+      initial_owner_color_name: null,
+      custom_name: null,
+      has_garrison: false
+    }},
+    {{
+      id: "town:1",
+      object_index: 1,
+      position: {{ x: 3, y: 0, z: 1 }},
+      anchor_position: {{ x: 3, y: 0, z: 1 }},
+      object_id: 98,
+      h3m_subid: 5,
+      faction_subid: 5,
+      initial_owner: 2,
+      initial_owner_color_name: "tan",
+      custom_name: "",
+      has_garrison: false
+    }}
   ]
 }};
 const level0Markers = helpers.buildMarkerCache(markerSnapshot, 10, 0, false);
-assert.deepStrictEqual(level0Markers.map((marker) => marker.id), ["hero:0", "neutral:0"]);
+assert.deepStrictEqual(level0Markers.map((marker) => marker.id), [
+  "town:0",
+  "town:random",
+  "hero:0",
+  "neutral:0"
+]);
+const townMarker = level0Markers.find((marker) => marker.id === "town:0");
+assert.strictEqual(townMarker.type, "town");
+assert.strictEqual(townMarker.label, "Castle Keep");
+assert.strictEqual(townMarker.initialOwnerColorName, "red");
+const randomTown = level0Markers.find((marker) => marker.id === "town:random");
+assert.strictEqual(randomTown.label, "Random town");
+assert.ok(helpers.markerTooltipText(randomTown).includes("Random town subid: 99"));
+assert.ok(!helpers.markerTooltipText(randomTown).includes("null"));
 assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 0), ["LWBB", "LLWB", "BWLX", "LLLL"]);
 assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 1), ["BBBB", "WWWW", "LLLL", "LWBZ"]);
 assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 99), ["BBBB", "WWWW", "LLLL", "LWBZ"]);
@@ -580,11 +647,34 @@ assert.strictEqual(helpers.routeStyleForChar("X"), null);
 const level0WithRemoved = helpers.buildMarkerCache(markerSnapshot, 10, 0, true);
 assert.deepStrictEqual(
   level0WithRemoved.map((marker) => marker.id),
-  ["hero:0", "neutral:0", "neutral:removed"]
+  ["town:0", "town:random", "hero:0", "neutral:0", "neutral:removed"]
 );
 assert.strictEqual(level0WithRemoved.find((marker) => marker.id === "neutral:removed").removed, true);
 const level1Markers = helpers.buildMarkerCache(markerSnapshot, 10, 1, false);
-assert.deepStrictEqual(level1Markers.map((marker) => marker.id), ["hero:1", "neutral:1"]);
+assert.deepStrictEqual(level1Markers.map((marker) => marker.id), ["town:1", "hero:1", "neutral:1"]);
+const overlapSnapshot = {{
+  map: {{ width: 4, height: 4, levels: 1 }},
+  selected_hero_id: "hero:0",
+  heroes: [markerSnapshot.heroes[0]],
+  neutral_targets: [],
+  town_targets: [
+    {{
+      id: "town:overlap",
+      object_index: 7,
+      position: {{ x: 1, y: 2, z: 0 }},
+      object_id: 98,
+      h3m_subid: 3,
+      faction_subid: 3,
+      initial_owner_color_name: "red"
+    }}
+  ]
+}};
+const overlapMarkers = helpers.buildMarkerCache(overlapSnapshot, 10, 0, false);
+assert.deepStrictEqual(overlapMarkers.map((marker) => marker.id), ["town:overlap", "hero:0"]);
+assert.strictEqual(
+  helpers.hitTestMarker(overlapMarkers, {{ x: 15, y: 25 }}, {{ zoom: 1, pan: {{ x: 0, y: 0 }} }}).id,
+  "hero:0"
+);
 assert.deepStrictEqual(
   helpers.rankedMapHeroes(markerSnapshot).map((hero) => hero.id),
   ["hero:1", "hero:0"]
@@ -643,11 +733,16 @@ assert.deepStrictEqual(
     pan: {{ x: 22, y: -9 }}
   }}
 );
-const tooltip = helpers.markerTooltipText(level1Markers[0]);
+const tooltip = helpers.markerTooltipText(level1Markers.find((marker) => marker.id === "hero:1"));
 assert.ok(tooltip.includes("Fafner"));
 assert.ok(tooltip.includes("Tan team 1 enemy"));
 assert.ok(tooltip.includes("2,3,1"));
 assert.ok(!tooltip.includes("<"));
+const townTooltip = helpers.markerTooltipText(townMarker);
+assert.ok(townTooltip.includes("Castle Keep"));
+assert.ok(townTooltip.includes("0,0,0"));
+assert.ok(townTooltip.includes("Faction/subid: 3/3"));
+assert.ok(townTooltip.includes("Initial owner: Red"));
 assert.strictEqual(helpers.formatWinPct(null), "not available");
 assert.strictEqual(helpers.formatWinPct(0), "0.0%");
 assert.strictEqual(helpers.verdictForWinPct(null), "Unsupported target");
@@ -662,6 +757,14 @@ assert.deepStrictEqual(
 assert.deepStrictEqual(
   helpers.simulationClickDecision({{ type: "hero", id: "hero:512", relation: "ally" }}, "hero:256"),
   {{ simulate: false, message: "Allied hero is not a simulation target." }}
+);
+assert.deepStrictEqual(
+  helpers.simulationClickDecision({{ type: "town", id: "town:0" }}, null),
+  {{ simulate: false, message: "Town target is not a battle simulation target." }}
+);
+assert.deepStrictEqual(
+  helpers.simulationClickDecision({{ type: "town", id: "town:0" }}, "hero:256"),
+  {{ simulate: false, message: "Town target is not a battle simulation target." }}
 );
 assert.deepStrictEqual(
   helpers.simulationClickDecision({{ type: "neutral", id: "neutral:0" }}, "hero:256"),
@@ -738,6 +841,30 @@ const overlayFillsAfterRender = drawOperations.filter((operation) => (
   operation.op === "fillRect" && routeFillStyles.has(operation.fillStyle)
 ));
 assert.ok(overlayFillsAfterRender.length >= 3);
+const townFillsAfterRender = drawOperations.filter((operation) => (
+  operation.op === "fillRect" && townFillStyles.has(operation.fillStyle)
+));
+assert.ok(townFillsAfterRender.length >= 1);
+const renderedView = helpers.currentMapViewForTest();
+const renderedTown = renderedView.markers.find((marker) => marker.id === "town:0");
+const renderedTownScreen = helpers.worldToScreen(renderedTown.world, renderedView);
+const fetchCallsBeforeTownClick = fetchCalls;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 7,
+  clientX: renderedTownScreen.x,
+  clientY: renderedTownScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 7,
+  clientX: renderedTownScreen.x,
+  clientY: renderedTownScreen.y
+}});
+assert.strictEqual(fetchCalls, fetchCallsBeforeTownClick);
+assert.ok(elements["target-state"].textContent.includes("town town:0"));
+assert.ok(elements["target-state"].textContent.includes("Initial owner: Red"));
+assert.ok(elements["estimate-state"].textContent.includes("Town target"));
 drawOperations.length = 0;
 const routeToggle = elements["show-route-overlay-toggle"];
 routeToggle.checked = false;
@@ -799,6 +926,42 @@ assert.strictEqual(fetchCalls, fetchCallsBeforeRender);
                 self.assertEqual(payload["selected_hero_id"], "hero:256")
                 self.assertEqual(payload["recent_heroes"], ["Isra", "Marius"])
                 self.assertEqual(payload["route_layers"], [["L"]])
+                self.assertEqual(payload["town_targets"], [])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_state_endpoint_includes_town_targets(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map_with_town(temp_path / "town-map.h3m")
+            config_path = temp_path / "config.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                self.assertEqual(len(payload["town_targets"]), 1)
+                town = payload["town_targets"][0]
+                self.assertEqual(town["id"], "town:0")
+                self.assertEqual(town["object_index"], 0)
+                self.assertEqual(town["position"], {"x": 6, "y": 5, "z": 0})
+                self.assertEqual(town["anchor_position"], {"x": 7, "y": 5, "z": 0})
+                self.assertEqual(town["object_id"], h3_map_parser.H3M_OBJECT_TOWN)
+                self.assertEqual(town["h3m_subid"], 3)
+                self.assertEqual(town["faction_subid"], 3)
+                self.assertEqual(town["initial_owner"], 2)
+                self.assertEqual(town["initial_owner_color_name"], "tan")
+                self.assertEqual(town["custom_name"], "Castle Keep")
+                self.assertTrue(town["has_garrison"])
 
             self._with_server(check, app_state=app_state)
 
@@ -2086,6 +2249,36 @@ def _write_gui_save(
     save_path = game_dir / name
     save_path.write_bytes(gzip.compress(payload))
     return save_path
+
+
+def _write_h3m_map_with_town(path: Path) -> Path:
+    visit_mask = bytes((0x01, 0x00, 0x00, 0x00, 0x00, 0x40))
+    payload = _minimal_h3m_with_templates_and_objects(
+        h3_map_parser.H3M_FORMAT_SOD,
+        (
+            _object_template_bytes(
+                "AVCcasx0.def",
+                h3_map_parser.H3M_OBJECT_TOWN,
+                subid=3,
+                visit_mask=visit_mask,
+            ),
+        ),
+        (
+            _object_bytes(
+                (7, 5, 0),
+                0,
+                _town_payload(
+                    owner=2,
+                    custom_name="Castle Keep",
+                    has_garrison=True,
+                ),
+            ),
+        ),
+        map_size=8,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(gzip.compress(payload))
+    return path
 
 
 def _write_multi_gui_save(game_dir: Path, name: str, hero_specs) -> Path:

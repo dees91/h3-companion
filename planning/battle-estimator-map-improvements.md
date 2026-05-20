@@ -426,6 +426,29 @@ and portals.
 - [ ] Manual GUI check on a map with known starting towns.
 - [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
 
+**Completion Notes (2026-05-20):**
+- Added `town_targets` to `/api/state`, serialized from H3M town targets with
+  stable `town:<object_index>` IDs, visitable and anchor positions, object ID,
+  raw subid, faction subid, initial owner, initial owner color name, custom name,
+  and garrison presence.
+- Rendered town markers on the canvas as a distinct two-part square marker,
+  colored by initial owner when known and ordered below heroes/neutrals for
+  overlap hit-testing.
+- Added town tooltip/target details with position, faction/subid, and explicit
+  `Initial owner` wording; random/null town data avoids displaying `null`.
+- Blocked town clicks from running battle estimates while still selecting the
+  marker and showing details.
+- Added GUI/API and frontend smoke tests for town serialization, level filtering,
+  overlap priority, random town null handling, tooltip/details text, town drawing,
+  and the real canvas click path not posting to `/api/simulate-target`.
+- Manual GUI check: started the local GUI against the configured Diamond game
+  (`2026.05.19 20;00 Diamond`) and resolved Diamond map; verified a 108 x 108 x 2
+  map with 24 towns, level marker counts 13/11, town tooltip/details with
+  `Initial owner` and faction/subid, no town click simulation request, and a
+  nonblank town marker canvas pixel.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui` and
+  `python3 -m unittest`.
+
 **Dependencies:** Task 5
 
 **Files likely touched:**
@@ -819,7 +842,7 @@ After Tasks 9 and 17:
 | 3 | Expose Route Layers In The GUI Snapshot | done | 2 |
 | 4 | Render The Route Overlay | done | 3 |
 | 5 | Parse Town Targets | done | 1 |
-| 6 | Show Town Markers In The GUI | todo | 5 |
+| 6 | Show Town Markers In The GUI | done | 5 |
 | 7 | Parse Portal Targets And Edges | todo | 1 |
 | 8 | Show Portal Markers And Destinations In The GUI | blocked | 7 |
 | 9 | End-To-End Map Verification | blocked | 4, 6, 8 |

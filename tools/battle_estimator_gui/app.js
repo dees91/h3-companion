@@ -122,6 +122,12 @@
     water: { fill: "#c8e2f2", stroke: "#9fc4dc" },
     blocked: { fill: "#87919e", stroke: "#66717e" }
   };
+  const TOWN_MARKER_STYLE = {
+    fill: "#f8c756",
+    stroke: "#7a4d00",
+    unownedFill: "#f4e7c4",
+    unownedStroke: "#8a7654"
+  };
 
   function setHealth(text, className) {
     elements.health.textContent = text;
@@ -415,6 +421,48 @@
     return [color, team, relation].filter(Boolean).join(" ");
   }
 
+  function townFactionText(marker) {
+    if (!marker || marker.type !== "town") {
+      return "";
+    }
+    if (typeof marker.factionSubid === "number") {
+      return `Faction/subid: ${marker.factionSubid}/${marker.h3mSubid}`;
+    }
+    if (typeof marker.h3mSubid === "number") {
+      return `Random town subid: ${marker.h3mSubid}`;
+    }
+    return "Random town";
+  }
+
+  function townInitialOwnerText(marker) {
+    if (!marker || marker.type !== "town") {
+      return "";
+    }
+    if (marker.initialOwnerColorName) {
+      return `Initial owner: ${titleCase(marker.initialOwnerColorName)}`;
+    }
+    return "Initial owner: none";
+  }
+
+  function townGarrisonText(marker) {
+    if (!marker || marker.type !== "town") {
+      return "";
+    }
+    return marker.hasGarrison ? "garrison present" : "";
+  }
+
+  function townSummaryParts(marker) {
+    return [
+      townFactionText(marker),
+      townInitialOwnerText(marker),
+      townGarrisonText(marker)
+    ].filter(Boolean);
+  }
+
+  function townSummaryText(marker) {
+    return townSummaryParts(marker).join(" | ");
+  }
+
   function appendColorSwatch(parent, colorName) {
     const swatch = document.createElement("span");
     const style = playerColorStyle(colorName);
@@ -436,6 +484,13 @@
         positionText(marker.position),
         `${marker.creatureCount || 0} creatures`,
         truncateText(marker.summary, 90)
+      ].filter(Boolean).join(" | ");
+    }
+    if (marker.type === "town") {
+      return [
+        marker.label,
+        positionText(marker.position),
+        ...townSummaryParts(marker)
       ].filter(Boolean).join(" | ");
     }
 
@@ -488,6 +543,37 @@
         summary: hero.army_summary || ""
       }));
 
+    const townMarkers = (snapshot.town_targets || [])
+      .filter((town) => town.position)
+      .filter((town) => positionLevel(town.position) === activeLevel)
+      .map((town) => {
+        const marker = {
+          type: "town",
+          id: town.id,
+          label: town.custom_name
+            || (typeof town.faction_subid === "number" ? `Town ${town.faction_subid}` : "Random town"),
+          position: town.position,
+          world: {
+            x: (town.position.x + 0.5) * tileSize,
+            y: (town.position.y + 0.5) * tileSize
+          },
+          radius: 9,
+          selected: false,
+          removed: false,
+          hidden: false,
+          unsupported: false,
+          objectId: town.object_id,
+          h3mSubid: town.h3m_subid,
+          factionSubid: town.faction_subid,
+          initialOwner: town.initial_owner,
+          initialOwnerColorName: town.initial_owner_color_name,
+          hasGarrison: Boolean(town.has_garrison),
+          summary: ""
+        };
+        marker.summary = townSummaryText(marker);
+        return marker;
+      });
+
     const neutralMarkers = (snapshot.neutral_targets || [])
       .filter((target) => target.position)
       .filter((target) => positionLevel(target.position) === activeLevel)
@@ -509,7 +595,7 @@
         summary: target.removal_note || `subid ${target.h3m_subid}`
       }));
 
-    return heroMarkers.concat(neutralMarkers);
+    return townMarkers.concat(heroMarkers, neutralMarkers);
   }
 
   function hitTestMarker(markers, screenPoint, view) {
@@ -533,6 +619,9 @@
     const radius = markerScreenRadius(marker, view);
     if (marker.type === "hero") {
       return Math.abs(dx) + Math.abs(dy) <= (radius * Math.SQRT2);
+    }
+    if (marker.type === "town") {
+      return Math.abs(dx) <= radius && Math.abs(dy) <= radius;
     }
     return (dx * dx) + (dy * dy) <= radius * radius;
   }
@@ -611,11 +700,13 @@
     return (markers || []).reduce((counts, marker) => {
       if (marker.type === "hero") {
         counts.heroes += 1;
+      } else if (marker.type === "town") {
+        counts.towns += 1;
       } else if (marker.type === "neutral") {
         counts.neutrals += 1;
       }
       return counts;
-    }, { heroes: 0, neutrals: 0 });
+    }, { heroes: 0, towns: 0, neutrals: 0 });
   }
 
   function snapshotDimensions(snapshot) {
@@ -630,11 +721,11 @@
     const counts = markerCounts(mapView.markers);
     const dimensions = snapshotDimensions(current);
     setText(elements.mapSummary, `${dimensions} | Level ${mapView.level}`);
-    setText(elements.objectCount, `${counts.neutrals} targets`);
+    setText(elements.objectCount, `${counts.neutrals} targets | ${counts.towns} towns`);
     setText(elements.mapOverlayTitle, dimensions);
     setText(
       elements.mapOverlayDetail,
-      `Level ${mapView.level} | ${counts.heroes} heroes | ${counts.neutrals} neutrals`
+      `Level ${mapView.level} | ${counts.heroes} heroes | ${counts.neutrals} neutrals | ${counts.towns} towns`
     );
   }
 
@@ -775,7 +866,11 @@
       return hero.position;
     }
     const neutral = (snapshot.neutral_targets || []).find((candidate) => candidate.id === targetId);
-    return neutral && neutral.position ? neutral.position : null;
+    if (neutral && neutral.position) {
+      return neutral.position;
+    }
+    const town = (snapshot.town_targets || []).find((candidate) => candidate.id === targetId);
+    return town && town.position ? town.position : null;
   }
 
   function centerOnMarker(marker) {
@@ -909,6 +1004,40 @@
           canvasContext.arc(screen.x, screen.y, radius + 7, 0, Math.PI * 2);
           canvasContext.stroke();
         }
+      } else if (marker.type === "town") {
+        const townOwnerColors = playerColorStyle(marker.initialOwnerColorName);
+        const hasOwner = Boolean(marker.initialOwnerColorName);
+        const bodyFill = hasOwner ? townOwnerColors.fill : TOWN_MARKER_STYLE.unownedFill;
+        const bodyStroke = hasOwner ? townOwnerColors.stroke : TOWN_MARKER_STYLE.unownedStroke;
+        canvasContext.fillStyle = TOWN_MARKER_STYLE.fill;
+        canvasContext.strokeStyle = TOWN_MARKER_STYLE.stroke;
+        canvasContext.lineWidth = 2;
+        canvasContext.fillRect(
+          screen.x - radius * 0.72,
+          screen.y - radius,
+          radius * 1.44,
+          radius * 0.48
+        );
+        canvasContext.strokeRect(
+          screen.x - radius * 0.72,
+          screen.y - radius,
+          radius * 1.44,
+          radius * 0.48
+        );
+        canvasContext.fillStyle = bodyFill;
+        canvasContext.strokeStyle = bodyStroke;
+        canvasContext.fillRect(
+          screen.x - radius,
+          screen.y - radius * 0.52,
+          radius * 2,
+          radius * 1.36
+        );
+        canvasContext.strokeRect(
+          screen.x - radius,
+          screen.y - radius * 0.52,
+          radius * 2,
+          radius * 1.36
+        );
       } else {
         canvasContext.beginPath();
         canvasContext.fillStyle = scanColors
@@ -964,6 +1093,8 @@
       if (ownerText) {
         flags.push(ownerText);
       }
+    } else if (marker.type === "town") {
+      flags.push(...townSummaryParts(marker));
     }
     const suffix = flags.length ? ` | ${flags.join(", ")}` : "";
     elements.targetState.textContent = `${marker.type} ${marker.id} | ${marker.label} | ${positionText(marker.position)}${suffix}`;
@@ -1112,6 +1243,9 @@
     if (!marker) {
       return { simulate: false, message: "No target selected." };
     }
+    if (marker.type === "town") {
+      return { simulate: false, message: "Town target is not a battle simulation target." };
+    }
     if (!selectedHeroId) {
       return { simulate: false, message: "Select a hero before simulating." };
     }
@@ -1125,6 +1259,14 @@
       return { simulate: false, message: "Allied hero is not a simulation target." };
     }
     return { simulate: true, message: "" };
+  }
+
+  function currentMapViewForTest() {
+    return {
+      zoom: mapView.zoom,
+      pan: { x: mapView.pan.x, y: mapView.pan.y },
+      markers: mapView.markers
+    };
   }
 
   function isFreshEstimatePayload(payload, requestId, currentRequestId, selectedHeroId) {
@@ -2489,6 +2631,7 @@
     sortedScanResults,
     screenToWorld,
     centerOnHero,
+    currentMapViewForTest,
     isFreshEstimatePayload,
     isFreshScanPayload,
     simulationClickDecision,

@@ -104,6 +104,7 @@ class DomainSnapshot:
     neutral_targets: tuple
     visible_neutral_targets: tuple
     neutral_by_id: dict
+    town_targets: tuple
     removed_records: tuple
     team_by_color: dict
 
@@ -685,6 +686,10 @@ def _build_domain_snapshot_from_source(
             _serialize_neutral_target(target)
             for target in neutral_targets
         ],
+        "town_targets": [
+            _serialize_town_target(target)
+            for target in loaded_map.town_targets
+        ],
     }
     return DomainSnapshot(
         mode=mode,
@@ -700,6 +705,7 @@ def _build_domain_snapshot_from_source(
             _neutral_target_id(target): target
             for target in neutral_targets
         },
+        town_targets=loaded_map.town_targets,
         removed_records=removed_records,
         team_by_color=team_by_color,
     )
@@ -979,8 +985,46 @@ def _serialize_neutral_target(target, hidden: bool = False) -> dict:
     }
 
 
+def _serialize_town_target(target) -> dict:
+    return {
+        "id": _town_target_id(target),
+        "object_index": target.object_index,
+        "position": {
+            "x": target.x,
+            "y": target.y,
+            "z": target.z,
+        },
+        "anchor_position": {
+            "x": target.anchor_x,
+            "y": target.anchor_y,
+            "z": target.anchor_z,
+        },
+        "object_id": target.object_id,
+        "h3m_subid": target.h3m_subid,
+        "faction_subid": target.faction_subid,
+        "initial_owner": target.initial_owner,
+        "initial_owner_color_name": _initial_owner_color_name(target.initial_owner),
+        "custom_name": target.custom_name,
+        "has_garrison": target.has_garrison,
+    }
+
+
 def _neutral_target_id(target) -> str:
     return f"neutral:{target.object_index}"
+
+
+def _town_target_id(target) -> str:
+    return f"town:{target.object_index}"
+
+
+def _initial_owner_color_name(initial_owner: int | None) -> str | None:
+    if (
+        initial_owner is None
+        or initial_owner < 0
+        or initial_owner >= len(h3_map_parser.PLAYER_COLOR_NAMES)
+    ):
+        return None
+    return h3_map_parser.PLAYER_COLOR_NAMES[initial_owner]
 
 
 def _serialize_position(position) -> dict | None:
