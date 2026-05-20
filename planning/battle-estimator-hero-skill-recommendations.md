@@ -449,23 +449,40 @@ cases.
 
 ## Task 8: Add Hero Skill Recommendation API
 
+**Status:** done
+
 **Description:** Add GUI backend endpoints that return the selected hero's
 skill metadata, current editable state, top recommendations, avoid entries, and
 skill-vs-skill comparison results.
 
 **Acceptance criteria:**
-- [ ] API rejects missing or invalid hero IDs.
-- [ ] API returns starting skills when no manual state exists.
-- [ ] API persists edited current-skill slots.
-- [ ] API returns top recommendations and avoid entries.
-- [ ] API compares concrete level-up offers.
-- [ ] API responses include enough metadata for the GUI dialog without
+- [x] API rejects missing or invalid hero IDs.
+- [x] API returns starting skills when no manual state exists.
+- [x] API persists edited current-skill slots.
+- [x] API returns top recommendations and avoid entries.
+- [x] API compares concrete level-up offers.
+- [x] API responses include enough metadata for the GUI dialog without
       requiring client-side rule evaluation.
 
 **Verification:**
-- [ ] Add API tests for load, save, reset, recommendations, comparison, invalid
+- [x] Add API tests for load, save, reset, recommendations, comparison, invalid
       hero, and invalid skill state.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion notes:** Added POST API routes for `/api/hero-skills`,
+`/api/hero-skills/save`, `/api/hero-skills/reset`, and
+`/api/hero-skills/compare`. The endpoints resolve the GUI stable hero ID to the
+current snapshot hero, bridge the save hero name to standard VCMI hero metadata,
+use the Task 7 config helpers for manual state persistence, and return
+GUI-ready skill metadata, current skills with `current_skills_source`,
+recommendation `top_next`/`avoid` lists, and optional concrete offer comparison.
+Role and hero ID validation happen at the API boundary; malformed hero IDs,
+unknown heroes, unresolved standard hero names, bad skill states, invalid
+offers, duplicate offers, invalid roles, and recommender data load failures now
+return JSON API errors instead of requiring client-side rule evaluation. Plan
+and code were reviewed by subagents; code review requested stricter malformed
+hero ID handling and recommender load-error mapping, both covered by additional
+tests. Required GUI tests passed with 88 focused cases.
 
 **Dependencies:** Task 7
 

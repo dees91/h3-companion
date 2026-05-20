@@ -15,11 +15,17 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 try:
-    from tools import battle_estimator, h3_map_parser, h3_save_parser
+    from tools import (
+        battle_estimator,
+        h3_map_parser,
+        h3_save_parser,
+        hero_skill_recommender,
+    )
 except ImportError:  # pragma: no cover - direct script execution fallback.
     import battle_estimator
     import h3_map_parser
     import h3_save_parser
+    import hero_skill_recommender
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -152,6 +158,21 @@ class DomainSnapshotSource:
     map_file: Path
     save_fingerprint: dict
     map_fingerprint: dict
+
+
+@dataclass(frozen=True)
+class HeroSkillApiContext:
+    """Resolved hero-skill recommendation context for one API request."""
+
+    hero_id: str
+    save_hero: object
+    map_key: str
+    role: str
+    metadata: object
+    rules: object
+    hero_metadata: object
+    current_skills: tuple
+    current_skills_source: str
 
 
 @dataclass(frozen=True)
@@ -475,6 +496,10 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             "/api/simulate-target": self._api_simulate_target,
             "/api/scan-radius": self._api_scan_radius,
             "/api/path-route": self._api_path_route,
+            "/api/hero-skills": self._api_hero_skills,
+            "/api/hero-skills/save": self._api_hero_skills_save,
+            "/api/hero-skills/reset": self._api_hero_skills_reset,
+            "/api/hero-skills/compare": self._api_hero_skills_compare,
         }
         handler = routes.get(path)
         if handler is None:
@@ -499,6 +524,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         except (
             SnapshotModeError,
             battle_estimator.NearbyScanError,
+            hero_skill_recommender.HeroSkillRecommendationError,
             h3_map_parser.H3MapLoadError,
             h3_map_parser.H3MapSelectionError,
             h3_save_parser.ConfigError,
@@ -837,6 +863,105 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         if target_id is not None:
             response["target_id"] = target_id
         return response
+
+    def _api_hero_skills(self, payload: dict) -> dict:
+        hero_id = _required_hero_skill_hero_id(payload)
+        role = _hero_skill_role_from_payload(payload)
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
+        hero = _request_hero_by_id(self.app_state, domain_snapshot, hero_id)
+        context = _hero_skill_context_for_request(
+            self.app_state,
+            domain_snapshot,
+            hero,
+            hero_id,
+            role,
+        )
+        return _hero_skill_payload(context)
+
+    def _api_hero_skills_save(self, payload: dict) -> dict:
+        hero_id = _required_hero_skill_hero_id(payload)
+        role = _hero_skill_role_from_payload(payload)
+        skills = _skill_state_from_payload(payload)
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
+        hero = _request_hero_by_id(self.app_state, domain_snapshot, hero_id)
+        context = _hero_skill_context_for_request(
+            self.app_state,
+            domain_snapshot,
+            hero,
+            hero_id,
+            role,
+            load_config=False,
+        )
+        with self.app_state.config_lock:
+            config = h3_save_parser.set_config_hero_skill_state(
+                context.map_key,
+                hero_id,
+                context.hero_metadata.key,
+                skills,
+                self.app_state_config_path,
+                metadata=context.metadata,
+            )
+        context = _hero_skill_context_for_request(
+            self.app_state,
+            domain_snapshot,
+            hero,
+            hero_id,
+            role,
+            config=config,
+        )
+        return _hero_skill_payload(context)
+
+    def _api_hero_skills_reset(self, payload: dict) -> dict:
+        hero_id = _required_hero_skill_hero_id(payload)
+        role = _hero_skill_role_from_payload(payload)
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
+        hero = _request_hero_by_id(self.app_state, domain_snapshot, hero_id)
+        context = _hero_skill_context_for_request(
+            self.app_state,
+            domain_snapshot,
+            hero,
+            hero_id,
+            role,
+            load_config=False,
+        )
+        with self.app_state.config_lock:
+            config = h3_save_parser.reset_config_hero_skill_state(
+                context.map_key,
+                hero_id,
+                self.app_state_config_path,
+            )
+        context = _hero_skill_context_for_request(
+            self.app_state,
+            domain_snapshot,
+            hero,
+            hero_id,
+            role,
+            config=config,
+        )
+        return _hero_skill_payload(context)
+
+    def _api_hero_skills_compare(self, payload: dict) -> dict:
+        hero_id = _required_hero_skill_hero_id(payload)
+        role = _hero_skill_role_from_payload(payload)
+        offers = _skill_offers_from_payload(payload)
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
+        hero = _request_hero_by_id(self.app_state, domain_snapshot, hero_id)
+        context = _hero_skill_context_for_request(
+            self.app_state,
+            domain_snapshot,
+            hero,
+            hero_id,
+            role,
+        )
+        comparison = hero_skill_recommender.compare_skill_offers(
+            context.hero_metadata.key,
+            current_skills=context.current_skills,
+            offers=offers,
+            role=context.role,
+            metadata=context.metadata,
+            rules=context.rules,
+        )
+        return _hero_skill_payload(context, offer_comparison=comparison)
 
     @property
     def app_state(self) -> GuiAppState:
@@ -2279,6 +2404,258 @@ def _hidden_neutral_map_key(domain_snapshot: DomainSnapshot) -> str:
         str(fingerprint.get("size", "")),
         str(fingerprint.get("mtime_ns", "")),
     ))
+
+
+def _hero_skill_context_for_request(
+    app_state: GuiAppState,
+    domain_snapshot: DomainSnapshot,
+    hero,
+    hero_id: str,
+    role: str | None,
+    config: h3_save_parser.BattleEstimatorConfig | None = None,
+    load_config: bool = True,
+) -> HeroSkillApiContext:
+    metadata, rules = _load_hero_skill_recommendation_data()
+    resolved_role = _validate_hero_skill_role(
+        role or rules.default_role,
+        rules,
+    )
+    hero_metadata = _standard_hero_metadata_for_save_hero(hero, metadata)
+    map_key = _hidden_neutral_map_key(domain_snapshot)
+    if config is None and load_config:
+        config = h3_save_parser.load_config(_snapshot_kwargs_for_state(app_state)["config_path"])
+    if config is None:
+        config = h3_save_parser.BattleEstimatorConfig()
+    current_skills = h3_save_parser.get_config_hero_skill_state(
+        map_key,
+        hero_id,
+        hero_metadata.key,
+        config=config,
+        config_path=_snapshot_kwargs_for_state(app_state)["config_path"],
+        metadata=metadata,
+    )
+    current_skills_source = (
+        "manual"
+        if hero_id in config.manual_hero_current_skills_by_map.get(map_key, {})
+        else "starting"
+    )
+    return HeroSkillApiContext(
+        hero_id=hero_id,
+        save_hero=hero,
+        map_key=map_key,
+        role=resolved_role,
+        metadata=metadata,
+        rules=rules,
+        hero_metadata=hero_metadata,
+        current_skills=current_skills,
+        current_skills_source=current_skills_source,
+    )
+
+
+def _load_hero_skill_recommendation_data():
+    try:
+        metadata = hero_skill_recommender.load_vcmi_hero_skill_metadata()
+        rules = hero_skill_recommender.load_recommendation_rules(metadata=metadata)
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        hero_skill_recommender.HeroSkillRecommendationError,
+    ) as exc:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            f"invalid hero skill recommendation data: {exc}",
+        ) from exc
+    return metadata, rules
+
+
+def _hero_skill_payload(
+    context: HeroSkillApiContext,
+    offer_comparison=None,
+) -> dict:
+    recommendations = hero_skill_recommender.recommend_hero_skills(
+        context.hero_metadata.key,
+        role=context.role,
+        current_skills=context.current_skills,
+        metadata=context.metadata,
+        rules=context.rules,
+        top_limit=8,
+        avoid_limit=8,
+    )
+    return {
+        "hero_id": context.hero_id,
+        "map_key": context.map_key,
+        "role": context.role,
+        "hero": _serialize_hero_skill_hero_metadata(context),
+        "max_skills": hero_skill_recommender.MAX_SECONDARY_SKILLS,
+        "skill_levels": list(hero_skill_recommender.SKILL_LEVELS),
+        "skills": [
+            _serialize_skill_metadata(skill)
+            for skill in sorted(
+                context.metadata.skills.values(),
+                key=_skill_metadata_sort_key,
+            )
+        ],
+        "current_skills": [
+            _serialize_current_skill(skill, context.metadata)
+            for skill in context.current_skills
+        ],
+        "current_skills_source": context.current_skills_source,
+        "top_next": [
+            _serialize_recommendation_entry(entry)
+            for entry in recommendations.top_next
+        ],
+        "avoid": [
+            _serialize_recommendation_entry(entry)
+            for entry in recommendations.avoid
+        ],
+        "offer_comparison": _serialize_offer_comparison(offer_comparison),
+    }
+
+
+def _hero_skill_role_from_payload(payload: dict) -> str | None:
+    if "role" not in payload or payload.get("role") is None:
+        return None
+    return _required_text(payload, "role")
+
+
+def _required_hero_skill_hero_id(payload: dict) -> str:
+    hero_id = _required_text(payload, "hero_id")
+    if not h3_save_parser.HIDDEN_HERO_TARGET_PATTERN.fullmatch(hero_id):
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            "hero_id must be hero:<stable_id>",
+        )
+    return hero_id
+
+
+def _validate_hero_skill_role(role: str, rules) -> str:
+    normalized = role.strip() if isinstance(role, str) else ""
+    if not normalized:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "role must be a non-empty string")
+    if normalized not in rules.global_rules:
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"unknown role: {normalized}")
+    return normalized
+
+
+def _skill_offers_from_payload(payload: dict) -> list:
+    offers = payload.get("offers")
+    if not isinstance(offers, list):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "offers must be a list")
+    if len(offers) < 2:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            "offer comparison requires at least two offers",
+        )
+    return offers
+
+
+def _skill_state_from_payload(payload: dict) -> list:
+    skills = payload.get("skills")
+    if not isinstance(skills, list):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "skills must be a list")
+    return skills
+
+
+def _standard_hero_metadata_for_save_hero(hero, metadata):
+    normalized_name = hero.hero_name.strip().casefold() if hero.hero_name else ""
+    if not normalized_name:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            "cannot resolve standard hero for blank hero name",
+        )
+    matches = [
+        hero_metadata
+        for hero_metadata in metadata.heroes.values()
+        if hero_metadata.display_name.casefold() == normalized_name
+        or hero_metadata.key.casefold() == normalized_name
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            f"ambiguous standard hero for hero name: {hero.hero_name}",
+        )
+    raise ApiError(
+        HTTPStatus.BAD_REQUEST,
+        f"unknown standard hero for hero name: {hero.hero_name}",
+    )
+
+
+def _serialize_hero_skill_hero_metadata(context: HeroSkillApiContext) -> dict:
+    hero = context.hero_metadata
+    hero_class = context.metadata.hero_classes.get(hero.class_id)
+    return {
+        "key": hero.key,
+        "display_name": hero.display_name,
+        "save_name": context.save_hero.hero_name,
+        "class_id": hero.class_id,
+        "class_index": None if hero_class is None else hero_class.index,
+        "faction": hero.faction,
+        "affinity": hero.affinity,
+        "specialty_summary": hero.specialty_summary,
+        "starting_skills": [
+            _serialize_current_skill(skill, context.metadata)
+            for skill in hero.starting_skills
+        ],
+    }
+
+
+def _serialize_skill_metadata(skill) -> dict:
+    return {
+        "skill": skill.key,
+        "skill_id": skill.key,
+        "display_name": skill.display_name,
+        "index": skill.index,
+        "specialty_tags": list(skill.specialty_tags),
+        "gain_chance": None if skill.gain_chance is None else dict(skill.gain_chance),
+    }
+
+
+def _serialize_current_skill(skill, metadata) -> dict:
+    skill_metadata = metadata.skills.get(skill.skill_id)
+    return {
+        "skill": skill.skill_id,
+        "skill_id": skill.skill_id,
+        "display_name": (
+            skill.skill_id if skill_metadata is None else skill_metadata.display_name
+        ),
+        "level": skill.level,
+    }
+
+
+def _serialize_recommendation_entry(entry) -> dict:
+    return {
+        "skill": entry.skill_id,
+        "skill_id": entry.skill_id,
+        "display_name": entry.display_name,
+        "target_level": entry.target_level,
+        "score": entry.score,
+        "tier": entry.tier,
+        "availability": entry.availability,
+        "reason_codes": list(entry.reason_codes),
+    }
+
+
+def _serialize_offer_comparison(comparison) -> dict | None:
+    if comparison is None:
+        return None
+    return {
+        "winner": comparison.winner,
+        "reason_codes": list(comparison.reason_codes),
+        "offers": [
+            _serialize_recommendation_entry(entry)
+            for entry in comparison.offers
+        ],
+    }
+
+
+def _skill_metadata_sort_key(skill) -> tuple[int, str]:
+    return (
+        skill.index if skill.index is not None else 10_000,
+        skill.display_name,
+    )
 
 
 def _show_hidden_neutrals_for_app(app_state: GuiAppState) -> bool:

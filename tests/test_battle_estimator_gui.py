@@ -26,7 +26,7 @@ from tests.test_h3_map_parser import (
     _object_template_bytes,
     _town_payload,
 )
-from tools import h3_map_parser, h3_save_parser
+from tools import h3_map_parser, h3_save_parser, hero_skill_recommender
 
 
 class BattleEstimatorGuiServerTests(unittest.TestCase):
@@ -2803,6 +2803,392 @@ assert.ok(pathSegmentButtons().length >= 4);
                 self.assertEqual(payload["selected_hero_id"], "hero:256")
                 self.assertEqual(config.last_hero, "Isra")
                 self.assertEqual(config.recent_heroes, ("Isra",))
+
+            self._with_server(check, app_state=app_state)
+
+    def test_hero_skills_endpoint_returns_starting_state_and_recommendations(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, _, payload = self._post_json(
+                    base_url,
+                    "/api/hero-skills",
+                    {"hero_id": "hero:256"},
+                )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["hero_id"], "hero:256")
+                self.assertEqual(payload["role"], "main")
+                self.assertEqual(payload["hero"]["key"], "isra")
+                self.assertEqual(payload["hero"]["display_name"], "Isra")
+                self.assertEqual(payload["hero"]["faction"], "necropolis")
+                self.assertEqual(payload["current_skills_source"], "starting")
+                self.assertEqual(
+                    payload["current_skills"],
+                    [
+                        {
+                            "skill": "necromancy",
+                            "skill_id": "necromancy",
+                            "display_name": "Necromancy",
+                            "level": "advanced",
+                        },
+                    ],
+                )
+                self.assertEqual(payload["max_skills"], 8)
+                self.assertEqual(payload["skill_levels"], ["basic", "advanced", "expert"])
+                skill_ids = {skill["skill_id"] for skill in payload["skills"]}
+                self.assertIn("earthMagic", skill_ids)
+                self.assertEqual(payload["top_next"][0]["skill_id"], "necromancy")
+                self.assertEqual(payload["top_next"][0]["target_level"], "expert")
+                self.assertEqual(payload["top_next"][0]["tier"], "S")
+                self.assertTrue(
+                    any(entry["skill_id"] == "diplomacy" for entry in payload["avoid"])
+                )
+                self.assertIsNone(payload["offer_comparison"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_hero_skills_save_persists_manual_state_and_loads_it(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, _, saved = self._post_json(
+                    base_url,
+                    "/api/hero-skills/save",
+                    {
+                        "hero_id": "hero:256",
+                        "skills": [
+                            {"skill": "earthMagic", "level": "basic"},
+                            {"skill": "logistics", "level": "basic"},
+                        ],
+                    },
+                )
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+
+                self.assertEqual(status, 200)
+                self.assertEqual(saved["current_skills_source"], "manual")
+                self.assertEqual(
+                    [
+                        (skill["skill_id"], skill["level"])
+                        for skill in saved["current_skills"]
+                    ],
+                    [("earthMagic", "basic"), ("logistics", "basic")],
+                )
+                self.assertEqual(
+                    config.manual_hero_current_skills_by_map[saved["map_key"]]["hero:256"],
+                    (
+                        hero_skill_recommender.CurrentSkill("earthMagic", "basic"),
+                        hero_skill_recommender.CurrentSkill("logistics", "basic"),
+                    ),
+                )
+
+                _, _, loaded = self._post_json(
+                    base_url,
+                    "/api/hero-skills",
+                    {"hero_id": "hero:256"},
+                )
+                self.assertEqual(loaded["current_skills_source"], "manual")
+                self.assertEqual(loaded["current_skills"], saved["current_skills"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_hero_skills_reset_clears_manual_state_and_returns_starting_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                self._post_json(
+                    base_url,
+                    "/api/hero-skills/save",
+                    {
+                        "hero_id": "hero:256",
+                        "skills": [
+                            {"skill": "earthMagic", "level": "basic"},
+                        ],
+                    },
+                )
+
+                status, _, reset = self._post_json(
+                    base_url,
+                    "/api/hero-skills/reset",
+                    {"hero_id": "hero:256"},
+                )
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+
+                self.assertEqual(status, 200)
+                self.assertEqual(reset["current_skills_source"], "starting")
+                self.assertEqual(
+                    [
+                        (skill["skill_id"], skill["level"])
+                        for skill in reset["current_skills"]
+                    ],
+                    [("necromancy", "advanced")],
+                )
+                self.assertEqual(config.manual_hero_current_skills_by_map, {})
+
+            self._with_server(check, app_state=app_state)
+
+    def test_hero_skills_compare_endpoint_returns_offer_comparison(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                status, _, payload = self._post_json(
+                    base_url,
+                    "/api/hero-skills/compare",
+                    {
+                        "hero_id": "hero:256",
+                        "offers": [
+                            {"skill": "earthMagic", "level": "basic"},
+                            {"skill": "necromancy", "level": "expert"},
+                        ],
+                    },
+                )
+                comparison = payload["offer_comparison"]
+
+                self.assertEqual(status, 200)
+                self.assertEqual(comparison["winner"], "necromancy:expert")
+                self.assertIn("higher_score", comparison["reason_codes"])
+                self.assertEqual(
+                    [offer["skill_id"] for offer in comparison["offers"]],
+                    ["earthMagic", "necromancy"],
+                )
+
+                _, _, unavailable_payload = self._post_json(
+                    base_url,
+                    "/api/hero-skills/compare",
+                    {
+                        "hero_id": "hero:256",
+                        "offers": [
+                            {"skill": "necromancy", "level": "basic"},
+                            {"skill": "earthMagic", "level": "basic"},
+                        ],
+                    },
+                )
+                unavailable_offer = unavailable_payload["offer_comparison"]["offers"][0]
+                self.assertEqual(unavailable_offer["availability"], "unavailable")
+                self.assertIn("illegal_upgrade_level", unavailable_offer["reason_codes"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_hero_skills_endpoint_rejects_invalid_hero_requests(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                with self.assertRaises(HTTPError) as missing_hero:
+                    self._post_json(base_url, "/api/hero-skills", {})
+                self.assertEqual(missing_hero.exception.code, 400)
+
+                with self.assertRaises(HTTPError) as malformed_hero:
+                    self._post_json(
+                        base_url,
+                        "/api/hero-skills",
+                        {"hero_id": "bad"},
+                    )
+                self.assertEqual(malformed_hero.exception.code, 400)
+                malformed_payload = json.loads(
+                    malformed_hero.exception.read().decode("utf-8")
+                )
+                self.assertIn("hero:<stable_id>", malformed_payload["error"])
+
+                with self.assertRaises(HTTPError) as unknown_hero:
+                    self._post_json(
+                        base_url,
+                        "/api/hero-skills",
+                        {"hero_id": "hero:999"},
+                    )
+                self.assertEqual(unknown_hero.exception.code, 404)
+
+                with self.assertRaises(HTTPError) as unknown_role:
+                    self._post_json(
+                        base_url,
+                        "/api/hero-skills",
+                        {"hero_id": "hero:256", "role": "side"},
+                    )
+                self.assertEqual(unknown_role.exception.code, 400)
+                role_payload = json.loads(
+                    unknown_role.exception.read().decode("utf-8")
+                )
+                self.assertIn("unknown role", role_payload["error"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_hero_skills_endpoint_maps_recommender_load_errors_to_bad_request(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                with patch(
+                    "tools.battle_estimator_gui.hero_skill_recommender.load_recommendation_rules",
+                    side_effect=OSError("cannot read rules"),
+                ):
+                    with self.assertRaises(HTTPError) as raised:
+                        self._post_json(
+                            base_url,
+                            "/api/hero-skills",
+                            {"hero_id": "hero:256"},
+                        )
+
+                self.assertEqual(raised.exception.code, 400)
+                payload = json.loads(raised.exception.read().decode("utf-8"))
+                self.assertIn("invalid hero skill recommendation data", payload["error"])
+                self.assertIn("cannot read rules", payload["error"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_hero_skills_endpoint_rejects_unresolved_standard_hero(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Tiny")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                with self.assertRaises(HTTPError) as unresolved:
+                    self._post_json(
+                        base_url,
+                        "/api/hero-skills",
+                        {"hero_id": "hero:256"},
+                    )
+
+                self.assertEqual(unresolved.exception.code, 400)
+                payload = json.loads(unresolved.exception.read().decode("utf-8"))
+                self.assertIn("unknown standard hero", payload["error"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_hero_skills_save_and_compare_reject_invalid_payloads(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                with self.assertRaises(HTTPError) as invalid_skills_shape:
+                    self._post_json(
+                        base_url,
+                        "/api/hero-skills/save",
+                        {"hero_id": "hero:256", "skills": "bad"},
+                    )
+                self.assertEqual(invalid_skills_shape.exception.code, 400)
+
+                with self.assertRaises(HTTPError) as unknown_skill:
+                    self._post_json(
+                        base_url,
+                        "/api/hero-skills/save",
+                        {
+                            "hero_id": "hero:256",
+                            "skills": [
+                                {"skill": "unknownSkill", "level": "basic"},
+                            ],
+                        },
+                    )
+                self.assertEqual(unknown_skill.exception.code, 400)
+
+                invalid_compare_cases = (
+                    ({}, "offers must be a list"),
+                    ({"offers": [{"skill": "earthMagic", "level": "basic"}]}, "at least two"),
+                    (
+                        {
+                            "offers": [
+                                {"skill": "earthMagic", "level": "basic"},
+                                {"skill": "earthMagic", "level": "basic"},
+                            ],
+                        },
+                        "duplicate",
+                    ),
+                    (
+                        {
+                            "offers": [
+                                {"skill": "earthMagic", "level": "wrong"},
+                                {"skill": "necromancy", "level": "expert"},
+                            ],
+                        },
+                        "skill level",
+                    ),
+                )
+                for payload, expected_error in invalid_compare_cases:
+                    with self.subTest(expected_error=expected_error):
+                        payload = {"hero_id": "hero:256", **payload}
+                        with self.assertRaises(HTTPError) as raised:
+                            self._post_json(
+                                base_url,
+                                "/api/hero-skills/compare",
+                                payload,
+                            )
+                        self.assertEqual(raised.exception.code, 400)
+                        error_payload = json.loads(
+                            raised.exception.read().decode("utf-8")
+                        )
+                        self.assertIn(expected_error, error_payload["error"])
 
             self._with_server(check, app_state=app_state)
 
