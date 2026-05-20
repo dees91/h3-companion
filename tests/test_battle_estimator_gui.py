@@ -250,6 +250,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "hiddenTargetInFlight",
             "hidden_hero_target_ids",
             "setHiddenTarget",
+            "Select as my hero",
+            "Current hero",
             "showHiddenInFlight",
             "showRouteOverlay",
             "ROUTE_OVERLAY_STYLES",
@@ -367,6 +369,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
 
         app_js_path = str((Path("tools") / "battle_estimator_gui" / "app.js").resolve())
         script = f"""
+(async function main() {{
 const assert = require("assert");
 const drawOperations = [];
 const routeFillStyles = new Set(["#d9ead5", "#c8e2f2", "#87919e"]);
@@ -450,7 +453,7 @@ class Element {{
     this.events[type].push(handler);
   }}
   dispatch(type, event) {{
-    (this.events[type] || []).forEach((handler) => handler({{ target: this, ...event }}));
+    return (this.events[type] || []).map((handler) => handler({{ target: this, ...event }}));
   }}
   removeChild(child) {{
     const index = this.children.indexOf(child);
@@ -486,7 +489,6 @@ global.window = {{
     return 1;
   }}
 }};
-let fetchCalls = 0;
 const snapshot = {{
   mode: "follow_latest",
   save_file: null,
@@ -506,16 +508,53 @@ const snapshot = {{
   recent_heroes: [],
   selected_hero_id: null
 }};
-global.fetch = (path) => {{
+let fetchCalls = 0;
+const fetchRequests = [];
+function heroNameForId(heroId) {{
+  const snapshots = [markerSnapshot, hiddenHeroSnapshot].filter(Boolean);
+  for (const source of snapshots) {{
+    const match = (source.heroes || []).find((hero) => hero.id === heroId);
+    if (match) {{
+      return match.name || heroId;
+    }}
+  }}
+  return heroId;
+}}
+global.fetch = (path, options = {{}}) => {{
   fetchCalls += 1;
+  fetchRequests.push({{ path, options }});
+  let payload = snapshot;
+  if (path === "/api/health") {{
+    payload = {{ ok: true }};
+  }} else if (path === "/api/select-hero") {{
+    const requestPayload = JSON.parse(options.body || "{{}}");
+    payload = {{
+      selected_hero_id: requestPayload.hero_id,
+      recent_heroes: [heroNameForId(requestPayload.hero_id), "Isra"]
+    }};
+  }} else if (path === "/api/hidden-target") {{
+    const requestPayload = JSON.parse(options.body || "{{}}");
+    payload = {{
+      target_id: requestPayload.target_id,
+      hidden: requestPayload.hidden,
+      hidden_neutral_target_ids: [],
+      hidden_hero_target_ids: requestPayload.hidden ? [requestPayload.target_id] : []
+    }};
+  }}
   return Promise.resolve({{
-  ok: true,
-  json: () => Promise.resolve(path === "/api/health" ? {{ ok: true }} : snapshot)
+    ok: true,
+    json: () => Promise.resolve(payload)
   }});
 }};
 require({json.dumps(app_js_path)});
 const helpers = window.__battleEstimatorGuiTest;
 assert.strictEqual(autoRefreshIntervalCalls, 0);
+async function flushPromises() {{
+  for (let index = 0; index < 20; index += 1) {{
+    await Promise.resolve();
+  }}
+}}
+await flushPromises();
 const markerSnapshot = {{
   map: {{ width: 4, height: 4, levels: 2 }},
   route_layers: [
@@ -1083,6 +1122,21 @@ assert.strictEqual(fetchCalls, fetchCallsBeforeTownClick);
 assert.ok(elements["target-state"].textContent.includes("town town:0"));
 assert.ok(elements["target-state"].textContent.includes("Initial owner: Red"));
 assert.ok(elements["estimate-state"].textContent.includes("Town target"));
+const renderedNeutral = renderedView.markers.find((marker) => marker.id === "neutral:0");
+const renderedNeutralScreen = helpers.worldToScreen(renderedNeutral.world, renderedView);
+let neutralContextMenuPrevented = 0;
+elements["battle-map"].dispatch("contextmenu", {{
+  clientX: renderedNeutralScreen.x,
+  clientY: renderedNeutralScreen.y,
+  preventDefault() {{
+    neutralContextMenuPrevented += 1;
+  }}
+}});
+assert.strictEqual(neutralContextMenuPrevented, 1);
+assert.strictEqual(elements["target-context-menu"].hidden, false);
+const neutralContextButtons = elements["target-context-menu"].children.filter((child) => child.type === "button");
+assert.deepStrictEqual(neutralContextButtons.map((button) => button.textContent), ["Simulate", "Hide"]);
+assert.strictEqual(fetchCalls, fetchCallsBeforeTownClick);
 const renderedPortal = renderedView.markers.find((marker) => marker.id === "portal:100");
 const renderedPortalScreen = helpers.worldToScreen(renderedPortal.world, renderedView);
 const fetchCallsBeforePortalClick = fetchCalls;
@@ -1132,7 +1186,92 @@ elements["battle-map"].dispatch("contextmenu", {{
 assert.strictEqual(heroContextMenuPrevented, 1);
 assert.strictEqual(elements["target-context-menu"].hidden, false);
 const heroContextButtons = elements["target-context-menu"].children.filter((child) => child.type === "button");
-assert.deepStrictEqual(heroContextButtons.map((button) => button.textContent), ["Simulate", "Hide"]);
+assert.deepStrictEqual(heroContextButtons.map((button) => button.textContent), ["Select as my hero", "Simulate", "Hide"]);
+const fetchRequestCountBeforeHeroSelect = fetchRequests.length;
+await Promise.all(heroContextButtons[0].dispatch("click", {{}}));
+const heroSelectRequests = fetchRequests
+  .slice(fetchRequestCountBeforeHeroSelect)
+  .filter((request) => request.path === "/api/select-hero");
+assert.strictEqual(heroSelectRequests.length, 1);
+const heroSelectRequest = heroSelectRequests[0];
+assert.strictEqual(heroSelectRequest.path, "/api/select-hero");
+assert.deepStrictEqual(JSON.parse(heroSelectRequest.options.body), {{ hero_id: "hero:1" }});
+const selectedHeroView = helpers.currentMapViewForTest();
+assert.strictEqual(selectedHeroView.snapshot.selected_hero_id, "hero:1");
+assert.strictEqual(selectedHeroView.snapshot.recent_heroes[0], "Fafner");
+const selectedHeroAfterSelect = selectedHeroView.markers.find((marker) => marker.id === "hero:1");
+assert.ok(selectedHeroAfterSelect, selectedHeroView.markers.map((marker) => marker.id).join(","));
+assert.strictEqual(selectedHeroAfterSelect.selected, true);
+assert.strictEqual(elements["recent-heroes"].children[0].textContent, "Fafner");
+let selectedHeroContextPrevented = 0;
+const selectedHeroMarker = selectedHeroView.markers.find((marker) => marker.id === "hero:1");
+const selectedHeroScreen = helpers.worldToScreen(selectedHeroMarker.world, selectedHeroView);
+elements["battle-map"].dispatch("contextmenu", {{
+  clientX: selectedHeroScreen.x,
+  clientY: selectedHeroScreen.y,
+  preventDefault() {{
+    selectedHeroContextPrevented += 1;
+  }}
+}});
+assert.strictEqual(selectedHeroContextPrevented, 1);
+assert.strictEqual(elements["target-context-menu"].hidden, false);
+assert.deepStrictEqual(
+  elements["target-context-menu"].children
+    .filter((child) => child.type === "button")
+    .map((button) => button.textContent),
+  []
+);
+assert.deepStrictEqual(
+  elements["target-context-menu"].children
+    .filter((child) => child.className === "context-menu-note")
+    .map((note) => note.textContent),
+  ["Current hero"]
+);
+const selectableHiddenHeroSnapshot = {{
+  ...hiddenHeroSnapshot,
+  show_hidden: true,
+  hidden_hero_target_ids: ["hero:hidden"],
+  heroes: hiddenHeroSnapshot.heroes.map((hero) => (
+    hero.id === "hero:hidden"
+      ? {{ ...hero, position: {{ x: 3, y: 2, z: 1 }} }}
+      : hero
+  ))
+}};
+helpers.renderSnapshot(selectableHiddenHeroSnapshot, {{ preserveView: false }});
+const hiddenHeroView = helpers.currentMapViewForTest();
+const hiddenHeroMarker = hiddenHeroView.markers.find((marker) => marker.id === "hero:hidden");
+const hiddenHeroScreen = helpers.worldToScreen(hiddenHeroMarker.world, hiddenHeroView);
+let hiddenHeroContextPrevented = 0;
+elements["battle-map"].dispatch("contextmenu", {{
+  clientX: hiddenHeroScreen.x,
+  clientY: hiddenHeroScreen.y,
+  preventDefault() {{
+    hiddenHeroContextPrevented += 1;
+  }}
+}});
+assert.strictEqual(hiddenHeroContextPrevented, 1);
+const hiddenHeroButtons = elements["target-context-menu"].children.filter((child) => child.type === "button");
+assert.deepStrictEqual(hiddenHeroButtons.map((button) => button.textContent), ["Select as my hero", "Unhide"]);
+const fetchRequestCountBeforeHiddenSelect = fetchRequests.length;
+await Promise.all(hiddenHeroButtons[0].dispatch("click", {{}}));
+const hiddenHeroSelectRequests = fetchRequests
+  .slice(fetchRequestCountBeforeHiddenSelect)
+  .filter((request) => request.path === "/api/select-hero");
+assert.strictEqual(hiddenHeroSelectRequests.length, 1);
+const hiddenHeroSelectRequest = hiddenHeroSelectRequests[0];
+assert.strictEqual(hiddenHeroSelectRequest.path, "/api/select-hero");
+assert.deepStrictEqual(JSON.parse(hiddenHeroSelectRequest.options.body), {{ hero_id: "hero:hidden" }});
+const selectedHiddenHeroView = helpers.currentMapViewForTest();
+const selectedHiddenHeroMarker = selectedHiddenHeroView.markers.find((marker) => marker.id === "hero:hidden");
+assert.deepStrictEqual(selectedHiddenHeroView.snapshot.hidden_hero_target_ids, []);
+assert.strictEqual(selectedHiddenHeroView.snapshot.heroes.find((hero) => hero.id === "hero:hidden").hidden, false);
+assert.strictEqual(selectedHiddenHeroMarker.selected, true);
+assert.strictEqual(selectedHiddenHeroMarker.hidden, false);
+selectedHiddenHeroView.snapshot.show_hidden = false;
+helpers.renderSnapshot(selectedHiddenHeroView.snapshot, {{ preserveView: true }});
+const hiddenShowOffView = helpers.currentMapViewForTest();
+assert.strictEqual(hiddenShowOffView.markers.find((marker) => marker.id === "hero:hidden").selected, true);
+const fetchCallsAfterContextActions = fetchCalls;
 drawOperations.length = 0;
 const routeToggle = elements["show-route-overlay-toggle"];
 routeToggle.checked = false;
@@ -1148,7 +1287,11 @@ const overlayFillsAfterToggleOn = drawOperations.filter((operation) => (
   operation.op === "fillRect" && routeFillStyles.has(operation.fillStyle)
 ));
 assert.ok(overlayFillsAfterToggleOn.length >= 3);
-assert.strictEqual(fetchCalls, fetchCallsBeforeRender);
+assert.strictEqual(fetchCalls, fetchCallsAfterContextActions);
+}})().catch((error) => {{
+  console.error(error && error.stack ? error.stack : error);
+  process.exit(1);
+}});
 """
         completed = subprocess.run(
             [node, "-e", script],

@@ -656,18 +656,39 @@ clicking a hero marker should allow selecting that hero as the active player
 hero and hiding/restoring that hero.
 
 **Acceptance criteria:**
-- [ ] Right-clicking a hero marker opens a context menu.
-- [ ] The menu includes "Select as my hero" for hero markers.
-- [ ] The menu includes hide/restore actions for hero markers.
-- [ ] Selecting a hero from the context menu updates recent heroes and the
+- [x] Right-clicking a hero marker opens a context menu.
+- [x] The menu includes "Select as my hero" for hero markers.
+- [x] The menu includes hide/restore actions for hero markers.
+- [x] Selecting a hero from the context menu updates recent heroes and the
       selected hero state.
-- [ ] Context actions for neutral monsters still work.
+- [x] Context actions for neutral monsters still work.
 
 **Verification:**
-- [ ] Add or update GUI tests where practical.
-- [ ] Manual GUI check: right-click a hero marker, select it, hide it, and
+- [x] Add or update GUI tests where practical.
+- [x] Manual GUI check: right-click a hero marker, select it, hide it, and
       restore it with show-hidden enabled.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion Notes (2026-05-20):**
+- Added hero marker context actions for non-selected heroes: `Select as my
+  hero`, `Simulate`, and `Hide`; hidden heroes show `Select as my hero` and
+  `Unhide`.
+- Selected hero markers now open a context menu with a `Current hero` note and
+  no hide/select/simulate action, preserving the Task 10 selected-hero
+  invariant.
+- Selecting a hero from the context menu reuses `/api/select-hero`, updates
+  recent heroes locally, and clears the selected hero from local hidden-target
+  state so hidden selected heroes remain visible immediately.
+- Automated verification covered neutral context-menu regression, non-selected
+  hero selection payload/recent state, selected hero note/no-actions behavior,
+  and hidden-hero selection cleanup.
+- Manual GUI check: started a local fixture GUI on port 8771 with three heroes,
+  used headless Chrome/CDP to right-click `Marius`, select him as active,
+  confirm the selected-hero `Current hero` menu, hide `Isra`, show hidden
+  targets, and restore `Isra`.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent code review found no
+  blocking issues.
 
 **Dependencies:** Task 10
 
@@ -930,7 +951,7 @@ After Tasks 9 and 17:
 | 8 | Show Portal Markers And Destinations In The GUI | done | 7 |
 | 9 | End-To-End Map Verification | done | 4, 6, 8 |
 | 10 | Add Hidden Hero Target State | done | - |
-| 11 | Add Hero Marker Context Actions | todo | 10 |
+| 11 | Add Hero Marker Context Actions | done | 10 |
 | 12 | Merge Map Filter And Scan Target Type | todo | - |
 | 13 | Add Scan Sort Modes | todo | - |
 | 14 | Improve Scan Result Hover And Click Behavior | todo | - |

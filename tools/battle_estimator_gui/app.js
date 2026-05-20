@@ -954,7 +954,6 @@
         && marker.type !== "hero"
         && marker.type !== "portal"
       )
-      || (marker.type === "hero" && marker.selected)
     ) {
       hideTargetContextMenu();
       return;
@@ -980,6 +979,26 @@
           )
         );
       });
+    } else if (marker.type === "hero") {
+      if (marker.selected) {
+        elements.targetContextMenu.appendChild(contextMenuText("Current hero"));
+      } else {
+        elements.targetContextMenu.appendChild(
+          contextMenuButton("Select as my hero", () => selectHero(marker.id))
+        );
+        if (!marker.hidden) {
+          elements.targetContextMenu.appendChild(
+            contextMenuButton("Simulate", () => simulateTarget(marker))
+          );
+          elements.targetContextMenu.appendChild(
+            contextMenuButton("Hide", () => setHiddenTarget(marker, true))
+          );
+        } else {
+          elements.targetContextMenu.appendChild(
+            contextMenuButton("Unhide", () => setHiddenTarget(marker, false))
+          );
+        }
+      }
     } else if (!marker.hidden) {
       elements.targetContextMenu.appendChild(
         contextMenuButton("Simulate", () => simulateTarget(marker))
@@ -1015,7 +1034,7 @@
     button.textContent = label;
     button.addEventListener("click", () => {
       hideTargetContextMenu();
-      onClick();
+      return onClick();
     });
     return button;
   }
@@ -1494,6 +1513,7 @@
 
   function currentMapViewForTest() {
     return {
+      snapshot: mapView.snapshot,
       zoom: mapView.zoom,
       pan: { x: mapView.pan.x, y: mapView.pan.y },
       level: mapView.level,
@@ -2421,6 +2441,14 @@
     if (mapView.snapshot) {
       mapView.snapshot.selected_hero_id = heroState.selectedHeroId;
       mapView.snapshot.recent_heroes = heroState.recentHeroes;
+      mapView.snapshot.hidden_hero_target_ids = (
+        mapView.snapshot.hidden_hero_target_ids || []
+      ).filter((targetId) => targetId !== heroState.selectedHeroId);
+      (mapView.snapshot.heroes || []).forEach((hero) => {
+        if (hero.id === heroState.selectedHeroId) {
+          hero.hidden = false;
+        }
+      });
     }
     mapView.level = defaultLevelForSnapshot(mapView.snapshot, heroState.selectedHeroId);
     rebuildMarkerCache(mapView.snapshot);
@@ -2437,14 +2465,14 @@
 
   function selectHero(heroId) {
     if (!heroId || heroState.selectingHeroId) {
-      return;
+      return Promise.resolve();
     }
     invalidateEstimateRequests();
     heroState.selectingHeroId = heroId;
     setText(elements.refresh, "Selecting hero");
     renderHeroes();
 
-    postJson(
+    return postJson(
       "/api/select-hero",
       { hero_id: heroId },
       "hero selection failed"
@@ -2807,7 +2835,6 @@
         && marker.type !== "hero"
         && marker.type !== "portal"
       )
-      || (marker.type === "hero" && marker.selected)
     ) {
       hideTargetContextMenu();
       return;
