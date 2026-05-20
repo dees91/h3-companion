@@ -223,6 +223,7 @@
       || current.map_fingerprint !== next.map_fingerprint
       || current.selected_hero_id !== next.selected_hero_id
       || current.show_hidden !== next.show_hidden
+      || JSON.stringify(current.hidden_hero_target_ids || []) !== JSON.stringify(next.hidden_hero_target_ids || [])
     );
   }
 
@@ -617,17 +618,27 @@
     ].filter(Boolean).join(" | ");
   }
 
-  function buildMarkerCache(snapshot, tileSize, level, showRemovedNeutrals) {
+  function buildMarkerCache(
+    snapshot,
+    tileSize,
+    level,
+    showRemovedNeutrals,
+    showHiddenTargets
+  ) {
     if (!snapshot) {
       return [];
     }
 
     const selectedHeroId = snapshot.selected_hero_id;
     const activeLevel = normalizeLevelForSnapshot(level, snapshot);
+    const includeHiddenTargets = typeof showHiddenTargets === "boolean"
+      ? showHiddenTargets
+      : Boolean(snapshot.show_hidden);
     const portalTargetLookup = portalTargetsById(snapshot);
     const heroMarkers = (snapshot.heroes || [])
       .filter((hero) => hero.position)
       .filter((hero) => positionLevel(hero.position) === activeLevel)
+      .filter((hero) => includeHiddenTargets || !hero.hidden)
       .map((hero) => ({
         type: "hero",
         id: hero.id,
@@ -644,6 +655,7 @@
         radius: 8,
         selected: hero.id === selectedHeroId,
         removed: false,
+        hidden: Boolean(hero.hidden),
         unsupported: false,
         creatureCount: hero.total_creatures || 0,
         summary: hero.army_summary || ""
@@ -715,6 +727,7 @@
       .filter((target) => target.position)
       .filter((target) => positionLevel(target.position) === activeLevel)
       .filter((target) => showRemovedNeutrals || !target.removed)
+      .filter((target) => includeHiddenTargets || !target.hidden)
       .map((target) => ({
         type: "neutral",
         id: target.id,
@@ -832,7 +845,8 @@
       current,
       tileSize,
       mapView.level,
-      mapView.showRemovedNeutrals
+      mapView.showRemovedNeutrals,
+      mapView.showHiddenNeutrals
     );
   }
 
@@ -933,7 +947,15 @@
   }
 
   function showTargetContextMenu(marker, event) {
-    if (!marker || (marker.type !== "neutral" && marker.type !== "portal")) {
+    if (
+      !marker
+      || (
+        marker.type !== "neutral"
+        && marker.type !== "hero"
+        && marker.type !== "portal"
+      )
+      || (marker.type === "hero" && marker.selected)
+    ) {
       hideTargetContextMenu();
       return;
     }
@@ -963,11 +985,11 @@
         contextMenuButton("Simulate", () => simulateTarget(marker))
       );
       elements.targetContextMenu.appendChild(
-        contextMenuButton("Hide", () => setHiddenNeutralTarget(marker, true))
+        contextMenuButton("Hide", () => setHiddenTarget(marker, true))
       );
     } else {
       elements.targetContextMenu.appendChild(
-        contextMenuButton("Unhide", () => setHiddenNeutralTarget(marker, false))
+        contextMenuButton("Unhide", () => setHiddenTarget(marker, false))
       );
     }
 
@@ -1572,8 +1594,13 @@
       });
   }
 
-  function setHiddenNeutralTarget(marker, hidden) {
-    if (!marker || marker.type !== "neutral" || stateRequests.hiddenTargetInFlight) {
+  function setHiddenTarget(marker, hidden) {
+    if (
+      !marker
+      || (marker.type !== "neutral" && marker.type !== "hero")
+      || (marker.type === "hero" && marker.selected)
+      || stateRequests.hiddenTargetInFlight
+    ) {
       return Promise.resolve();
     }
     stateRequests.hiddenTargetInFlight = true;
@@ -2773,7 +2800,15 @@
   elements.canvas.addEventListener("contextmenu", (event) => {
     const point = canvasPoint(event);
     const marker = hitTestMarker(mapView.markers, point, mapView);
-    if (!marker || (marker.type !== "neutral" && marker.type !== "portal")) {
+    if (
+      !marker
+      || (
+        marker.type !== "neutral"
+        && marker.type !== "hero"
+        && marker.type !== "portal"
+      )
+      || (marker.type === "hero" && marker.selected)
+    ) {
       hideTargetContextMenu();
       return;
     }

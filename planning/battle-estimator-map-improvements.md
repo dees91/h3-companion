@@ -609,22 +609,41 @@ and existing hero/neutral markers on real generated maps.
 targets can be hidden using the same semantics as neutral monster targets.
 
 **Acceptance criteria:**
-- [ ] Hidden hero IDs are persisted per map key.
-- [ ] Hidden heroes are omitted from map markers by default.
-- [ ] Hidden heroes are omitted from scan results by default.
-- [ ] The existing "show hidden" behavior includes both hidden neutrals and
+- [x] Hidden hero IDs are persisted per map key.
+- [x] Hidden heroes are omitted from map markers by default.
+- [x] Hidden heroes are omitted from scan results by default.
+- [x] The existing "show hidden" behavior includes both hidden neutrals and
       hidden heroes.
-- [ ] Hidden neutral behavior remains backward compatible.
+- [x] Hidden neutral behavior remains backward compatible.
 
 **Verification:**
-- [ ] Add or update config and GUI snapshot tests.
-- [ ] Run `python3 -m unittest tests.test_h3_save_parser tests.test_battle_estimator_gui`.
+- [x] Add or update config and GUI snapshot tests.
+- [x] Run `python3 -m unittest tests.test_h3_save_parser tests.test_battle_estimator_gui`.
+
+**Completion Notes (2026-05-20):**
+- Added `hidden_hero_targets_by_map` config persistence with bounded
+  `hero:<stable_id>` normalization, per-map storage, and preservation through
+  existing config mutators.
+- Added `/api/hidden-target` support for known, non-selected hero targets and
+  exposed `hidden_hero_target_ids` plus per-hero `hidden` flags in state
+  payloads.
+- Kept hidden scan compatibility: hidden neutral and hero targets are omitted
+  from scan-radius results even when show-hidden is enabled; direct target
+  simulation remains gated by show-hidden.
+- Updated the map marker cache and context menu path so hidden hero markers are
+  omitted by default, restored by the show-hidden toggle, and non-selected hero
+  markers can be hidden/restored.
+- Verification: `python3 -m unittest tests.test_h3_save_parser`;
+  `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent code review found no
+  blocking issues.
 
 **Dependencies:** None
 
 **Files likely touched:**
 - `tools/h3_save_parser.py`
 - `tools/battle_estimator_gui.py`
+- `tools/battle_estimator_gui/app.js`
 - `tests/test_h3_save_parser.py`
 - `tests/test_battle_estimator_gui.py`
 
@@ -910,8 +929,8 @@ After Tasks 9 and 17:
 | 7 | Parse Portal Targets And Edges | done | 1 |
 | 8 | Show Portal Markers And Destinations In The GUI | done | 7 |
 | 9 | End-To-End Map Verification | done | 4, 6, 8 |
-| 10 | Add Hidden Hero Target State | todo | - |
-| 11 | Add Hero Marker Context Actions | blocked | 10 |
+| 10 | Add Hidden Hero Target State | done | - |
+| 11 | Add Hero Marker Context Actions | todo | 10 |
 | 12 | Merge Map Filter And Scan Target Type | todo | - |
 | 13 | Add Scan Sort Modes | todo | - |
 | 14 | Improve Scan Result Hover And Click Behavior | todo | - |

@@ -894,6 +894,7 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertIsNone(loaded.last_hero)
         self.assertEqual(loaded.recent_heroes, ())
         self.assertEqual(loaded.hidden_neutral_targets_by_map, {})
+        self.assertEqual(loaded.hidden_hero_targets_by_map, {})
 
     def test_clear_config_autosave_dir_removes_key_and_preserves_last_hero(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -929,6 +930,9 @@ class H3SaveParserContractTests(unittest.TestCase):
                     hidden_neutral_targets_by_map={
                         "map-key": ("neutral:1",),
                     },
+                    hidden_hero_targets_by_map={
+                        "map-key": ("hero:512",),
+                    },
                 ),
                 config_path,
             )
@@ -943,6 +947,10 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(
             updated.hidden_neutral_targets_by_map,
             {"map-key": ("neutral:1",)},
+        )
+        self.assertEqual(
+            updated.hidden_hero_targets_by_map,
+            {"map-key": ("hero:512",)},
         )
 
     def test_config_hidden_neutral_targets_round_trip_and_normalize(self):
@@ -1027,6 +1035,107 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(loaded.last_hero, "Isra")
         self.assertEqual(loaded.recent_heroes, ("Isra",))
         self.assertEqual(loaded.hidden_neutral_targets_by_map["other-map"], ("neutral:9",))
+
+    def test_config_hidden_hero_targets_round_trip_and_normalize(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "hidden_hero_targets_by_map": {
+                        " map-key ": [
+                            "hero:000512",
+                            " HERO:512:02 ",
+                            "hero:coronius:88,28,1:9400:52",
+                            "hero:coronius:88,28,1:9400:52",
+                            "neutral:1",
+                            "hero:/bad",
+                            "",
+                        ],
+                        "blank-after-normalize": ["neutral:9", " "],
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            config = h3_save_parser.load_config(config_path)
+            h3_save_parser.save_config(config, config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            config.hidden_hero_targets_by_map,
+            {
+                "map-key": (
+                    "hero:512",
+                    "hero:512:2",
+                    "hero:coronius:88,28,1:9400:52",
+                ),
+            },
+        )
+        self.assertEqual(
+            raw_config["hidden_hero_targets_by_map"]["map-key"],
+            [
+                "hero:512",
+                "hero:512:2",
+                "hero:coronius:88,28,1:9400:52",
+            ],
+        )
+        self.assertNotIn(
+            "blank-after-normalize",
+            raw_config["hidden_hero_targets_by_map"],
+        )
+
+    def test_set_config_hidden_hero_target_updates_one_map(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    autosave_dir=Path(temp_dir) / "game",
+                    last_hero="Isra",
+                    recent_heroes=("Isra",),
+                    hidden_neutral_targets_by_map={
+                        "map-key": ("neutral:1",),
+                    },
+                    hidden_hero_targets_by_map={
+                        "other-map": ("hero:9",),
+                    },
+                ),
+                config_path,
+            )
+
+            first = h3_save_parser.set_config_hidden_hero_target(
+                " map-key ",
+                " HERO:002 ",
+                True,
+                config_path,
+            )
+            second = h3_save_parser.set_config_hidden_hero_target(
+                "map-key",
+                "hero:coronius:88,28,1:9400:52",
+                True,
+                config_path,
+            )
+            cleared = h3_save_parser.set_config_hidden_hero_target(
+                "map-key",
+                "hero:2",
+                False,
+                config_path,
+            )
+            loaded = h3_save_parser.load_config(config_path)
+
+        self.assertEqual(first.hidden_hero_targets_by_map["map-key"], ("hero:2",))
+        self.assertEqual(
+            second.hidden_hero_targets_by_map["map-key"],
+            ("hero:2", "hero:coronius:88,28,1:9400:52"),
+        )
+        self.assertEqual(
+            cleared.hidden_hero_targets_by_map["map-key"],
+            ("hero:coronius:88,28,1:9400:52",),
+        )
+        self.assertEqual(loaded.autosave_dir, Path(temp_dir) / "game")
+        self.assertEqual(loaded.last_hero, "Isra")
+        self.assertEqual(loaded.recent_heroes, ("Isra",))
+        self.assertEqual(loaded.hidden_neutral_targets_by_map["map-key"], ("neutral:1",))
+        self.assertEqual(loaded.hidden_hero_targets_by_map["other-map"], ("hero:9",))
 
     def test_set_config_last_hero_blank_clears_value(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1231,6 +1340,18 @@ class H3SaveParserContractTests(unittest.TestCase):
             (
                 {"hidden_neutral_targets_by_map": {"map": ["neutral:1", 2]}},
                 "hidden_neutral_targets_by_map['map'][1] must be a string",
+            ),
+            (
+                {"hidden_hero_targets_by_map": []},
+                "hidden_hero_targets_by_map must be an object",
+            ),
+            (
+                {"hidden_hero_targets_by_map": {"map": "hero:1"}},
+                "hidden_hero_targets_by_map['map'] must be a list",
+            ),
+            (
+                {"hidden_hero_targets_by_map": {"map": ["hero:1", 2]}},
+                "hidden_hero_targets_by_map['map'][1] must be a string",
             ),
         )
         for data, expected_reason in cases:

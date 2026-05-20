@@ -248,6 +248,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "routeOverlayToggle",
             "targetContextMenu",
             "hiddenTargetInFlight",
+            "hidden_hero_target_ids",
+            "setHiddenTarget",
             "showHiddenInFlight",
             "showRouteOverlay",
             "ROUTE_OVERLAY_STYLES",
@@ -792,6 +794,30 @@ assert.deepStrictEqual(
   ["town:0", "town:random", "portal:100", "portal:110", "portal:120", "hero:0", "neutral:0", "neutral:removed"]
 );
 assert.strictEqual(level0WithRemoved.find((marker) => marker.id === "neutral:removed").removed, true);
+const hiddenHeroSnapshot = {{
+  ...markerSnapshot,
+  show_hidden: false,
+  heroes: [
+    ...markerSnapshot.heroes,
+    {{
+      id: "hero:hidden",
+      name: "Hidden",
+      position: {{ x: 3, y: 2, z: 0 }},
+      owner_color_id: 2,
+      owner_color_name: "tan",
+      team_id: 1,
+      hidden: true,
+      total_creatures: 42,
+      ai_value: 100,
+      army_summary: "42x Skeleton"
+    }}
+  ]
+}};
+assert.ok(!helpers.buildMarkerCache(hiddenHeroSnapshot, 10, 0, false).some((marker) => marker.id === "hero:hidden"));
+assert.ok(!helpers.buildMarkerCache({{ ...hiddenHeroSnapshot, show_hidden: true }}, 10, 0, false, false).some((marker) => marker.id === "hero:hidden"));
+const level0WithHiddenHero = helpers.buildMarkerCache({{ ...hiddenHeroSnapshot, show_hidden: true }}, 10, 0, false);
+assert.strictEqual(level0WithHiddenHero.find((marker) => marker.id === "hero:hidden").hidden, true);
+assert.strictEqual(helpers.buildMarkerCache(hiddenHeroSnapshot, 10, 0, false, true).find((marker) => marker.id === "hero:hidden").hidden, true);
 const level1Markers = helpers.buildMarkerCache(markerSnapshot, 10, 1, false);
 assert.deepStrictEqual(level1Markers.map((marker) => marker.id), [
   "town:1",
@@ -958,6 +984,10 @@ assert.deepStrictEqual(
   helpers.simulationClickDecision({{ type: "neutral", id: "neutral:0", hidden: true }}, "hero:256"),
   {{ simulate: false, message: "Hidden target is ignored." }}
 );
+assert.deepStrictEqual(
+  helpers.simulationClickDecision({{ type: "hero", id: "hero:512", hidden: true }}, "hero:256"),
+  {{ simulate: false, message: "Hidden target is ignored." }}
+);
 assert.strictEqual(
   helpers.isFreshEstimatePayload({{ hero_id: "hero:256" }}, 7, 7, "hero:256"),
   true
@@ -1089,6 +1119,20 @@ const destinationView = helpers.currentMapViewForTest();
 assert.strictEqual(destinationView.level, 1);
 assert.strictEqual(destinationView.activeMarkerId, "portal:101");
 assert.ok(elements["target-state"].textContent.includes("portal portal:101"));
+const renderedHeroTarget = destinationView.markers.find((marker) => marker.id === "hero:1");
+const renderedHeroTargetScreen = helpers.worldToScreen(renderedHeroTarget.world, destinationView);
+let heroContextMenuPrevented = 0;
+elements["battle-map"].dispatch("contextmenu", {{
+  clientX: renderedHeroTargetScreen.x,
+  clientY: renderedHeroTargetScreen.y,
+  preventDefault() {{
+    heroContextMenuPrevented += 1;
+  }}
+}});
+assert.strictEqual(heroContextMenuPrevented, 1);
+assert.strictEqual(elements["target-context-menu"].hidden, false);
+const heroContextButtons = elements["target-context-menu"].children.filter((child) => child.type === "button");
+assert.deepStrictEqual(heroContextButtons.map((button) => button.textContent), ["Simulate", "Hide"]);
 drawOperations.length = 0;
 const routeToggle = elements["show-route-overlay-toggle"];
 routeToggle.checked = false;
@@ -2006,6 +2050,208 @@ assert.strictEqual(fetchCalls, fetchCallsBeforeRender);
 
             self._with_server(check, app_state=app_state)
 
+    def test_hidden_hero_target_api_filters_state_and_scan(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {"hero_name": "Isra", "name_offset": 256, "position": (39, 69, 1)},
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 512,
+                        "position": (39, 71, 1),
+                        "owner_color_id": 2,
+                    },
+                ),
+            )
+            map_path = _write_h3m_map(temp_path / "map.h3m", position=(39, 70, 1))
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                selected_hero_id="hero:256",
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, state = self._get_json(base_url, "/api/state")
+                heroes_by_id = {hero["id"]: hero for hero in state["heroes"]}
+
+                self.assertEqual(status, 200)
+                self.assertEqual(state["selected_hero_id"], "hero:256")
+                self.assertEqual(state["hidden_hero_target_ids"], [])
+                self.assertFalse(heroes_by_id["hero:512"]["hidden"])
+                self.assertFalse(state["show_hidden"])
+
+                status, _, hidden_payload = self._post_json(
+                    base_url,
+                    "/api/hidden-target",
+                    {"target_id": "hero:512", "hidden": True},
+                )
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+                map_key = hidden_payload["map_key"]
+
+                self.assertEqual(status, 200)
+                self.assertTrue(hidden_payload["hidden"])
+                self.assertEqual(hidden_payload["hidden_hero_target_ids"], ["hero:512"])
+                self.assertEqual(
+                    config.hidden_hero_targets_by_map[map_key],
+                    ("hero:512",),
+                )
+
+                _, state = self._get_json(base_url, "/api/state")
+                heroes_by_id = {hero["id"]: hero for hero in state["heroes"]}
+                self.assertEqual(state["hidden_hero_target_ids"], ["hero:512"])
+                self.assertTrue(heroes_by_id["hero:512"]["hidden"])
+                self.assertFalse(heroes_by_id["hero:256"]["hidden"])
+
+                with self.assertRaises(HTTPError) as hidden_simulation:
+                    self._post_json(
+                        base_url,
+                        "/api/simulate-target",
+                        {"hero_id": "hero:256", "target_id": "hero:512"},
+                    )
+                self.assertEqual(hidden_simulation.exception.code, 404)
+
+                with patch.object(
+                    battle_estimator_gui.battle_estimator,
+                    "run_simulations",
+                    return_value=72.0,
+                ) as run_mock:
+                    _, _, scan_payload = self._post_json(
+                        base_url,
+                        "/api/scan-radius",
+                        {
+                            "hero_id": "hero:256",
+                            "radius": 2,
+                            "target_type": "hero",
+                            "simulations": 7,
+                        },
+                    )
+                self.assertEqual(scan_payload["results"], [])
+                run_mock.assert_not_called()
+
+                status, _, shown_state = self._post_json(
+                    base_url,
+                    "/api/show-hidden",
+                    {"show_hidden": True},
+                )
+                heroes_by_id = {hero["id"]: hero for hero in shown_state["heroes"]}
+                self.assertEqual(status, 200)
+                self.assertTrue(shown_state["show_hidden"])
+                self.assertEqual(shown_state["hidden_hero_target_ids"], ["hero:512"])
+                self.assertTrue(heroes_by_id["hero:512"]["hidden"])
+
+                with patch.object(
+                    battle_estimator_gui.battle_estimator,
+                    "run_simulations",
+                    return_value=72.0,
+                ) as run_mock:
+                    _, _, scan_payload = self._post_json(
+                        base_url,
+                        "/api/scan-radius",
+                        {
+                            "hero_id": "hero:256",
+                            "radius": 2,
+                            "target_type": "hero",
+                            "simulations": 7,
+                        },
+                    )
+                self.assertEqual(scan_payload["results"], [])
+                run_mock.assert_not_called()
+
+                with patch.object(
+                    battle_estimator_gui.battle_estimator,
+                    "run_simulations",
+                    return_value=72.0,
+                ):
+                    status, _, simulation_payload = self._post_json(
+                        base_url,
+                        "/api/simulate-target",
+                        {
+                            "hero_id": "hero:256",
+                            "target_id": "hero:512",
+                            "simulations": 9,
+                        },
+                    )
+                self.assertEqual(status, 200)
+                self.assertEqual(simulation_payload["target_id"], "hero:512")
+                self.assertEqual(simulation_payload["estimate"]["target_type"], "hero")
+
+                status, _, unhidden_payload = self._post_json(
+                    base_url,
+                    "/api/hidden-target",
+                    {"target_id": "hero:512", "hidden": False},
+                )
+                self.assertEqual(status, 200)
+                self.assertFalse(unhidden_payload["hidden"])
+                self.assertEqual(unhidden_payload["hidden_hero_target_ids"], [])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_hidden_hero_target_persistence_is_per_map(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {"hero_name": "Isra", "name_offset": 256, "position": (39, 69, 1)},
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 512,
+                        "position": (39, 71, 1),
+                        "owner_color_id": 2,
+                    },
+                ),
+            )
+            map_one = _write_h3m_map(temp_path / "map-one.h3m", position=(39, 70, 1))
+            map_two = _write_h3m_map(temp_path / "map-two.h3m", position=(39, 70, 1))
+            config_path = temp_path / "config.json"
+            first_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_one,
+                selected_hero_id="hero:256",
+                config_path=config_path,
+            )
+
+            def hide_on_first_map(base_url):
+                status, _, payload = self._post_json(
+                    base_url,
+                    "/api/hidden-target",
+                    {"target_id": "hero:512", "hidden": True},
+                )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["hidden_hero_target_ids"], ["hero:512"])
+
+            self._with_server(hide_on_first_map, app_state=first_state)
+
+            second_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_two,
+                selected_hero_id="hero:256",
+                config_path=config_path,
+            )
+
+            def check_second_map(base_url):
+                status, state = self._get_json(base_url, "/api/state")
+                heroes_by_id = {hero["id"]: hero for hero in state["heroes"]}
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+
+                self.assertEqual(status, 200)
+                self.assertEqual(state["hidden_hero_target_ids"], [])
+                self.assertFalse(heroes_by_id["hero:512"]["hidden"])
+                self.assertEqual(len(config.hidden_hero_targets_by_map), 1)
+
+            self._with_server(check_second_map, app_state=second_state)
+
     def test_simulate_target_endpoint_supports_hero_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -2164,6 +2410,7 @@ assert.strictEqual(fetchCalls, fetchCallsBeforeRender);
             app_state = battle_estimator_gui.GuiAppState(
                 autosave_dir=game_dir,
                 map_file=map_path,
+                selected_hero_id="hero:256",
             )
 
             def check(base_url):
@@ -2198,7 +2445,29 @@ assert.strictEqual(fetchCalls, fetchCallsBeforeRender);
                     )
                 self.assertEqual(invalid_simulations.exception.code, 400)
 
-                with self.assertRaises(HTTPError) as invalid_hidden_target:
+                with self.assertRaises(HTTPError) as invalid_hidden_format:
+                    self._post_json(
+                        base_url,
+                        "/api/hidden-target",
+                        {
+                            "target_id": "hero:/bad",
+                            "hidden": True,
+                        },
+                    )
+                self.assertEqual(invalid_hidden_format.exception.code, 400)
+
+                with self.assertRaises(HTTPError) as unknown_hidden_hero:
+                    self._post_json(
+                        base_url,
+                        "/api/hidden-target",
+                        {
+                            "target_id": "hero:999",
+                            "hidden": True,
+                        },
+                    )
+                self.assertEqual(unknown_hidden_hero.exception.code, 404)
+
+                with self.assertRaises(HTTPError) as selected_hidden_hero:
                     self._post_json(
                         base_url,
                         "/api/hidden-target",
@@ -2207,7 +2476,7 @@ assert.strictEqual(fetchCalls, fetchCallsBeforeRender);
                             "hidden": True,
                         },
                     )
-                self.assertEqual(invalid_hidden_target.exception.code, 400)
+                self.assertEqual(selected_hidden_hero.exception.code, 400)
 
             self._with_server(check, app_state=app_state)
 

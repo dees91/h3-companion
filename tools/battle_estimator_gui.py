@@ -326,25 +326,55 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
         target_id = _required_text(payload, "target_id")
         hidden = _optional_bool(payload, "hidden", True)
         domain_snapshot = _domain_snapshot_for_app(self.app_state)
-        _validate_hidden_neutral_target(domain_snapshot, target_id)
         map_key = _hidden_neutral_map_key(domain_snapshot)
+        config = h3_save_parser.load_config(self.app_state_config_path)
+        selected_hero_id = _resolve_selected_hero_id_for_app(
+            self.app_state,
+            domain_snapshot,
+            config.last_hero,
+        )
 
         with self.app_state.lock:
             config_path = self.app_state.config_path
         with self.app_state.config_lock:
-            config = h3_save_parser.set_config_hidden_neutral_target(
-                map_key,
-                target_id,
-                hidden,
-                config_path,
-            )
+            if target_id.startswith("neutral:"):
+                _validate_hidden_neutral_target(domain_snapshot, target_id)
+                config = h3_save_parser.set_config_hidden_neutral_target(
+                    map_key,
+                    target_id,
+                    hidden,
+                    config_path,
+                )
+            elif target_id.startswith("hero:"):
+                _validate_hidden_hero_target(
+                    domain_snapshot,
+                    target_id,
+                    selected_hero_id,
+                )
+                config = h3_save_parser.set_config_hidden_hero_target(
+                    map_key,
+                    target_id,
+                    hidden,
+                    config_path,
+                )
+            else:
+                raise ApiError(
+                    HTTPStatus.BAD_REQUEST,
+                    "target_id must be neutral:<object_index> or hero:<stable_id>",
+                )
 
         hidden_ids = config.hidden_neutral_targets_by_map.get(map_key, ())
+        hidden_hero_ids = _hidden_hero_target_ids_for_config(
+            config,
+            domain_snapshot,
+            selected_hero_id,
+        )
         return {
             "map_key": map_key,
             "target_id": target_id,
-            "hidden": target_id in hidden_ids,
+            "hidden": target_id in hidden_ids or target_id in hidden_hero_ids,
             "hidden_neutral_target_ids": list(hidden_ids),
+            "hidden_hero_target_ids": list(hidden_hero_ids),
         }
 
     def _api_show_hidden(self, payload: dict) -> dict:
@@ -370,12 +400,18 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             self.app_state,
             domain_snapshot,
         )
+        hidden_hero_ids = _hidden_hero_target_ids_for_snapshot(
+            self.app_state,
+            domain_snapshot,
+            hero_id,
+        )
         scan_target, resolved_target_id = _single_scan_target(
             domain_snapshot,
             selected_hero,
             target_id,
             hidden_neutral_target_ids=hidden_ids,
-            include_hidden_neutrals=_show_hidden_neutrals_for_app(self.app_state),
+            hidden_hero_target_ids=hidden_hero_ids,
+            include_hidden_targets=_show_hidden_neutrals_for_app(self.app_state),
         )
         estimate = battle_estimator.estimate_nearby_scan_targets(
             selected_hero,
@@ -413,11 +449,21 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             self.app_state,
             domain_snapshot,
         )
+        hidden_hero_ids = _hidden_hero_target_ids_for_snapshot(
+            self.app_state,
+            domain_snapshot,
+            hero_id,
+        )
         hero_targets = h3_save_parser.build_other_hero_targets(
             domain_snapshot.heroes,
             selected_hero,
             same_level_z=selected_hero.z,
             team_by_color=domain_snapshot.team_by_color,
+        )
+        hero_targets = _filter_hidden_hero_targets(
+            domain_snapshot,
+            hero_targets,
+            hidden_hero_ids,
         )
         scan_targets = battle_estimator.build_nearby_scan_targets(
             selected_hero,
@@ -845,9 +891,19 @@ def _prefer_owned_heroes(heroes) -> tuple:
     return tuple(heroes)
 
 
-def _serialize_heroes(hero_entries, team_by_color: dict[int, int]) -> list[dict]:
+def _serialize_heroes(
+    hero_entries,
+    team_by_color: dict[int, int],
+    hidden_hero_ids=(),
+) -> list[dict]:
+    hidden_id_set = set(hidden_hero_ids)
     return [
-        _serialize_hero(hero, hero_id, team_by_color)
+        _serialize_hero(
+            hero,
+            hero_id,
+            team_by_color,
+            hidden=hero_id in hidden_id_set,
+        )
         for hero_id, hero in hero_entries
     ]
 
@@ -953,7 +1009,12 @@ def _position_identity(position) -> str:
     return f"{position.x},{position.y},{position.z}"
 
 
-def _serialize_hero(hero, hero_id: str, team_by_color: dict[int, int]) -> dict:
+def _serialize_hero(
+    hero,
+    hero_id: str,
+    team_by_color: dict[int, int],
+    hidden: bool = False,
+) -> dict:
     owner_color_id = hero.owner_color_id
     return {
         "id": hero_id,
@@ -967,6 +1028,7 @@ def _serialize_hero(hero, hero_id: str, team_by_color: dict[int, int]) -> dict:
         "army_summary": hero.army_summary,
         "total_creatures": hero.total_creatures,
         "ai_value": hero.ai_value,
+        "hidden": hidden,
     }
 
 
@@ -1119,13 +1181,23 @@ def _state_payload_for_app(
 ) -> dict:
     config = h3_save_parser.load_config(_snapshot_kwargs_for_state(app_state)["config_path"])
     show_hidden = _show_hidden_neutrals_for_app(app_state)
-    hidden_ids = _hidden_neutral_target_ids_for_config(config, domain_snapshot)
     selected_hero_id = _resolve_selected_hero_id_for_app(
         app_state,
         domain_snapshot,
         config.last_hero,
     )
+    hidden_ids = _hidden_neutral_target_ids_for_config(config, domain_snapshot)
+    hidden_hero_ids = _hidden_hero_target_ids_for_config(
+        config,
+        domain_snapshot,
+        selected_hero_id,
+    )
     payload = dict(domain_snapshot.state)
+    payload["heroes"] = _serialize_heroes(
+        domain_snapshot.hero_entries,
+        domain_snapshot.team_by_color,
+        hidden_hero_ids,
+    )
     payload["neutral_targets"] = _serialize_visible_neutral_targets(
         domain_snapshot.visible_neutral_targets,
         hidden_ids,
@@ -1135,6 +1207,7 @@ def _state_payload_for_app(
     payload["recent_heroes"] = list(config.recent_heroes)
     payload["show_hidden"] = show_hidden
     payload["hidden_neutral_target_ids"] = list(hidden_ids)
+    payload["hidden_hero_target_ids"] = list(hidden_hero_ids)
     return payload
 
 
@@ -1164,6 +1237,21 @@ def _hidden_neutral_target_ids_for_snapshot(
     return _hidden_neutral_target_ids_for_config(config, domain_snapshot)
 
 
+def _hidden_hero_target_ids_for_snapshot(
+    app_state: GuiAppState,
+    domain_snapshot: DomainSnapshot,
+    selected_hero_id: str | None = None,
+) -> tuple[str, ...]:
+    with app_state.lock:
+        config_path = app_state.config_path
+    config = h3_save_parser.load_config(config_path)
+    return _hidden_hero_target_ids_for_config(
+        config,
+        domain_snapshot,
+        selected_hero_id,
+    )
+
+
 def _hidden_neutral_target_ids_for_config(
     config: h3_save_parser.BattleEstimatorConfig,
     domain_snapshot: DomainSnapshot,
@@ -1177,6 +1265,20 @@ def _hidden_neutral_target_ids_for_config(
         target_id
         for target_id in config.hidden_neutral_targets_by_map.get(map_key, ())
         if target_id in known_ids
+    )
+
+
+def _hidden_hero_target_ids_for_config(
+    config: h3_save_parser.BattleEstimatorConfig,
+    domain_snapshot: DomainSnapshot,
+    selected_hero_id: str | None = None,
+) -> tuple[str, ...]:
+    map_key = _hidden_neutral_map_key(domain_snapshot)
+    known_ids = set(domain_snapshot.hero_by_id)
+    return tuple(
+        target_id
+        for target_id in config.hidden_hero_targets_by_map.get(map_key, ())
+        if target_id in known_ids and target_id != selected_hero_id
     )
 
 
@@ -1200,6 +1302,19 @@ def _filter_hidden_neutral_targets(neutral_targets, hidden_ids) -> tuple:
         target
         for target in neutral_targets
         if _neutral_target_id(target) not in hidden_id_set
+    )
+
+
+def _filter_hidden_hero_targets(
+    domain_snapshot: DomainSnapshot,
+    hero_targets,
+    hidden_ids,
+) -> tuple:
+    hidden_id_set = set(hidden_ids)
+    return tuple(
+        target
+        for target in hero_targets
+        if _hero_id_for_army(domain_snapshot, target.army) not in hidden_id_set
     )
 
 
@@ -1445,6 +1560,25 @@ def _validate_hidden_neutral_target(
         raise ApiError(HTTPStatus.NOT_FOUND, f"unknown target_id: {target_id}")
 
 
+def _validate_hidden_hero_target(
+    domain_snapshot: DomainSnapshot,
+    target_id: str,
+    selected_hero_id: str | None = None,
+) -> None:
+    if not h3_save_parser.HIDDEN_HERO_TARGET_PATTERN.fullmatch(target_id):
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            "target_id must be hero:<stable_id>",
+        )
+    if target_id == selected_hero_id:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            "selected hero is not a hideable target",
+        )
+    if target_id not in domain_snapshot.hero_by_id:
+        raise ApiError(HTTPStatus.NOT_FOUND, f"unknown target_id: {target_id}")
+
+
 def _bounded_int(
     payload: dict,
     key: str,
@@ -1501,11 +1635,12 @@ def _single_scan_target(
     selected_hero,
     target_id: str,
     hidden_neutral_target_ids=(),
-    include_hidden_neutrals: bool = False,
+    hidden_hero_target_ids=(),
+    include_hidden_targets: bool = False,
 ):
     neutral = domain_snapshot.neutral_by_id.get(target_id)
     if neutral is not None:
-        if target_id in set(hidden_neutral_target_ids) and not include_hidden_neutrals:
+        if target_id in set(hidden_neutral_target_ids) and not include_hidden_targets:
             raise ApiError(HTTPStatus.NOT_FOUND, f"unknown target_id: {target_id}")
         return _scan_target_for_raw_target("neutral", selected_hero, neutral), target_id
 
@@ -1517,6 +1652,8 @@ def _single_scan_target(
         team_by_color=domain_snapshot.team_by_color,
     )
     if hero_target is not None:
+        if target_id in set(hidden_hero_target_ids) and not include_hidden_targets:
+            raise ApiError(HTTPStatus.NOT_FOUND, f"unknown target_id: {target_id}")
         return _scan_target_for_raw_target("hero", selected_hero, hero_target), target_id
 
     raise ApiError(HTTPStatus.NOT_FOUND, f"unknown target_id: {target_id}")
