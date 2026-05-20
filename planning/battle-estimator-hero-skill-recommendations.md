@@ -546,22 +546,41 @@ with 88 focused cases.
 
 ## Task 10: End-To-End Skill Recommendation Verification
 
+**Status:** done
+
 **Description:** Verify the full workflow with real autosaves: select a hero,
 open the skills dialog, edit current skills, compare level-up offers, refresh
 the save, and confirm the manual skill state remains stable for the same
 map/hero.
 
 **Acceptance criteria:**
-- [ ] Full `python3 -m unittest` passes.
-- [ ] GUI loads a current save and opens recommendations for selected hero.
-- [ ] Manual skill edits persist across refresh.
-- [ ] Reset returns to starting skills.
-- [ ] Skill-vs-skill gives a deterministic result for concrete offers.
-- [ ] Standard hero coverage test passes for all 144 scoped heroes.
+- [x] Full `python3 -m unittest` passes.
+- [x] GUI loads a current save and opens recommendations for selected hero.
+- [x] Manual skill edits persist across refresh.
+- [x] Reset returns to starting skills.
+- [x] Skill-vs-skill gives a deterministic result for concrete offers.
+- [x] Standard hero coverage test passes for all 144 scoped heroes.
 
 **Verification:**
-- [ ] Run `python3 -m unittest`.
-- [ ] Manual GUI check with a current Diamond save.
+- [x] Run `python3 -m unittest`.
+- [x] Manual GUI check with a current Diamond save.
+
+**Completion notes:** Verified the full recommendation workflow against the
+latest real Diamond autosave discovered under `DEFAULT_AUTOSAVE_ROOT`:
+`Random/PlayerTwo/2026.05.19 20;00 Diamond`, latest save `413.GM2`. The GUI
+server checks used an isolated temporary config path and confirmed the real
+`h3_save_parser.CONFIG_PATH` digest stayed unchanged. The workflow loaded
+`/api/state`, selected standard hero `Coronius (hero:731686)`, resolved him to
+standard key `coronius`, confirmed starting skills `wisdom:basic` and
+`scholar:basic`, saved a manual edit adding `logistics:basic`, and confirmed
+the exact manual state after state refresh, fresh `/api/hero-skills`, and a
+new temporary server process using the same temp config. A headless Chrome GUI
+dialog check opened the actual `Skills` dialog on the same Diamond save,
+performed the edit, refreshed the save, reopened the dialog, compared concrete
+offers `logistics:advanced` vs `earthMagic:basic` with deterministic winner
+`logistics:advanced`, and reset back to `wisdom:basic` plus
+`scholar:basic`. Full `python3 -m unittest` passed with 336 tests in 34.833s
+OK, including the 144 scoped standard-hero coverage tests.
 
 **Dependencies:** Tasks 1, 2, 3, 4, 5, 6, 7, 8, 9
 
