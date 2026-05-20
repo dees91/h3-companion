@@ -1305,17 +1305,31 @@ part of the path without automatically changing level immediately after path
 calculation.
 
 **Acceptance criteria:**
-- [ ] Path results list walk segments and portal/gate segments.
-- [ ] Portal segments show source and destination coordinates.
-- [ ] Non-deterministic portal segments are labeled clearly.
-- [ ] Clicking a segment switches to its level and centers the segment.
-- [ ] Cross-level paths can be inspected one level at a time.
+- [x] Path results list walk segments and portal/gate segments.
+- [x] Portal segments show source and destination coordinates.
+- [x] Non-deterministic portal segments are labeled clearly.
+- [x] Clicking a segment switches to its level and centers the segment.
+- [x] Cross-level paths can be inspected one level at a time.
 
 **Verification:**
-- [ ] Manual GUI check with a path using a subterranean gate.
-- [ ] Manual GUI check with a path using a monolith, if the current map has
+- [x] Manual GUI check with a path using a subterranean gate.
+- [x] Manual GUI check with a path using a monolith, if the current map has
       one.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion notes:**
+- Extended the Path result panel with segment buttons for walk and portal/gate
+  segments using the serialized pathfinding segment contract.
+- Segment rows show source/destination coordinates, step counts, portal
+  channel keys, and non-deterministic portal status.
+- Segment clicks are client-side navigation only: walk segments center on the
+  same-level segment midpoint, portal segments focus the source side, and
+  malformed segments are disabled.
+- Verification: `node --check tools/battle_estimator_gui/app.js`;
+  `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; headless browser smoke checks for
+  monolith and subterranean gate segment lists; subagent plan and code reviews
+  completed with no blocking findings.
 
 **Dependencies:** Task 23
 
@@ -1472,5 +1486,5 @@ After Tasks 9, 17, and 25:
 | 21 | Resolve Blocked Targets And Terminal Markers | done | 20 |
 | 22 | Expose A Pathfinding API Endpoint | done | 21 |
 | 23 | Add Path Mode UI And Route Rendering | done | 22 |
-| 24 | Add Path Segment List And Cross-Level Navigation | todo | 23 |
-| 25 | End-To-End Pathfinding Verification | blocked | 18, 19, 20, 21, 22, 23, 24 |
+| 24 | Add Path Segment List And Cross-Level Navigation | done | 23 |
+| 25 | End-To-End Pathfinding Verification | todo | 18, 19, 20, 21, 22, 23, 24 |

@@ -1251,11 +1251,17 @@
     if (!marker) {
       return false;
     }
+    return centerOnWorldPoint(marker.world);
+  }
 
+  function centerOnWorldPoint(worldPoint) {
+    if (!worldPoint) {
+      return false;
+    }
     const canvasSize = syncCanvasSize();
     mapView.pan = {
-      x: (canvasSize.width / 2) - (marker.world.x * mapView.zoom),
-      y: (canvasSize.height / 2) - (marker.world.y * mapView.zoom)
+      x: (canvasSize.width / 2) - (worldPoint.x * mapView.zoom),
+      y: (canvasSize.height / 2) - (worldPoint.y * mapView.zoom)
     };
     drawMap();
     return true;
@@ -1844,6 +1850,180 @@
     );
   }
 
+  function pathSegmentsForPayload(payload) {
+    return Array.isArray(payload && payload.segments) ? payload.segments : [];
+  }
+
+  function pathSegmentStepPositions(segment) {
+    return ((segment && segment.steps) || [])
+      .map(pathStepPosition)
+      .filter(Boolean);
+  }
+
+  function pathSegmentStartPosition(segment) {
+    if (!segment) {
+      return null;
+    }
+    const edge = segment.portal_edge || {};
+    const steps = pathSegmentStepPositions(segment);
+    return segment.start_position || edge.source_position || steps[0] || null;
+  }
+
+  function pathSegmentEndPosition(segment) {
+    if (!segment) {
+      return null;
+    }
+    const edge = segment.portal_edge || {};
+    const steps = pathSegmentStepPositions(segment);
+    return (
+      segment.end_position
+      || edge.destination_position
+      || steps[steps.length - 1]
+      || null
+    );
+  }
+
+  function pathSegmentTypeLabel(segment) {
+    if (!segment) {
+      return "Segment";
+    }
+    const edge = segment.portal_edge || {};
+    if (segment.segment_type === "portal") {
+      return edge.portal_type ? portalTypeLabel(edge.portal_type) : "Portal";
+    }
+    if (segment.segment_type === "walk") {
+      return "Walk";
+    }
+    return titleCase(String(segment.segment_type || "segment").replace(/_/g, " "));
+  }
+
+  function pathSegmentIsNonDeterministic(segment) {
+    const edge = segment && segment.portal_edge ? segment.portal_edge : {};
+    return Boolean((segment && segment.is_non_deterministic) || edge.is_non_deterministic);
+  }
+
+  function averagePathPositions(positions) {
+    if (!positions.length) {
+      return null;
+    }
+    const total = positions.reduce((accumulator, position) => ({
+      x: accumulator.x + Number(position.x || 0),
+      y: accumulator.y + Number(position.y || 0),
+      z: accumulator.z
+    }), { x: 0, y: 0, z: positionLevel(positions[0]) });
+    return {
+      x: total.x / positions.length,
+      y: total.y / positions.length,
+      z: total.z
+    };
+  }
+
+  function pathSegmentFocusPosition(segment) {
+    const start = pathSegmentStartPosition(segment);
+    const end = pathSegmentEndPosition(segment);
+    if (!segment) {
+      return null;
+    }
+    if (segment.segment_type === "portal") {
+      return (segment.portal_edge && segment.portal_edge.source_position) || start || end;
+    }
+    const focusLevel = positionLevel(start || end);
+    const sameLevelSteps = pathSegmentStepPositions(segment)
+      .filter((position) => positionLevel(position) === focusLevel);
+    return (
+      averagePathPositions(sameLevelSteps)
+      || (
+        start && end && positionLevel(start) === positionLevel(end)
+          ? averagePathPositions([start, end])
+          : null
+      )
+      || start
+      || end
+    );
+  }
+
+  function pathSegmentText(segment, index) {
+    const start = pathSegmentStartPosition(segment);
+    const end = pathSegmentEndPosition(segment);
+    return [
+      `${index + 1}. ${pathSegmentTypeLabel(segment)}`,
+      start || end ? `${positionText(start)} -> ${positionText(end)}` : ""
+    ].filter(Boolean).join(": ");
+  }
+
+  function pathSegmentMeta(segment) {
+    const parts = [];
+    const steps = pathSegmentStepPositions(segment);
+    const edge = segment && segment.portal_edge ? segment.portal_edge : {};
+    if (steps.length > 0) {
+      parts.push(`${steps.length} step${steps.length === 1 ? "" : "s"}`);
+    }
+    if (edge.channel_key) {
+      parts.push(edge.channel_key);
+    }
+    if (pathSegmentIsNonDeterministic(segment)) {
+      parts.push("non-deterministic");
+    }
+    if (!pathSegmentFocusPosition(segment)) {
+      parts.push("no focus position");
+    }
+    return parts.join(" | ") || "No segment metadata.";
+  }
+
+  function focusPathSegment(segment) {
+    const focusPosition = pathSegmentFocusPosition(segment);
+    if (!focusPosition || !mapView.snapshot || !mapView.snapshot.map) {
+      return false;
+    }
+    mapView.level = normalizeLevelForSnapshot(positionLevel(focusPosition), mapView.snapshot);
+    mapView.hoveredMarkerId = null;
+    elements.canvas.classList.remove("has-marker-hover");
+    hideMapTooltip();
+    hideTargetContextMenu();
+    rebuildMarkerCache(mapView.snapshot);
+    updateLevelControls(mapView.snapshot);
+    updateMapMetrics(mapView.snapshot);
+    const tileSize = tileSizeForMap(mapView.snapshot.map);
+    return centerOnWorldPoint(pathPointForPosition(focusPosition, tileSize));
+  }
+
+  function renderPathSegments(payload) {
+    const segments = pathSegmentsForPayload(payload);
+    if (segments.length === 0) {
+      return null;
+    }
+    const list = document.createElement("div");
+    list.className = "path-segment-list";
+    segments.forEach((segment, index) => {
+      const button = document.createElement("button");
+      const canFocus = Boolean(pathSegmentFocusPosition(segment));
+      button.type = "button";
+      button.className = "list-item path-segment";
+      button.disabled = !canFocus;
+      button.dataset.segmentIndex = String(index);
+      button.addEventListener("click", () => {
+        if (canFocus) {
+          focusPathSegment(segment);
+        }
+      });
+
+      const title = document.createElement("div");
+      title.className = "item-title";
+      title.textContent = pathSegmentText(segment, index);
+      title.title = title.textContent;
+
+      const meta = document.createElement("div");
+      meta.className = "item-meta";
+      meta.textContent = pathSegmentMeta(segment);
+      meta.title = meta.textContent;
+
+      button.appendChild(title);
+      button.appendChild(meta);
+      list.appendChild(button);
+    });
+    return list;
+  }
+
   function renderPathResult(payload) {
     pathState.result = payload;
     clearNode(elements.pathState);
@@ -1874,6 +2054,10 @@
     );
     appendEstimateRow(grid, "Note", payload.message || "No note.", "long-value");
     elements.pathState.appendChild(grid);
+    const segmentList = renderPathSegments(payload);
+    if (segmentList) {
+      elements.pathState.appendChild(segmentList);
+    }
   }
 
   function requestPath(marker, point) {
@@ -3390,12 +3574,21 @@
     screenToWorld,
     centerOnHero,
     centerOnMarkerId,
+    centerOnWorldPoint,
     currentMapViewForTest,
     currentPathStateForTest,
+    focusPathSegment,
     focusPortalDestination,
     isFreshEstimatePayload,
     isFreshPathPayload,
     isFreshScanPayload,
+    pathSegmentEndPosition,
+    pathSegmentFocusPosition,
+    pathSegmentMeta,
+    pathSegmentsForPayload,
+    pathSegmentStartPosition,
+    pathSegmentText,
+    pathSegmentTypeLabel,
     portalDestinationText,
     portalMarkerLabel,
     portalTypeLabel,

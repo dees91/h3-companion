@@ -273,6 +273,11 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "tilePositionForCanvasPoint",
             "isFreshPathPayload",
             "currentPathStateForTest",
+            "pathSegmentsForPayload",
+            "pathSegmentTypeLabel",
+            "pathSegmentFocusPosition",
+            "focusPathSegment",
+            "centerOnWorldPoint",
             "Select a hero before pathing.",
             "Path target is outside the map.",
             "use_latest_game_folder",
@@ -364,6 +369,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".toggle-control",
             ".map-tooltip",
             ".path-result",
+            ".path-segment-list",
+            ".path-segment",
             "#battle-map.path-mode",
             ".target-context-menu",
             ".context-menu-title",
@@ -665,8 +672,9 @@ global.fetch = (path, options = {{}}) => {{
         segments: [
           {{
             segment_type: "walk",
-            from_position: {{ x: 1, y: 2, z: 0 }},
-            to_position: {{ x: 2, y: 3, z: 0 }},
+            start_position: {{ x: 1, y: 2, z: 0 }},
+            end_position: {{ x: 2, y: 3, z: 0 }},
+            is_non_deterministic: false,
             steps: [
               {{ position: {{ x: 1, y: 2, z: 0 }}, route: "land", cost: 0 }},
               {{ position: {{ x: 1, y: 3, z: 0 }}, route: "land", cost: 1 }},
@@ -1320,6 +1328,18 @@ function treeText(node) {{
     return "";
   }}
   return [node.textContent || "", ...node.children.map((child) => treeText(child))].join(" ");
+}}
+function nodesWithClass(node, className) {{
+  if (!node) {{
+    return [];
+  }}
+  const matches = String(node.className || "").split(/\\s+/).includes(className)
+    ? [node]
+    : [];
+  return matches.concat(node.children.flatMap((child) => nodesWithClass(child, className)));
+}}
+function pathSegmentButtons() {{
+  return nodesWithClass(elements["path-state"], "path-segment");
 }}
 function mapTileScreenPoint(x, y, view) {{
   return helpers.worldToScreen({{ x: (x + 0.5) * 28, y: (y + 0.5) * 28 }}, view);
@@ -2015,6 +2035,119 @@ pendingPathResponses.shift()();
 await flushPromises();
 assert.strictEqual(helpers.currentPathStateForTest().result, null);
 assert.ok(!treeText(elements["path-state"]).includes("stale path should not render"));
+
+helpers.renderSnapshot(pathMarkerSnapshot, {{ preserveView: false }});
+targetFilterButtons()[0].dispatch("click", {{}});
+elements["path-mode-toggle"].checked = true;
+elements["path-mode-toggle"].dispatch("change", {{}});
+const crossLevelView = helpers.currentMapViewForTest();
+const crossLevelNeutral = crossLevelView.markers.find((marker) => marker.id === "neutral:0");
+const crossLevelNeutralScreen = helpers.worldToScreen(crossLevelNeutral.world, crossLevelView);
+const crossLevelPayload = {{
+  hero_id: "hero:0",
+  target_id: "neutral:0",
+  status: "found",
+  requested_target_position: {{ x: 2, y: 1, z: 1 }},
+  resolved_target_position: {{ x: 2, y: 1, z: 1 }},
+  steps: [
+    {{ position: {{ x: 1, y: 2, z: 0 }} }},
+    {{ position: {{ x: 1, y: 1, z: 0 }} }},
+    {{ position: {{ x: 1, y: 1, z: 1 }} }},
+    {{ position: {{ x: 2, y: 1, z: 1 }} }}
+  ],
+  segments: [
+    {{
+      segment_type: "walk",
+      start_position: {{ x: 1, y: 2, z: 0 }},
+      end_position: {{ x: 1, y: 1, z: 0 }},
+      is_non_deterministic: false,
+      steps: [
+        {{ position: {{ x: 1, y: 2, z: 0 }} }},
+        {{ position: {{ x: 1, y: 1, z: 0 }} }}
+      ]
+    }},
+    {{
+      segment_type: "portal",
+      start_position: {{ x: 1, y: 1, z: 0 }},
+      end_position: {{ x: 1, y: 1, z: 1 }},
+      is_non_deterministic: true,
+      steps: [
+        {{ position: {{ x: 1, y: 1, z: 0 }} }},
+        {{ position: {{ x: 1, y: 1, z: 1 }} }}
+      ],
+      portal_edge: {{
+        source_id: "portal:100",
+        destination_id: "portal:101",
+        source_position: {{ x: 1, y: 1, z: 0 }},
+        destination_position: {{ x: 1, y: 1, z: 1 }},
+        portal_type: "monolith_one_way",
+        channel_key: "monolith-one-way:7",
+        is_non_deterministic: true
+      }}
+    }},
+    {{
+      segment_type: "walk",
+      start_position: {{ x: 1, y: 1, z: 1 }},
+      end_position: {{ x: 2, y: 1, z: 1 }},
+      is_non_deterministic: false,
+      steps: [
+        {{ position: {{ x: 1, y: 1, z: 1 }} }},
+        {{ position: {{ x: 2, y: 1, z: 1 }} }}
+      ]
+    }},
+    {{
+      segment_type: "walk",
+      steps: [],
+      is_non_deterministic: false
+    }}
+  ],
+  message: null
+}};
+nextPathPayload = crossLevelPayload;
+const crossLevelStart = fetchRequests.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 28,
+  clientX: crossLevelNeutralScreen.x,
+  clientY: crossLevelNeutralScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 28,
+  clientX: crossLevelNeutralScreen.x,
+  clientY: crossLevelNeutralScreen.y
+}});
+await flushPromises();
+assert.strictEqual(pathRequestsSince(crossLevelStart).length, 1);
+assert.strictEqual(helpers.currentMapViewForTest().level, 0);
+const segmentButtons = pathSegmentButtons();
+assert.strictEqual(segmentButtons.length, 4);
+assert.ok(treeText(segmentButtons[0]).includes("Walk"));
+assert.ok(treeText(segmentButtons[0]).includes("1,2,0 -> 1,1,0"));
+assert.ok(treeText(segmentButtons[1]).includes("One-way monolith"));
+assert.ok(treeText(segmentButtons[1]).includes("1,1,0 -> 1,1,1"));
+assert.ok(treeText(segmentButtons[1]).includes("monolith-one-way:7"));
+assert.ok(treeText(segmentButtons[1]).includes("non-deterministic"));
+assert.ok(treeText(segmentButtons[2]).includes("1,1,1 -> 2,1,1"));
+assert.strictEqual(segmentButtons[3].disabled, true);
+assert.ok(treeText(segmentButtons[3]).includes("no focus position"));
+
+const segmentClickRequestStart = fetchRequests.length;
+segmentButtons[1].dispatch("click", {{}});
+assert.strictEqual(fetchRequests.length, segmentClickRequestStart);
+assert.strictEqual(helpers.currentMapViewForTest().level, 0);
+segmentButtons[2].dispatch("click", {{}});
+assert.strictEqual(fetchRequests.length, segmentClickRequestStart);
+const levelOneSegmentView = helpers.currentMapViewForTest();
+assert.strictEqual(levelOneSegmentView.level, 1);
+const levelOneFocus = helpers.pathSegmentFocusPosition(crossLevelPayload.segments[2]);
+const levelOneFocusWorld = helpers.pathPointForPosition(levelOneFocus, 28);
+assert.deepStrictEqual(levelOneSegmentView.pan, {{
+  x: (elements["battle-map"].width / 2) - (levelOneFocusWorld.x * levelOneSegmentView.zoom),
+  y: (elements["battle-map"].height / 2) - (levelOneFocusWorld.y * levelOneSegmentView.zoom)
+}});
+assert.strictEqual(helpers.currentPathStateForTest().result.status, "found");
+assert.ok(pathSegmentButtons().length >= 4);
 }})().catch((error) => {{
   console.error(error && error.stack ? error.stack : error);
   process.exit(1);

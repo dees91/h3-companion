@@ -626,6 +626,30 @@ select:disabled {
   min-width: 0;
 }
 
+.path-segment-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.path-segment {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.path-segment:hover:not(:disabled),
+.path-segment:focus-visible {
+  border-color: #758195;
+  background: #f3f6fa;
+}
+
+.path-segment:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
 .estimate-grid {
   display: grid;
   gap: 6px;
