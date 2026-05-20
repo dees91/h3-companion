@@ -83,6 +83,7 @@
     heroId: null,
     radius: null,
     targetType: "all",
+    hasRun: false,
     sortMode: "distance",
     rawResults: [],
     hoveredResultTargetId: null,
@@ -2002,11 +2003,11 @@
     const targetType = scanTargetTypeForFilter(mapView.targetFilter);
     if (!heroState.selectedHeroId) {
       setScanMessage("Select a hero before scanning.");
-      return;
+      return Promise.resolve(null);
     }
     if (radius === null) {
       setScanMessage("Radius must be an integer from 0 to 200.", "empty-state error-text");
-      return;
+      return Promise.resolve(null);
     }
 
     const request = {
@@ -2017,6 +2018,7 @@
     };
     scanState.requestId = request.requestId;
     scanState.running = true;
+    scanState.hasRun = true;
     scanState.heroId = request.heroId;
     scanState.radius = request.radius;
     scanState.targetType = request.targetType;
@@ -2028,7 +2030,7 @@
     setScanMessage("Running scan...", "empty-state");
     drawMap();
 
-    postJson(
+    return postJson(
       "/api/scan-radius",
       {
         hero_id: request.heroId,
@@ -2627,6 +2629,12 @@
   }
 
   function applySelectedHero(heroId, recentHeroes) {
+    const previousSelectedHeroId = heroState.selectedHeroId;
+    const shouldRefreshScan = Boolean(
+      scanState.hasRun
+      && heroId
+      && heroId !== previousSelectedHeroId
+    );
     invalidateEstimateRequests();
     heroState.selectedHeroId = heroId || null;
     heroState.recentHeroes = recentHeroes || heroState.recentHeroes;
@@ -2653,6 +2661,9 @@
     }
     setEstimateMessage("No simulation run.");
     clearScanResults("No scan results.");
+    if (shouldRefreshScan) {
+      runRadiusScan();
+    }
   }
 
   function selectHero(heroId) {

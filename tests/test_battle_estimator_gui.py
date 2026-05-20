@@ -1197,6 +1197,10 @@ const renderedView = helpers.currentMapViewForTest();
 function targetFilterButtons() {{
   return elements["target-filter-control"].children;
 }}
+function heroRows() {{
+  return elements["hero-list"].children
+    .filter((child) => child.dataset && child.dataset.heroId);
+}}
 function scanRequestsSince(startIndex) {{
   return fetchRequests
     .slice(startIndex)
@@ -1231,6 +1235,14 @@ assert.deepStrictEqual(
 );
 assert.strictEqual(targetFilterButtons()[0].className, "active");
 assert.strictEqual(scanSortButtons()[0].className, "active");
+let heroSelectBeforeAnyScanStart = fetchRequests.length;
+await Promise.all(heroRows().find((row) => row.dataset.heroId === "hero:1").dispatch("click", {{}}));
+await flushPromises();
+assert.strictEqual(scanRequestsSince(heroSelectBeforeAnyScanStart).length, 0);
+await Promise.all(heroRows().find((row) => row.dataset.heroId === "hero:0").dispatch("click", {{}}));
+await flushPromises();
+assert.strictEqual(scanRequestsSince(heroSelectBeforeAnyScanStart).length, 0);
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 const filterNeutral = renderedView.markers.find((marker) => marker.id === "neutral:0");
 const filterNeutralScreen = helpers.worldToScreen(filterNeutral.world, renderedView);
 elements["battle-map"].dispatch("contextmenu", {{
@@ -1463,6 +1475,16 @@ assert.strictEqual(heroSelectRequests.length, 1);
 const heroSelectRequest = heroSelectRequests[0];
 assert.strictEqual(heroSelectRequest.path, "/api/select-hero");
 assert.deepStrictEqual(JSON.parse(heroSelectRequest.options.body), {{ hero_id: "hero:1" }});
+await flushPromises();
+let heroSelectScanRequests = scanRequestsSince(fetchRequestCountBeforeHeroSelect);
+assert.strictEqual(heroSelectScanRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(heroSelectScanRequests[0].options.body), {{
+  hero_id: "hero:1",
+  radius: 3,
+  target_type: "all"
+}});
+assert.strictEqual(scanSortButtons()[1].className, "active");
+assert.deepStrictEqual(scanResultIds(), ["target:easy", "target:near", "target:missing"]);
 const selectedHeroView = helpers.currentMapViewForTest();
 assert.strictEqual(selectedHeroView.snapshot.selected_hero_id, "hero:1");
 assert.strictEqual(selectedHeroView.snapshot.recent_heroes[0], "Fafner");
@@ -1519,6 +1541,23 @@ elements["battle-map"].dispatch("contextmenu", {{
 assert.strictEqual(hiddenHeroContextPrevented, 1);
 const hiddenHeroButtons = elements["target-context-menu"].children.filter((child) => child.type === "button");
 assert.deepStrictEqual(hiddenHeroButtons.map((button) => button.textContent), ["Select as my hero", "Unhide"]);
+nextScanResults = [
+  {{
+    target_id: "target:stale",
+    target_type: "neutral",
+    distance: 0,
+    win_pct: 99,
+    enemy_ai_value: 1,
+    note: "stale",
+    target: {{ name: "Stale", creature_name: "Stale" }}
+  }}
+];
+deferNextScanResponse = true;
+const staleScanStart = fetchRequests.length;
+elements["scan-button"].dispatch("click", {{}});
+let staleScanRequests = scanRequestsSince(staleScanStart);
+assert.strictEqual(staleScanRequests.length, 1);
+assert.strictEqual(pendingScanResponses.length, 1);
 const fetchRequestCountBeforeHiddenSelect = fetchRequests.length;
 await Promise.all(hiddenHeroButtons[0].dispatch("click", {{}}));
 const hiddenHeroSelectRequests = fetchRequests
@@ -1528,6 +1567,18 @@ assert.strictEqual(hiddenHeroSelectRequests.length, 1);
 const hiddenHeroSelectRequest = hiddenHeroSelectRequests[0];
 assert.strictEqual(hiddenHeroSelectRequest.path, "/api/select-hero");
 assert.deepStrictEqual(JSON.parse(hiddenHeroSelectRequest.options.body), {{ hero_id: "hero:hidden" }});
+await flushPromises();
+const hiddenHeroScanRequests = scanRequestsSince(fetchRequestCountBeforeHiddenSelect);
+assert.strictEqual(hiddenHeroScanRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(hiddenHeroScanRequests[0].options.body), {{
+  hero_id: "hero:hidden",
+  radius: 3,
+  target_type: "all"
+}});
+pendingScanResponses.shift()();
+await flushPromises();
+assert.deepStrictEqual(scanResultIds(), ["target:easy", "target:near", "target:missing"]);
+assert.ok(!scanResultIds().includes("target:stale"));
 const selectedHiddenHeroView = helpers.currentMapViewForTest();
 const selectedHiddenHeroMarker = selectedHiddenHeroView.markers.find((marker) => marker.id === "hero:hidden");
 assert.deepStrictEqual(selectedHiddenHeroView.snapshot.hidden_hero_target_ids, []);

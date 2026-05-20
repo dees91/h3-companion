@@ -930,17 +930,36 @@ filter, and sort mode. Initial hero selection should not start scan unless a
 scan has already been run in the current session.
 
 **Acceptance criteria:**
-- [ ] Selecting a hero before any scan has run does not trigger scan.
-- [ ] Selecting a hero after a scan has run reruns scan automatically.
-- [ ] The rerun uses the current radius.
-- [ ] The rerun uses the current map filter.
-- [ ] The rerun preserves the current scan sort mode.
-- [ ] In-flight scan requests are invalidated safely when the selected hero
+- [x] Selecting a hero before any scan has run does not trigger scan.
+- [x] Selecting a hero after a scan has run reruns scan automatically.
+- [x] The rerun uses the current radius.
+- [x] The rerun uses the current map filter.
+- [x] The rerun preserves the current scan sort mode.
+- [x] In-flight scan requests are invalidated safely when the selected hero
       changes.
 
 **Verification:**
-- [ ] Manual GUI check: run scan, select another hero, confirm results refresh.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Manual GUI check: run scan, select another hero, confirm results refresh.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion Notes (2026-05-20):**
+- Added session scan state tracking so valid scan starts enable future
+  hero-selection auto-refresh, while ordinary scan clearing keeps both the
+  auto-refresh flag and the current sort mode.
+- Selecting a different hero after a scan now clears/increments scan request
+  state to invalidate stale responses, then starts a replacement scan with the
+  current radius input and current map target filter. Selecting a hero before
+  any scan, or reselecting the same active hero, does not auto-run scan.
+- Existing scan freshness checks reject old in-flight scan responses after hero
+  selection; the replacement scan result remains rendered.
+- Manual GUI check: started a local fixture GUI on port 8771, used headless
+  Chrome/CDP with controlled scan responses, ran a `radius=7` hero-filter scan,
+  selected another hero from the hero list, and confirmed the automatic refresh
+  used the new hero ID, same radius/filter, preserved `Easiest` sort, and
+  rendered rows for the new hero.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent plan and code reviews
+  completed with no blocking findings.
 
 **Dependencies:** Tasks 12, 13
 
@@ -1334,7 +1353,7 @@ After Tasks 9, 17, and 25:
 | 12 | Merge Map Filter And Scan Target Type | done | - |
 | 13 | Add Scan Sort Modes | done | - |
 | 14 | Improve Scan Result Hover And Click Behavior | done | - |
-| 15 | Auto-Refresh Scan After Hero Selection | todo | 12, 13 |
+| 15 | Auto-Refresh Scan After Hero Selection | done | 12, 13 |
 | 16 | Render Scan Difficulty As Marker Rings | todo | - |
 | 17 | End-To-End Workflow Verification | blocked | 10, 11, 12, 13, 14, 15, 16 |
 | 18 | Add Pathfinding Service Contract | todo | 3, 8 |
