@@ -357,26 +357,44 @@ Required tests passed with 49 focused cases.
 
 ## Task 6: Prepare Full Standard-Hero Rule Coverage
 
+**Status:** done
+
 **Description:** Fill the rules file so every standard hero has useful
 recommendations under the `main` role. This should be done after the validator
 exists, and can later be delegated to xhigh-effort subagents by faction or hero
 class when implementation starts.
 
 **Acceptance criteria:**
-- [ ] All 144 standard heroes are covered.
-- [ ] Each standard faction has faction/class-level guidance.
-- [ ] Important specialists have hero-specific overrides where fallback rules
+- [x] All 144 standard heroes are covered.
+- [x] Each standard faction has faction/class-level guidance.
+- [x] Important specialists have hero-specific overrides where fallback rules
       would be too generic.
-- [ ] Rules reflect tempo-oriented multiplayer main-hero play.
-- [ ] Special/campaign heroes remain excluded.
-- [ ] No rule entry copies a full build unnecessarily when a fallback layer is
+- [x] Rules reflect tempo-oriented multiplayer main-hero play.
+- [x] Special/campaign heroes remain excluded.
+- [x] No rule entry copies a full build unnecessarily when a fallback layer is
       enough.
 
 **Verification:**
-- [ ] Add or run a coverage test that lists any standard hero without effective
+- [x] Add or run a coverage test that lists any standard hero without effective
       recommendations.
-- [ ] Manually review at least one hero from each faction.
-- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+- [x] Manually review at least one hero from each faction.
+- [x] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Completion notes:** Expanded the rules file with layered `main` guidance for
+all 9 standard factions and all 18 standard classes, plus shared secondary-skill
+specialty layers and small hero-specific overrides for 25 important specialists.
+Global rules now also score common situational and low-priority skills so legal
+offers have explicit explanations instead of falling through as unknown. Added
+coverage tests that require non-empty faction/class guidance, recommendations
+for all 144 standard heroes using VCMI starting skills, excluded special/campaign
+scope, small hero override sizes, and metadata-consistent `hero_specialty`
+reason codes. Manually reviewed one hero per faction: Orrin/Archery,
+Kyrre/Logistics, Solmyr/Air Magic, Nymus/Offence, Isra/Necromancy,
+Gunnar/Logistics, Crag Hack/Offence, Tazar/Armorer, and Luna/Fire Magic all
+surface the expected S/A top guidance. Plan and code were reviewed by
+subagents; after code review, Adela's Diplomacy reason was corrected because her
+VCMI specialty is Bless rather than Diplomacy. Required tests passed with 55
+focused cases.
 
 **Dependencies:** Task 5
 

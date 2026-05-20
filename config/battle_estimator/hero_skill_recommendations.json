@@ -74,9 +74,71 @@
           "upgrade_priority": 2,
           "reason_codes": ["rough_terrain", "movement_efficiency"]
         },
-        "eagleEye": {
-          "score": 10,
-          "reason_codes": ["low_tempo", "weak_main_slot"]
+        "fireMagic": {
+          "score": 54,
+          "upgrade_priority": 2,
+          "reason_codes": ["spell_control", "situational_magic"]
+        },
+        "waterMagic": {
+          "score": 50,
+          "upgrade_priority": 1,
+          "reason_codes": ["utility_magic", "situational_magic"]
+        },
+        "sorcery": {
+          "score": 48,
+          "upgrade_priority": 1,
+          "reason_codes": ["spell_damage", "magic_scaling"]
+        },
+        "archery": {
+          "score": 46,
+          "upgrade_priority": 1,
+          "reason_codes": ["ranged_scaling", "army_dependent"]
+        },
+        "resistance": {
+          "score": 44,
+          "upgrade_priority": 1,
+          "reason_codes": ["spell_mitigation", "matchup_dependent"]
+        },
+        "luck": {
+          "score": 42,
+          "upgrade_priority": 1,
+          "reason_codes": ["damage_variance", "army_dependent"]
+        },
+        "artillery": {
+          "score": 38,
+          "reason_codes": ["war_machine_value", "early_tempo"]
+        },
+        "ballistics": {
+          "score": 36,
+          "reason_codes": ["siege_utility", "situational_tempo"]
+        },
+        "diplomacy": {
+          "score": 34,
+          "reason_codes": ["template_dependent", "rules_sensitive"]
+        },
+        "leadership": {
+          "score": 33,
+          "reason_codes": ["morale_value", "army_dependent"]
+        },
+        "navigation": {
+          "score": 30,
+          "reason_codes": ["water_map_only", "map_dependent"]
+        },
+        "scouting": {
+          "score": 28,
+          "reason_codes": ["low_combat_value", "scout_role_bias"]
+        },
+        "scholar": {
+          "score": 26,
+          "reason_codes": ["support_role_bias", "weak_main_slot"]
+        },
+        "mysticism": {
+          "score": 24,
+          "reason_codes": ["slow_mana_return", "weak_main_slot"]
+        },
+        "estates": {
+          "score": 22,
+          "reason_codes": ["economy_role_bias", "weak_main_slot"]
         },
         "learning": {
           "score": 18,
@@ -85,11 +147,145 @@
         "firstAid": {
           "score": 15,
           "reason_codes": ["low_impact", "weak_main_slot"]
+        },
+        "eagleEye": {
+          "score": 10,
+          "reason_codes": ["low_tempo", "weak_main_slot"]
         }
       }
     }
   },
   "factions": {
+    "castle": {
+      "main": {
+        "skills": {
+          "leadership": {
+            "score": 64,
+            "upgrade_priority": 2,
+            "reason_codes": ["living_army", "morale_tempo"]
+          },
+          "archery": {
+            "score": 66,
+            "upgrade_priority": 2,
+            "reason_codes": ["marksman_scaling", "ranged_scaling"]
+          },
+          "tactics": {
+            "score": 72,
+            "upgrade_priority": 3,
+            "reason_codes": ["slow_stack_setup", "combat_tempo"]
+          },
+          "waterMagic": {
+            "score": 58,
+            "upgrade_priority": 1,
+            "reason_codes": ["bless_prayer", "utility_magic"]
+          }
+        }
+      }
+    },
+    "conflux": {
+      "main": {
+        "skills": {
+          "logistics": {
+            "score": 94,
+            "upgrade_priority": 8,
+            "reason_codes": ["phoenix_tempo", "map_tempo"]
+          },
+          "airMagic": {
+            "score": 84,
+            "upgrade_priority": 5,
+            "reason_codes": ["haste_synergy", "strategic_spells"]
+          },
+          "fireMagic": {
+            "score": 72,
+            "upgrade_priority": 3,
+            "reason_codes": ["elemental_spell_synergy", "spell_control"]
+          },
+          "tactics": {
+            "score": 76,
+            "upgrade_priority": 4,
+            "reason_codes": ["fast_army_setup", "combat_tempo"]
+          }
+        }
+      }
+    },
+    "dungeon": {
+      "main": {
+        "skills": {
+          "logistics": {
+            "score": 94,
+            "upgrade_priority": 8,
+            "reason_codes": ["map_tempo", "power_stack_delivery"]
+          },
+          "offence": {
+            "score": 85,
+            "upgrade_priority": 6,
+            "reason_codes": ["black_dragon_scaling", "physical_damage"]
+          },
+          "tactics": {
+            "score": 74,
+            "upgrade_priority": 4,
+            "reason_codes": ["strike_setup", "combat_tempo"]
+          },
+          "sorcery": {
+            "score": 70,
+            "upgrade_priority": 3,
+            "reason_codes": ["warlock_scaling", "spell_damage"]
+          }
+        }
+      }
+    },
+    "fortress": {
+      "main": {
+        "skills": {
+          "armorer": {
+            "score": 91,
+            "upgrade_priority": 8,
+            "reason_codes": ["fortress_core", "loss_reduction"]
+          },
+          "pathfinding": {
+            "score": 72,
+            "upgrade_priority": 4,
+            "reason_codes": ["swamp_tempo", "movement_efficiency"]
+          },
+          "resistance": {
+            "score": 66,
+            "upgrade_priority": 3,
+            "reason_codes": ["durable_army", "spell_mitigation"]
+          },
+          "offence": {
+            "score": 80,
+            "upgrade_priority": 5,
+            "reason_codes": ["power_stack_scaling", "physical_damage"]
+          }
+        }
+      }
+    },
+    "inferno": {
+      "main": {
+        "skills": {
+          "logistics": {
+            "score": 94,
+            "upgrade_priority": 8,
+            "reason_codes": ["map_tempo", "aggressive_clear"]
+          },
+          "offence": {
+            "score": 84,
+            "upgrade_priority": 6,
+            "reason_codes": ["demon_stack_scaling", "physical_damage"]
+          },
+          "fireMagic": {
+            "score": 68,
+            "upgrade_priority": 3,
+            "reason_codes": ["fire_spell_access", "spell_control"]
+          },
+          "tactics": {
+            "score": 70,
+            "upgrade_priority": 3,
+            "reason_codes": ["fast_engage", "combat_tempo"]
+          }
+        }
+      }
+    },
     "necropolis": {
       "main": {
         "skills": {
@@ -98,15 +294,208 @@
             "upgrade_priority": 10,
             "reason_codes": ["necropolis_core", "army_snowball"]
           },
+          "earthMagic": {
+            "score": 96,
+            "upgrade_priority": 9,
+            "reason_codes": ["animate_dead", "mass_slow", "combat_control"]
+          },
           "leadership": {
             "score": 20,
             "reason_codes": ["undead_army", "weak_main_slot"]
+          },
+          "offence": {
+            "score": 84,
+            "upgrade_priority": 6,
+            "reason_codes": ["skeleton_scaling", "physical_damage"]
+          }
+        }
+      }
+    },
+    "rampart": {
+      "main": {
+        "skills": {
+          "archery": {
+            "score": 76,
+            "upgrade_priority": 4,
+            "reason_codes": ["grand_elf_scaling", "ranged_scaling"]
+          },
+          "luck": {
+            "score": 58,
+            "upgrade_priority": 2,
+            "reason_codes": ["living_army", "damage_variance"]
+          },
+          "resistance": {
+            "score": 50,
+            "upgrade_priority": 1,
+            "reason_codes": ["durable_army", "matchup_dependent"]
+          },
+          "logistics": {
+            "score": 94,
+            "upgrade_priority": 8,
+            "reason_codes": ["map_tempo", "tempo_clear"]
+          }
+        }
+      }
+    },
+    "stronghold": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 92,
+            "upgrade_priority": 9,
+            "reason_codes": ["stronghold_core", "physical_damage"]
+          },
+          "tactics": {
+            "score": 78,
+            "upgrade_priority": 5,
+            "reason_codes": ["melee_delivery", "combat_tempo"]
+          },
+          "ballistics": {
+            "score": 58,
+            "upgrade_priority": 2,
+            "reason_codes": ["siege_pressure", "situational_tempo"]
+          },
+          "armorer": {
+            "score": 78,
+            "upgrade_priority": 4,
+            "reason_codes": ["loss_reduction", "frontline_army"]
+          }
+        }
+      }
+    },
+    "tower": {
+      "main": {
+        "skills": {
+          "wisdom": {
+            "score": 82,
+            "upgrade_priority": 5,
+            "reason_codes": ["mage_guild_scaling", "higher_level_spells"]
+          },
+          "intelligence": {
+            "score": 78,
+            "upgrade_priority": 4,
+            "reason_codes": ["mana_depth", "spell_sustain"]
+          },
+          "airMagic": {
+            "score": 84,
+            "upgrade_priority": 5,
+            "reason_codes": ["haste_chain_lightning", "strategic_spells"]
+          },
+          "sorcery": {
+            "score": 66,
+            "upgrade_priority": 3,
+            "reason_codes": ["spell_damage", "magic_scaling"]
           }
         }
       }
     }
   },
   "classes": {
+    "alchemist": {
+      "main": {
+        "skills": {
+          "armorer": {
+            "score": 82,
+            "upgrade_priority": 5,
+            "reason_codes": ["might_affinity", "loss_reduction"]
+          },
+          "archery": {
+            "score": 70,
+            "upgrade_priority": 3,
+            "reason_codes": ["tower_ranged_army", "ranged_scaling"]
+          },
+          "tactics": {
+            "score": 64,
+            "upgrade_priority": 2,
+            "reason_codes": ["golem_setup", "combat_tempo"]
+          }
+        }
+      }
+    },
+    "barbarian": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 95,
+            "upgrade_priority": 10,
+            "reason_codes": ["might_affinity", "physical_damage"]
+          },
+          "tactics": {
+            "score": 82,
+            "upgrade_priority": 6,
+            "reason_codes": ["melee_delivery", "combat_tempo"]
+          },
+          "logistics": {
+            "score": 90,
+            "upgrade_priority": 8,
+            "reason_codes": ["map_tempo", "aggressive_clear"]
+          }
+        }
+      }
+    },
+    "battlemage": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 86,
+            "upgrade_priority": 7,
+            "reason_codes": ["hybrid_might", "physical_damage"]
+          },
+          "tactics": {
+            "score": 78,
+            "upgrade_priority": 5,
+            "reason_codes": ["melee_delivery", "combat_tempo"]
+          },
+          "wisdom": {
+            "score": 74,
+            "upgrade_priority": 3,
+            "reason_codes": ["hybrid_magic", "higher_level_spells"]
+          }
+        }
+      }
+    },
+    "beastmaster": {
+      "main": {
+        "skills": {
+          "armorer": {
+            "score": 94,
+            "upgrade_priority": 10,
+            "reason_codes": ["might_affinity", "fortress_core"]
+          },
+          "offence": {
+            "score": 82,
+            "upgrade_priority": 6,
+            "reason_codes": ["power_stack_scaling", "physical_damage"]
+          },
+          "pathfinding": {
+            "score": 74,
+            "upgrade_priority": 4,
+            "reason_codes": ["swamp_tempo", "movement_efficiency"]
+          }
+        }
+      }
+    },
+    "cleric": {
+      "main": {
+        "skills": {
+          "wisdom": {
+            "score": 80,
+            "upgrade_priority": 5,
+            "reason_codes": ["magic_affinity", "higher_level_spells"]
+          },
+          "earthMagic": {
+            "score": 90,
+            "upgrade_priority": 7,
+            "reason_codes": ["mass_slow", "town_portal"]
+          },
+          "intelligence": {
+            "score": 66,
+            "upgrade_priority": 2,
+            "reason_codes": ["mana_depth", "spell_sustain"]
+          }
+        }
+      }
+    },
     "deathknight": {
       "main": {
         "skills": {
@@ -119,12 +508,369 @@
             "score": 84,
             "upgrade_priority": 6,
             "reason_codes": ["might_affinity", "loss_reduction"]
+          },
+          "tactics": {
+            "score": 72,
+            "upgrade_priority": 4,
+            "reason_codes": ["melee_delivery", "combat_tempo"]
+          }
+        }
+      }
+    },
+    "demoniac": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 87,
+            "upgrade_priority": 7,
+            "reason_codes": ["might_affinity", "physical_damage"]
+          },
+          "logistics": {
+            "score": 92,
+            "upgrade_priority": 8,
+            "reason_codes": ["aggressive_clear", "map_tempo"]
+          },
+          "tactics": {
+            "score": 74,
+            "upgrade_priority": 4,
+            "reason_codes": ["fast_engage", "combat_tempo"]
+          }
+        }
+      }
+    },
+    "druid": {
+      "main": {
+        "skills": {
+          "wisdom": {
+            "score": 78,
+            "upgrade_priority": 4,
+            "reason_codes": ["magic_affinity", "higher_level_spells"]
+          },
+          "earthMagic": {
+            "score": 92,
+            "upgrade_priority": 8,
+            "reason_codes": ["mass_slow", "town_portal"]
+          },
+          "airMagic": {
+            "score": 75,
+            "upgrade_priority": 4,
+            "reason_codes": ["mass_haste", "strategic_spells"]
+          }
+        }
+      }
+    },
+    "elementalist": {
+      "main": {
+        "skills": {
+          "wisdom": {
+            "score": 82,
+            "upgrade_priority": 5,
+            "reason_codes": ["magic_affinity", "higher_level_spells"]
+          },
+          "earthMagic": {
+            "score": 92,
+            "upgrade_priority": 8,
+            "reason_codes": ["mass_slow", "town_portal"]
+          },
+          "airMagic": {
+            "score": 84,
+            "upgrade_priority": 5,
+            "reason_codes": ["haste_synergy", "strategic_spells"]
+          },
+          "fireMagic": {
+            "score": 76,
+            "upgrade_priority": 4,
+            "reason_codes": ["elemental_spell_synergy", "spell_control"]
+          }
+        }
+      }
+    },
+    "heretic": {
+      "main": {
+        "skills": {
+          "wisdom": {
+            "score": 76,
+            "upgrade_priority": 4,
+            "reason_codes": ["magic_affinity", "higher_level_spells"]
+          },
+          "fireMagic": {
+            "score": 74,
+            "upgrade_priority": 4,
+            "reason_codes": ["fire_spell_access", "spell_control"]
+          },
+          "sorcery": {
+            "score": 68,
+            "upgrade_priority": 3,
+            "reason_codes": ["spell_damage", "magic_scaling"]
+          }
+        }
+      }
+    },
+    "knight": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 84,
+            "upgrade_priority": 6,
+            "reason_codes": ["might_affinity", "physical_damage"]
+          },
+          "armorer": {
+            "score": 82,
+            "upgrade_priority": 5,
+            "reason_codes": ["frontline_army", "loss_reduction"]
+          },
+          "leadership": {
+            "score": 72,
+            "upgrade_priority": 4,
+            "reason_codes": ["living_army", "morale_tempo"]
+          }
+        }
+      }
+    },
+    "necromancer": {
+      "main": {
+        "skills": {
+          "earthMagic": {
+            "score": 96,
+            "upgrade_priority": 9,
+            "reason_codes": ["animate_dead", "mass_slow"]
+          },
+          "wisdom": {
+            "score": 80,
+            "upgrade_priority": 5,
+            "reason_codes": ["magic_affinity", "higher_level_spells"]
+          },
+          "intelligence": {
+            "score": 72,
+            "upgrade_priority": 3,
+            "reason_codes": ["mana_depth", "spell_sustain"]
+          }
+        }
+      }
+    },
+    "overlord": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 88,
+            "upgrade_priority": 7,
+            "reason_codes": ["might_affinity", "physical_damage"]
+          },
+          "tactics": {
+            "score": 78,
+            "upgrade_priority": 5,
+            "reason_codes": ["strike_setup", "combat_tempo"]
+          },
+          "logistics": {
+            "score": 92,
+            "upgrade_priority": 8,
+            "reason_codes": ["map_tempo", "power_stack_delivery"]
+          }
+        }
+      }
+    },
+    "planeswalker": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 84,
+            "upgrade_priority": 6,
+            "reason_codes": ["might_affinity", "physical_damage"]
+          },
+          "tactics": {
+            "score": 78,
+            "upgrade_priority": 5,
+            "reason_codes": ["fast_army_setup", "combat_tempo"]
+          },
+          "logistics": {
+            "score": 92,
+            "upgrade_priority": 8,
+            "reason_codes": ["phoenix_tempo", "map_tempo"]
+          }
+        }
+      }
+    },
+    "ranger": {
+      "main": {
+        "skills": {
+          "logistics": {
+            "score": 90,
+            "upgrade_priority": 8,
+            "reason_codes": ["map_tempo", "tempo_clear"]
+          },
+          "archery": {
+            "score": 78,
+            "upgrade_priority": 4,
+            "reason_codes": ["grand_elf_scaling", "ranged_scaling"]
+          },
+          "armorer": {
+            "score": 78,
+            "upgrade_priority": 4,
+            "reason_codes": ["loss_reduction", "frontline_army"]
+          }
+        }
+      }
+    },
+    "warlock": {
+      "main": {
+        "skills": {
+          "wisdom": {
+            "score": 82,
+            "upgrade_priority": 5,
+            "reason_codes": ["magic_affinity", "higher_level_spells"]
+          },
+          "sorcery": {
+            "score": 78,
+            "upgrade_priority": 4,
+            "reason_codes": ["warlock_scaling", "spell_damage"]
+          },
+          "earthMagic": {
+            "score": 94,
+            "upgrade_priority": 8,
+            "reason_codes": ["mass_slow", "town_portal"]
+          }
+        }
+      }
+    },
+    "witch": {
+      "main": {
+        "skills": {
+          "wisdom": {
+            "score": 76,
+            "upgrade_priority": 4,
+            "reason_codes": ["magic_affinity", "higher_level_spells"]
+          },
+          "earthMagic": {
+            "score": 90,
+            "upgrade_priority": 7,
+            "reason_codes": ["mass_slow", "town_portal"]
+          },
+          "intelligence": {
+            "score": 68,
+            "upgrade_priority": 3,
+            "reason_codes": ["mana_depth", "spell_sustain"]
+          }
+        }
+      }
+    },
+    "wizard": {
+      "main": {
+        "skills": {
+          "wisdom": {
+            "score": 84,
+            "upgrade_priority": 5,
+            "reason_codes": ["magic_affinity", "higher_level_spells"]
+          },
+          "airMagic": {
+            "score": 86,
+            "upgrade_priority": 6,
+            "reason_codes": ["haste_chain_lightning", "strategic_spells"]
+          },
+          "intelligence": {
+            "score": 80,
+            "upgrade_priority": 4,
+            "reason_codes": ["mana_depth", "spell_sustain"]
           }
         }
       }
     }
   },
   "specialties": {
+    "secondary:archery": {
+      "main": {
+        "skills": {
+          "archery": {
+            "score": 90,
+            "upgrade_priority": 10,
+            "reason_codes": ["hero_specialty", "ranged_scaling"]
+          }
+        }
+      }
+    },
+    "secondary:armorer": {
+      "main": {
+        "skills": {
+          "armorer": {
+            "score": 98,
+            "upgrade_priority": 12,
+            "reason_codes": ["hero_specialty", "loss_reduction"]
+          }
+        }
+      }
+    },
+    "secondary:eagleEye": {
+      "main": {
+        "skills": {
+          "eagleEye": {
+            "score": 12,
+            "reason_codes": ["hero_specialty", "weak_main_slot"]
+          }
+        }
+      }
+    },
+    "secondary:estates": {
+      "main": {
+        "skills": {
+          "estates": {
+            "score": 32,
+            "reason_codes": ["hero_specialty", "economy_role_bias"]
+          }
+        }
+      }
+    },
+    "secondary:firstAid": {
+      "main": {
+        "skills": {
+          "firstAid": {
+            "score": 20,
+            "reason_codes": ["hero_specialty", "low_impact"]
+          }
+        }
+      }
+    },
+    "secondary:intelligence": {
+      "main": {
+        "skills": {
+          "intelligence": {
+            "score": 78,
+            "upgrade_priority": 6,
+            "reason_codes": ["hero_specialty", "mana_depth"]
+          }
+        }
+      }
+    },
+    "secondary:logistics": {
+      "main": {
+        "skills": {
+          "logistics": {
+            "score": 99,
+            "upgrade_priority": 14,
+            "reason_codes": ["hero_specialty", "map_tempo"]
+          }
+        }
+      }
+    },
+    "secondary:mysticism": {
+      "main": {
+        "skills": {
+          "mysticism": {
+            "score": 32,
+            "reason_codes": ["hero_specialty", "slow_mana_return"]
+          }
+        }
+      }
+    },
+    "secondary:navigation": {
+      "main": {
+        "skills": {
+          "navigation": {
+            "score": 45,
+            "upgrade_priority": 1,
+            "reason_codes": ["hero_specialty", "water_map_only"]
+          }
+        }
+      }
+    },
     "secondary:necromancy": {
       "main": {
         "skills": {
@@ -135,9 +881,171 @@
           }
         }
       }
+    },
+    "secondary:offence": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 98,
+            "upgrade_priority": 12,
+            "reason_codes": ["hero_specialty", "physical_damage"]
+          }
+        }
+      }
+    },
+    "secondary:resistance": {
+      "main": {
+        "skills": {
+          "resistance": {
+            "score": 68,
+            "upgrade_priority": 4,
+            "reason_codes": ["hero_specialty", "spell_mitigation"]
+          }
+        }
+      }
+    },
+    "secondary:sorcery": {
+      "main": {
+        "skills": {
+          "sorcery": {
+            "score": 84,
+            "upgrade_priority": 7,
+            "reason_codes": ["hero_specialty", "spell_damage"]
+          }
+        }
+      }
     }
   },
   "heroes": {
+    "adela": {
+      "main": {
+        "skills": {
+          "diplomacy": {
+            "score": 60,
+            "upgrade_priority": 2,
+            "reason_codes": ["living_army", "template_dependent"]
+          },
+          "waterMagic": {
+            "score": 62,
+            "upgrade_priority": 2,
+            "reason_codes": ["bless_prayer", "utility_magic"]
+          }
+        }
+      }
+    },
+    "alkin": {
+      "main": {
+        "skills": {
+          "armorer": {
+            "score": 94,
+            "upgrade_priority": 10,
+            "reason_codes": ["fortress_core", "loss_reduction"]
+          },
+          "offence": {
+            "score": 88,
+            "upgrade_priority": 7,
+            "reason_codes": ["gorgon_scaling", "physical_damage"]
+          }
+        }
+      }
+    },
+    "cragHack": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 99,
+            "upgrade_priority": 14,
+            "reason_codes": ["hero_specialty", "physical_damage"]
+          }
+        }
+      }
+    },
+    "deemer": {
+      "main": {
+        "skills": {
+          "earthMagic": {
+            "score": 95,
+            "upgrade_priority": 8,
+            "reason_codes": ["meteor_shower", "combat_control"]
+          },
+          "sorcery": {
+            "score": 82,
+            "upgrade_priority": 5,
+            "reason_codes": ["spell_damage", "warlock_scaling"]
+          }
+        }
+      }
+    },
+    "dessa": {
+      "main": {
+        "skills": {
+          "logistics": {
+            "score": 98,
+            "upgrade_priority": 13,
+            "reason_codes": ["hero_specialty", "map_tempo"]
+          }
+        }
+      }
+    },
+    "galthran": {
+      "main": {
+        "skills": {
+          "necromancy": {
+            "score": 97,
+            "upgrade_priority": 12,
+            "reason_codes": ["skeleton_specialty", "army_snowball"]
+          },
+          "offence": {
+            "score": 88,
+            "upgrade_priority": 7,
+            "reason_codes": ["skeleton_scaling", "physical_damage"]
+          }
+        }
+      }
+    },
+    "grindan": {
+      "main": {
+        "skills": {
+          "earthMagic": {
+            "score": 96,
+            "upgrade_priority": 10,
+            "reason_codes": ["earth_start", "mass_slow"]
+          },
+          "logistics": {
+            "score": 94,
+            "upgrade_priority": 8,
+            "reason_codes": ["map_tempo", "tempo_clear"]
+          }
+        }
+      }
+    },
+    "gundula": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 96,
+            "upgrade_priority": 12,
+            "reason_codes": ["hero_specialty", "physical_damage"]
+          },
+          "tactics": {
+            "score": 82,
+            "upgrade_priority": 6,
+            "reason_codes": ["melee_delivery", "combat_tempo"]
+          }
+        }
+      }
+    },
+    "gunnar": {
+      "main": {
+        "skills": {
+          "logistics": {
+            "score": 99,
+            "upgrade_priority": 14,
+            "reason_codes": ["hero_specialty", "map_tempo"]
+          }
+        }
+      }
+    },
     "isra": {
       "main": {
         "skills": {
@@ -145,6 +1053,211 @@
             "score": 99,
             "upgrade_priority": 14,
             "reason_codes": ["hero_specialty", "advanced_start", "army_snowball"]
+          }
+        }
+      }
+    },
+    "ivor": {
+      "main": {
+        "skills": {
+          "archery": {
+            "score": 92,
+            "upgrade_priority": 11,
+            "reason_codes": ["elf_specialty", "ranged_scaling"]
+          }
+        }
+      }
+    },
+    "kyrre": {
+      "main": {
+        "skills": {
+          "logistics": {
+            "score": 99,
+            "upgrade_priority": 14,
+            "reason_codes": ["hero_specialty", "map_tempo"]
+          }
+        }
+      }
+    },
+    "luna": {
+      "main": {
+        "skills": {
+          "fireMagic": {
+            "score": 90,
+            "upgrade_priority": 10,
+            "reason_codes": ["fire_wall", "tempo_clear"]
+          },
+          "logistics": {
+            "score": 94,
+            "upgrade_priority": 8,
+            "reason_codes": ["map_tempo", "more_fights"]
+          }
+        }
+      }
+    },
+    "mephala": {
+      "main": {
+        "skills": {
+          "armorer": {
+            "score": 98,
+            "upgrade_priority": 13,
+            "reason_codes": ["hero_specialty", "loss_reduction"]
+          }
+        }
+      }
+    },
+    "monere": {
+      "main": {
+        "skills": {
+          "logistics": {
+            "score": 96,
+            "upgrade_priority": 10,
+            "reason_codes": ["map_tempo", "tempo_clear"]
+          },
+          "offence": {
+            "score": 88,
+            "upgrade_priority": 7,
+            "reason_codes": ["psychic_elemental", "physical_damage"]
+          }
+        }
+      }
+    },
+    "neela": {
+      "main": {
+        "skills": {
+          "armorer": {
+            "score": 96,
+            "upgrade_priority": 12,
+            "reason_codes": ["hero_specialty", "loss_reduction"]
+          }
+        }
+      }
+    },
+    "nymus": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 94,
+            "upgrade_priority": 11,
+            "reason_codes": ["pit_fiend_scaling", "physical_damage"]
+          }
+        }
+      }
+    },
+    "orrin": {
+      "main": {
+        "skills": {
+          "archery": {
+            "score": 94,
+            "upgrade_priority": 12,
+            "reason_codes": ["hero_specialty", "ranged_scaling"]
+          },
+          "tactics": {
+            "score": 78,
+            "upgrade_priority": 4,
+            "reason_codes": ["marksman_setup", "combat_tempo"]
+          }
+        }
+      }
+    },
+    "pyre": {
+      "main": {
+        "skills": {
+          "logistics": {
+            "score": 94,
+            "upgrade_priority": 8,
+            "reason_codes": ["map_tempo", "tempo_clear"]
+          },
+          "artillery": {
+            "score": 66,
+            "upgrade_priority": 3,
+            "reason_codes": ["ballista_specialty", "early_tempo"]
+          }
+        }
+      }
+    },
+    "shakti": {
+      "main": {
+        "skills": {
+          "offence": {
+            "score": 90,
+            "upgrade_priority": 9,
+            "reason_codes": ["troglodyte_start", "physical_damage"]
+          },
+          "tactics": {
+            "score": 82,
+            "upgrade_priority": 6,
+            "reason_codes": ["strike_setup", "combat_tempo"]
+          }
+        }
+      }
+    },
+    "solmyr": {
+      "main": {
+        "skills": {
+          "airMagic": {
+            "score": 96,
+            "upgrade_priority": 11,
+            "reason_codes": ["chain_lightning", "strategic_spells"]
+          },
+          "sorcery": {
+            "score": 80,
+            "upgrade_priority": 5,
+            "reason_codes": ["spell_damage", "magic_scaling"]
+          }
+        }
+      }
+    },
+    "tazar": {
+      "main": {
+        "skills": {
+          "armorer": {
+            "score": 99,
+            "upgrade_priority": 14,
+            "reason_codes": ["hero_specialty", "loss_reduction"]
+          }
+        }
+      }
+    },
+    "thant": {
+      "main": {
+        "skills": {
+          "earthMagic": {
+            "score": 98,
+            "upgrade_priority": 11,
+            "reason_codes": ["animate_dead", "combat_control"]
+          },
+          "intelligence": {
+            "score": 78,
+            "upgrade_priority": 4,
+            "reason_codes": ["spell_sustain", "mana_depth"]
+          }
+        }
+      }
+    },
+    "vidomina": {
+      "main": {
+        "skills": {
+          "necromancy": {
+            "score": 98,
+            "upgrade_priority": 13,
+            "reason_codes": ["hero_specialty", "advanced_start", "army_snowball"]
+          }
+        }
+      }
+    },
+    "wystan": {
+      "main": {
+        "skills": {
+          "armorer": {
+            "score": 92,
+            "upgrade_priority": 9,
+            "reason_codes": ["fortress_core", "loss_reduction"]
+          },
+          "archery": {
+            "score": 80,
+            "upgrade_priority": 5,
+            "reason_codes": ["lizardman_scaling", "ranged_scaling"]
           }
         }
       }

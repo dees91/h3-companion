@@ -522,9 +522,14 @@ class RecommendationRuleValidationTests(unittest.TestCase):
                 self.assertInvalidRules(self._rules_with(mutator))
 
     def test_validation_rejects_missing_default_role_coverage(self):
-        raw_rules = self._rules_with(
-            lambda data: data["global"].__setitem__("main", {"skills": {}})
-        )
+        def remove_all_default_role_guidance(data):
+            data["global"]["main"] = {"skills": {}}
+            data["factions"] = {}
+            data["classes"] = {}
+            data["specialties"] = {}
+            data["heroes"] = {}
+
+        raw_rules = self._rules_with(remove_all_default_role_guidance)
 
         self.assertInvalidRules(raw_rules)
 
@@ -634,6 +639,12 @@ class HeroSkillRecommendationScoringTests(unittest.TestCase):
             raw_rules["global"]["main"]["skills"][skill_id][
                 "upgrade_priority"
             ] = 5
+        raw_rules["factions"]["necropolis"]["main"]["skills"]["earthMagic"][
+            "score"
+        ] = 80
+        raw_rules["factions"]["necropolis"]["main"]["skills"]["earthMagic"][
+            "upgrade_priority"
+        ] = 5
         rules = recommender.validate_recommendation_rules(
             raw_rules,
             metadata=self.metadata,
@@ -660,6 +671,12 @@ class HeroSkillRecommendationScoringTests(unittest.TestCase):
         ] = 1
         raw_rules["global"]["main"]["skills"]["earthMagic"]["score"] = 80
         raw_rules["global"]["main"]["skills"]["earthMagic"][
+            "upgrade_priority"
+        ] = 9
+        raw_rules["factions"]["necropolis"]["main"]["skills"]["earthMagic"][
+            "score"
+        ] = 80
+        raw_rules["factions"]["necropolis"]["main"]["skills"]["earthMagic"][
             "upgrade_priority"
         ] = 9
         rules = recommender.validate_recommendation_rules(
@@ -774,6 +791,12 @@ class HeroSkillOfferComparisonTests(unittest.TestCase):
             raw_rules["global"]["main"]["skills"][skill_id][
                 "upgrade_priority"
             ] = 5
+        raw_rules["factions"]["necropolis"]["main"]["skills"]["earthMagic"][
+            "score"
+        ] = 80
+        raw_rules["factions"]["necropolis"]["main"]["skills"]["earthMagic"][
+            "upgrade_priority"
+        ] = 5
         rules = recommender.validate_recommendation_rules(
             raw_rules,
             metadata=self.metadata,
@@ -851,6 +874,15 @@ class HeroSkillOfferComparisonTests(unittest.TestCase):
         self.assertEqual(comparison.winner, "earthMagic:basic")
 
     def test_compare_marks_existing_skill_without_rule_unavailable(self):
+        raw_rules = json.loads(
+            recommender.DEFAULT_RULES_PATH.read_text(encoding="utf-8")
+        )
+        del raw_rules["global"]["main"]["skills"]["archery"]
+        rules = recommender.validate_recommendation_rules(
+            raw_rules,
+            metadata=self.metadata,
+        )
+
         comparison = recommender.compare_skill_offers(
             "isra",
             current_skills=({"skill": "necromancy", "level": "advanced"},),
@@ -859,7 +891,7 @@ class HeroSkillOfferComparisonTests(unittest.TestCase):
                 {"skill": "earthMagic", "level": "basic"},
             ),
             metadata=self.metadata,
-            rules=self.rules,
+            rules=rules,
         )
         archery = comparison.offers[0]
 
@@ -884,6 +916,171 @@ class HeroSkillOfferComparisonTests(unittest.TestCase):
                 metadata=self.metadata,
                 rules=self.rules,
             )
+
+
+class StandardHeroRuleCoverageTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.metadata = recommender.load_vcmi_hero_skill_metadata()
+        cls.rules = recommender.load_recommendation_rules(metadata=cls.metadata)
+
+    def test_every_standard_faction_and_class_has_main_guidance(self):
+        expected_factions = {hero.faction for hero in self.metadata.heroes.values()}
+        expected_classes = set(self.metadata.hero_classes)
+
+        self.assertEqual(set(self.rules.faction_rules), expected_factions)
+        self.assertEqual(set(self.rules.class_rules), expected_classes)
+
+        empty_factions = [
+            faction
+            for faction, role_rules in self.rules.faction_rules.items()
+            if not role_rules.get("main")
+        ]
+        empty_classes = [
+            class_id
+            for class_id, role_rules in self.rules.class_rules.items()
+            if not role_rules.get("main")
+        ]
+
+        self.assertEqual(empty_factions, [])
+        self.assertEqual(empty_classes, [])
+
+    def test_all_standard_heroes_have_effective_recommendations_from_starting_skills(self):
+        missing = []
+        for hero in self.metadata.heroes.values():
+            output = recommender.recommend_hero_skills(
+                hero.key,
+                current_skills=hero.starting_skills,
+                metadata=self.metadata,
+                rules=self.rules,
+            )
+            if not output.top_next:
+                missing.append(
+                    f"{hero.key} {hero.faction} {hero.class_id} "
+                    f"{hero.specialty_summary}"
+                )
+
+        self.assertEqual(missing, [], "\n".join(missing))
+
+    def test_special_and_campaign_heroes_remain_excluded(self):
+        self.assertEqual(
+            self.metadata.loaded_hero_files,
+            (
+                "castle.json",
+                "conflux.json",
+                "dungeon.json",
+                "fortress.json",
+                "inferno.json",
+                "necropolis.json",
+                "rampart.json",
+                "stronghold.json",
+                "tower.json",
+            ),
+        )
+        self.assertEqual(
+            self.metadata.excluded_hero_files,
+            (
+                "portraits.json",
+                "portraitsChronicles.json",
+                "special.json",
+            ),
+        )
+        self.assertTrue(set(self.rules.hero_rules).issubset(self.metadata.heroes))
+
+    def test_important_specialists_have_small_hero_specific_overrides(self):
+        important_heroes = {
+            "adela",
+            "alkin",
+            "cragHack",
+            "deemer",
+            "dessa",
+            "galthran",
+            "grindan",
+            "gundula",
+            "gunnar",
+            "isra",
+            "ivor",
+            "kyrre",
+            "luna",
+            "mephala",
+            "monere",
+            "neela",
+            "nymus",
+            "orrin",
+            "pyre",
+            "shakti",
+            "solmyr",
+            "tazar",
+            "thant",
+            "vidomina",
+            "wystan",
+        }
+
+        self.assertTrue(important_heroes.issubset(self.rules.hero_rules))
+
+        oversized = []
+        for hero_key, role_rules in self.rules.hero_rules.items():
+            skill_count = len(role_rules.get("main", {}))
+            if skill_count > 4:
+                oversized.append((hero_key, skill_count))
+
+        self.assertEqual(oversized, [])
+
+    def test_hero_specialty_reason_matches_hero_metadata(self):
+        mismatches = []
+        for hero_key, role_rules in self.rules.hero_rules.items():
+            hero = self.metadata.heroes[hero_key]
+            hero_skill_ids = {
+                skill.skill_id
+                for skill in hero.starting_skills
+            }
+            for skill_id, skill_rule in role_rules.get("main", {}).items():
+                if "hero_specialty" not in skill_rule.reason_codes:
+                    continue
+                if (
+                    hero.specialty_summary == f"secondary:{skill_id}"
+                    or skill_id in hero_skill_ids
+                ):
+                    continue
+                mismatches.append(
+                    f"{hero_key}:{skill_id}:{hero.specialty_summary}"
+                )
+
+        self.assertEqual(mismatches, [])
+
+    def test_manual_review_signature_heroes_have_expected_top_guidance(self):
+        reviewed = {
+            "orrin": "archery",
+            "kyrre": "logistics",
+            "solmyr": "airMagic",
+            "nymus": "offence",
+            "isra": "necromancy",
+            "gunnar": "logistics",
+            "cragHack": "offence",
+            "tazar": "armorer",
+            "luna": "fireMagic",
+        }
+
+        for hero_key, expected_skill in reviewed.items():
+            with self.subTest(hero_key=hero_key):
+                hero = self.metadata.heroes[hero_key]
+                output = recommender.recommend_hero_skills(
+                    hero.key,
+                    current_skills=hero.starting_skills,
+                    metadata=self.metadata,
+                    rules=self.rules,
+                    top_limit=5,
+                )
+                top_skills = [entry.skill_id for entry in output.top_next[:3]]
+                self.assertIn(expected_skill, top_skills)
+
+                entry = next(
+                    entry
+                    for entry in output.top_next
+                    if entry.skill_id == expected_skill
+                )
+                self.assertIn(entry.tier, ("S", "A"))
+                self.assertGreaterEqual(entry.score, 75)
 
 
 if __name__ == "__main__":
