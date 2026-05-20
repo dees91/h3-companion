@@ -2967,6 +2967,486 @@ assert.strictEqual(fetchCalls, fetchCallsAfterContextActions);
 
             self._with_server(check, app_state=app_state)
 
+    def test_path_route_endpoint_accepts_explicit_target_position(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra", position=(0, 0, 0))
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m", map_size=3)
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                status, _, payload = self._post_json(
+                    base_url,
+                    "/api/path-route",
+                    {
+                        "hero_id": "hero:256",
+                        "target_position": {"x": 2, "y": 0, "z": 0},
+                    },
+                )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["hero_id"], "hero:256")
+                self.assertEqual(payload["status"], battle_estimator_gui.PATH_STATUS_FOUND)
+                self.assertEqual(
+                    [step["position"] for step in payload["steps"]],
+                    [
+                        {"x": 0, "y": 0, "z": 0},
+                        {"x": 1, "y": 0, "z": 0},
+                        {"x": 2, "y": 0, "z": 0},
+                    ],
+                )
+                self.assertEqual(payload["segments"][0]["segment_type"], "walk")
+                self.assertIsNone(payload["message"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_path_route_endpoint_accepts_neutral_marker_target_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra", position=(0, 0, 0))
+            map_path = _write_h3m_map(
+                temp_path / "map.h3m",
+                position=(0, 0, 0),
+            )
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                status, _, payload = self._post_json(
+                    base_url,
+                    "/api/path-route",
+                    {
+                        "hero_id": "hero:256",
+                        "target_id": "neutral:0",
+                    },
+                )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["target_id"], "neutral:0")
+                self.assertEqual(payload["status"], battle_estimator_gui.PATH_STATUS_FOUND)
+                self.assertEqual(
+                    payload["requested_target_position"],
+                    {"x": 0, "y": 0, "z": 0},
+                )
+
+            self._with_server(check, app_state=app_state)
+
+    def test_path_route_endpoint_accepts_town_and_portal_marker_ids(self):
+        cases = (
+            ("town:0", _write_h3m_map_with_town),
+            ("portal:0", _write_h3m_map_with_portals),
+        )
+        for target_id, map_writer in cases:
+            with self.subTest(target_id=target_id):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_path = Path(temp_dir)
+                    game_dir = temp_path / "game"
+                    game_dir.mkdir()
+                    _write_gui_save(
+                        game_dir,
+                        "001.GM2",
+                        hero_name="Isra",
+                        position=(0, 0, 0),
+                    )
+                    map_path = map_writer(temp_path / "map.h3m")
+                    app_state = battle_estimator_gui.GuiAppState(
+                        autosave_dir=game_dir,
+                        map_file=map_path,
+                    )
+
+                    def check(base_url):
+                        status, _, payload = self._post_json(
+                            base_url,
+                            "/api/path-route",
+                            {
+                                "hero_id": "hero:256",
+                                "target_id": target_id,
+                            },
+                        )
+
+                        self.assertEqual(status, 200)
+                        self.assertEqual(payload["target_id"], target_id)
+                        self.assertEqual(
+                            payload["status"],
+                            battle_estimator_gui.PATH_STATUS_FOUND,
+                        )
+
+                    self._with_server(check, app_state=app_state)
+
+    def test_path_route_endpoint_honors_hidden_neutral_visibility(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra", position=(0, 0, 0))
+            map_path = _write_h3m_map(
+                temp_path / "map.h3m",
+                position=(0, 0, 0),
+            )
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                self._post_json(
+                    base_url,
+                    "/api/hidden-target",
+                    {"target_id": "neutral:0", "hidden": True},
+                )
+                with self.assertRaises(HTTPError) as hidden:
+                    self._post_json(
+                        base_url,
+                        "/api/path-route",
+                        {
+                            "hero_id": "hero:256",
+                            "target_id": "neutral:0",
+                        },
+                    )
+                self.assertEqual(hidden.exception.code, 404)
+
+                self._post_json(
+                    base_url,
+                    "/api/show-hidden",
+                    {"show_hidden": True},
+                )
+                status, _, payload = self._post_json(
+                    base_url,
+                    "/api/path-route",
+                    {
+                        "hero_id": "hero:256",
+                        "target_id": "neutral:0",
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["target_id"], "neutral:0")
+
+            self._with_server(check, app_state=app_state)
+
+    def test_path_route_endpoint_honors_hidden_hero_visibility(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {"hero_name": "Isra", "name_offset": 256, "position": (0, 0, 0)},
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 512,
+                        "position": (2, 0, 0),
+                        "owner_color_id": 2,
+                    },
+                ),
+            )
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m", map_size=3)
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                selected_hero_id="hero:256",
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                self._post_json(
+                    base_url,
+                    "/api/hidden-target",
+                    {"target_id": "hero:512", "hidden": True},
+                )
+                with self.assertRaises(HTTPError) as hidden:
+                    self._post_json(
+                        base_url,
+                        "/api/path-route",
+                        {
+                            "hero_id": "hero:256",
+                            "target_id": "hero:512",
+                        },
+                    )
+                self.assertEqual(hidden.exception.code, 404)
+
+                self._post_json(
+                    base_url,
+                    "/api/show-hidden",
+                    {"show_hidden": True},
+                )
+                status, _, payload = self._post_json(
+                    base_url,
+                    "/api/path-route",
+                    {
+                        "hero_id": "hero:256",
+                        "target_id": "hero:512",
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["target_id"], "hero:512")
+
+            self._with_server(check, app_state=app_state)
+
+    def test_path_route_endpoint_serializes_not_found_and_fallback(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra", position=(0, 0, 0))
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m", map_size=2)
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                not_found = battle_estimator_gui.PathfindingResult(
+                    battle_estimator_gui.PATH_STATUS_NOT_FOUND,
+                    requested_target_position=(1, 0, 0),
+                    message="no land path found",
+                )
+                fallback = battle_estimator_gui.PathfindingResult(
+                    battle_estimator_gui.PATH_STATUS_FOUND,
+                    requested_target_position=(1, 0, 0),
+                    resolved_target_position=(0, 0, 0),
+                    steps=(battle_estimator_gui.PathfindingStep((0, 0, 0)),),
+                    segments=(
+                        battle_estimator_gui.PathfindingSegment(
+                            battle_estimator_gui.PATH_SEGMENT_WALK,
+                            (0, 0, 0),
+                            (0, 0, 0),
+                            steps=(
+                                battle_estimator_gui.PathfindingStep((0, 0, 0)),
+                            ),
+                        ),
+                    ),
+                    message="resolved target to reachable neighbor (0, 0, 0)",
+                )
+                with patch.object(
+                    battle_estimator_gui,
+                    "find_path_route",
+                    side_effect=(not_found, fallback),
+                ):
+                    status, _, missing_payload = self._post_json(
+                        base_url,
+                        "/api/path-route",
+                        {
+                            "hero_id": "hero:256",
+                            "target_position": {"x": 1, "y": 0, "z": 0},
+                        },
+                    )
+                    status, _, fallback_payload = self._post_json(
+                        base_url,
+                        "/api/path-route",
+                        {
+                            "hero_id": "hero:256",
+                            "target_position": {"x": 1, "y": 0, "z": 0},
+                        },
+                    )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    missing_payload["status"],
+                    battle_estimator_gui.PATH_STATUS_NOT_FOUND,
+                )
+                self.assertEqual(missing_payload["message"], "no land path found")
+                self.assertEqual(fallback_payload["resolved_target_position"], {"x": 0, "y": 0, "z": 0})
+                self.assertIn("reachable neighbor", fallback_payload["message"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_path_route_endpoint_serializes_portal_segment_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra", position=(0, 0, 0))
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m", map_size=2)
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                portal_edge = battle_estimator_gui.PathfindingPortalEdge(
+                    source_id="portal:0",
+                    destination_id="portal:1",
+                    source_position=(0, 0, 0),
+                    destination_position=(1, 0, 0),
+                    portal_type=h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                    channel_key="monolith-one-way:1",
+                    is_non_deterministic=True,
+                )
+                portal_result = battle_estimator_gui.PathfindingResult(
+                    battle_estimator_gui.PATH_STATUS_FOUND,
+                    requested_target_position=(1, 0, 0),
+                    resolved_target_position=(1, 0, 0),
+                    steps=(
+                        battle_estimator_gui.PathfindingStep((0, 0, 0)),
+                        battle_estimator_gui.PathfindingStep((1, 0, 0)),
+                    ),
+                    segments=(
+                        battle_estimator_gui.PathfindingSegment(
+                            battle_estimator_gui.PATH_SEGMENT_PORTAL,
+                            (0, 0, 0),
+                            (1, 0, 0),
+                            steps=(
+                                battle_estimator_gui.PathfindingStep((0, 0, 0)),
+                                battle_estimator_gui.PathfindingStep((1, 0, 0)),
+                            ),
+                            portal_edge=portal_edge,
+                        ),
+                    ),
+                )
+                with patch.object(
+                    battle_estimator_gui,
+                    "find_path_route",
+                    return_value=portal_result,
+                ):
+                    status, _, payload = self._post_json(
+                        base_url,
+                        "/api/path-route",
+                        {
+                            "hero_id": "hero:256",
+                            "target_position": {"x": 1, "y": 0, "z": 0},
+                        },
+                    )
+
+                self.assertEqual(status, 200)
+                segment = payload["segments"][0]
+                self.assertEqual(segment["segment_type"], "portal")
+                self.assertTrue(segment["is_non_deterministic"])
+                self.assertEqual(segment["portal_edge"]["source_id"], "portal:0")
+                self.assertEqual(segment["portal_edge"]["destination_id"], "portal:1")
+                self.assertTrue(segment["portal_edge"]["is_non_deterministic"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_path_route_endpoint_rejects_hero_without_position(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra", position=None)
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                with self.assertRaises(HTTPError) as raised:
+                    self._post_json(
+                        base_url,
+                        "/api/path-route",
+                        {
+                            "hero_id": "hero:256",
+                            "target_position": {"x": 0, "y": 0, "z": 0},
+                        },
+                    )
+
+                self.assertEqual(raised.exception.code, 400)
+                body = json.loads(raised.exception.read().decode("utf-8"))
+                self.assertIn("no parsed position", body["error"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_path_route_endpoint_rejects_invalid_hero_and_target_payloads(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra", position=(0, 0, 0))
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m", map_size=2)
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                invalid_requests = (
+                    (
+                        {
+                            "hero_id": "hero:missing",
+                            "target_position": {"x": 0, "y": 0, "z": 0},
+                        },
+                        404,
+                        "unknown hero_id",
+                    ),
+                    (
+                        {"hero_id": "hero:256"},
+                        400,
+                        "exactly one",
+                    ),
+                    (
+                        {
+                            "hero_id": "hero:256",
+                            "target_position": {"x": 0, "y": 0, "z": 0},
+                            "target_id": "neutral:0",
+                        },
+                        400,
+                        "exactly one",
+                    ),
+                    (
+                        {"hero_id": "hero:256", "target_id": "neutral:999"},
+                        404,
+                        "unknown target_id",
+                    ),
+                    (
+                        {"hero_id": "hero:256", "target_position": None},
+                        400,
+                        "path position is required",
+                    ),
+                )
+                for payload, expected_code, expected_error in invalid_requests:
+                    with self.subTest(expected_error=expected_error):
+                        with self.assertRaises(HTTPError) as raised:
+                            self._post_json(base_url, "/api/path-route", payload)
+                        self.assertEqual(raised.exception.code, expected_code)
+                        body = json.loads(raised.exception.read().decode("utf-8"))
+                        self.assertIn(expected_error, body["error"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_path_route_endpoint_returns_conflict_for_stale_selected_hero(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra", position=(0, 0, 0))
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m", map_size=2)
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                selected_hero_id="hero:999",
+            )
+
+            def check(base_url):
+                with self.assertRaises(HTTPError) as raised:
+                    self._post_json(
+                        base_url,
+                        "/api/path-route",
+                        {
+                            "hero_id": "hero:999",
+                            "target_position": {"x": 0, "y": 0, "z": 0},
+                        },
+                    )
+
+                self.assertEqual(raised.exception.code, 409)
+                body = json.loads(raised.exception.read().decode("utf-8"))
+                self.assertIn("no longer available", body["error"])
+
+            self._with_server(check, app_state=app_state)
+
     def test_api_errors_are_json_for_invalid_json_and_invalid_ids(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -4397,6 +4877,19 @@ def _write_h3m_map_with_portals(path: Path) -> Path:
         ),
         map_size=8,
         levels=2,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(gzip.compress(payload))
+    return path
+
+
+def _write_empty_h3m_map(path: Path, map_size=1, levels=1) -> Path:
+    payload = _minimal_h3m_with_templates_and_objects(
+        h3_map_parser.H3M_FORMAT_SOD,
+        (),
+        (),
+        map_size=map_size,
+        levels=levels,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(gzip.compress(payload))

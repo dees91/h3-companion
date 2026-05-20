@@ -474,6 +474,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             "/api/show-hidden": self._api_show_hidden,
             "/api/simulate-target": self._api_simulate_target,
             "/api/scan-radius": self._api_scan_radius,
+            "/api/path-route": self._api_path_route,
         }
         handler = routes.get(path)
         if handler is None:
@@ -793,6 +794,49 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
                 for estimate in estimates
             ],
         }
+
+    def _api_path_route(self, payload: dict) -> dict:
+        hero_id = _required_text(payload, "hero_id")
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
+        selected_hero = _request_hero_by_id(self.app_state, domain_snapshot, hero_id)
+        if selected_hero.position is None:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "selected hero has no parsed position")
+
+        hidden_ids = _hidden_neutral_target_ids_for_snapshot(
+            self.app_state,
+            domain_snapshot,
+        )
+        hidden_hero_ids = _hidden_hero_target_ids_for_snapshot(
+            self.app_state,
+            domain_snapshot,
+            hero_id,
+        )
+        include_hidden_targets = _show_hidden_neutrals_for_app(self.app_state)
+        target, target_id, terminal_positions = _path_target_for_api_payload(
+            domain_snapshot,
+            payload,
+            hidden_neutral_target_ids=hidden_ids,
+            hidden_hero_target_ids=hidden_hero_ids,
+            include_hidden_targets=include_hidden_targets,
+        )
+        try:
+            request = build_pathfinding_request(
+                selected_hero.position,
+                target,
+                domain_snapshot.state["route_layers"],
+                portal_targets=domain_snapshot.portal_targets,
+                portal_edges=domain_snapshot.portal_edges,
+                terminal_positions=terminal_positions,
+            )
+            result = find_path_route(request)
+        except ValueError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+
+        response = _serialize_pathfinding_result(result)
+        response["hero_id"] = hero_id
+        if target_id is not None:
+            response["target_id"] = target_id
+        return response
 
     @property
     def app_state(self) -> GuiAppState:
@@ -1761,6 +1805,143 @@ def _pathfinding_portal_edges(
             )
         )
     return tuple(path_edges)
+
+
+def _path_target_for_api_payload(
+    domain_snapshot: DomainSnapshot,
+    payload: dict,
+    hidden_neutral_target_ids=(),
+    hidden_hero_target_ids=(),
+    include_hidden_targets: bool = False,
+):
+    has_target_position = "target_position" in payload
+    has_target_id = "target_id" in payload
+    if has_target_position == has_target_id:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            "provide exactly one of target_position or target_id",
+        )
+
+    terminal_positions = list(_path_terminal_positions_for_snapshot(domain_snapshot))
+    if has_target_position:
+        return payload["target_position"], None, tuple(terminal_positions)
+
+    target_id = _required_text(payload, "target_id")
+    target = _path_marker_target_by_id(
+        domain_snapshot,
+        target_id,
+        hidden_neutral_target_ids=hidden_neutral_target_ids,
+        hidden_hero_target_ids=hidden_hero_target_ids,
+        include_hidden_targets=include_hidden_targets,
+    )
+    terminal_positions.append(target)
+    return target, target_id, tuple(terminal_positions)
+
+
+def _path_terminal_positions_for_snapshot(
+    domain_snapshot: DomainSnapshot,
+) -> tuple[PathPosition, ...]:
+    return tuple(
+        PathPosition(target.x, target.y, target.z)
+        for target in domain_snapshot.town_targets
+    )
+
+
+def _path_marker_target_by_id(
+    domain_snapshot: DomainSnapshot,
+    target_id: str,
+    hidden_neutral_target_ids=(),
+    hidden_hero_target_ids=(),
+    include_hidden_targets: bool = False,
+) -> dict:
+    hidden_neutral_id_set = set(hidden_neutral_target_ids)
+    hidden_hero_id_set = set(hidden_hero_target_ids)
+
+    neutral = domain_snapshot.neutral_by_id.get(target_id)
+    if neutral is not None:
+        hidden = target_id in hidden_neutral_id_set
+        if hidden and not include_hidden_targets:
+            raise ApiError(HTTPStatus.NOT_FOUND, f"unknown target_id: {target_id}")
+        return _serialize_neutral_target(neutral, hidden=hidden)
+
+    hero = domain_snapshot.hero_by_id.get(target_id)
+    if hero is not None:
+        hidden = target_id in hidden_hero_id_set
+        if hidden and not include_hidden_targets:
+            raise ApiError(HTTPStatus.NOT_FOUND, f"unknown target_id: {target_id}")
+        return _serialize_hero(
+            hero,
+            target_id,
+            domain_snapshot.team_by_color,
+            hidden=hidden,
+        )
+
+    for town in domain_snapshot.town_targets:
+        if _town_target_id(town) == target_id:
+            return _serialize_town_target(town)
+
+    for portal in domain_snapshot.portal_targets:
+        if _portal_target_id(portal) == target_id:
+            return _serialize_portal_target(portal)
+
+    raise ApiError(HTTPStatus.NOT_FOUND, f"unknown target_id: {target_id}")
+
+
+def _serialize_pathfinding_result(result: PathfindingResult) -> dict:
+    return {
+        "status": result.status,
+        "requested_target_position": _serialize_position(
+            result.requested_target_position
+        ),
+        "resolved_target_position": _serialize_position(
+            result.resolved_target_position
+        ),
+        "message": result.message,
+        "steps": [
+            _serialize_pathfinding_step(step)
+            for step in result.steps
+        ],
+        "segments": [
+            _serialize_pathfinding_segment(segment)
+            for segment in result.segments
+        ],
+    }
+
+
+def _serialize_pathfinding_step(step: PathfindingStep) -> dict:
+    return {
+        "position": _serialize_position(step.position),
+    }
+
+
+def _serialize_pathfinding_segment(segment: PathfindingSegment) -> dict:
+    payload = {
+        "segment_type": segment.segment_type,
+        "start_position": _serialize_position(segment.start_position),
+        "end_position": _serialize_position(segment.end_position),
+        "steps": [
+            _serialize_pathfinding_step(step)
+            for step in segment.steps
+        ],
+        "is_non_deterministic": segment.is_non_deterministic,
+    }
+    if segment.portal_edge is not None:
+        payload["portal_edge"] = _serialize_pathfinding_portal_edge(
+            segment.portal_edge
+        )
+    return payload
+
+
+def _serialize_pathfinding_portal_edge(edge: PathfindingPortalEdge) -> dict:
+    return {
+        "source_id": edge.source_id,
+        "destination_id": edge.destination_id,
+        "source_position": _serialize_position(edge.source_position),
+        "destination_position": _serialize_position(edge.destination_position),
+        "portal_type": edge.portal_type,
+        "channel_key": edge.channel_key,
+        "is_non_deterministic": edge.is_non_deterministic,
+    }
 
 
 def _normalize_path_steps(steps) -> tuple[PathfindingStep, ...]:

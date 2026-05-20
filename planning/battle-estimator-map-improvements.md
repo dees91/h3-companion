@@ -1219,18 +1219,30 @@ requested target tile or marker ID, then returns the serialized pathfinding
 result from the service.
 
 **Acceptance criteria:**
-- [ ] The endpoint rejects requests without a selected/valid hero.
-- [ ] The endpoint accepts explicit target coordinates.
-- [ ] The endpoint accepts marker IDs for visible/known markers.
-- [ ] The endpoint returns path status, path coordinates, segment metadata, and
+- [x] The endpoint rejects requests without a selected/valid hero.
+- [x] The endpoint accepts explicit target coordinates.
+- [x] The endpoint accepts marker IDs for visible/known markers.
+- [x] The endpoint returns path status, path coordinates, segment metadata, and
       fallback notes.
-- [ ] The endpoint handles stale save/map snapshots consistently with existing
+- [x] The endpoint handles stale save/map snapshots consistently with existing
       GUI endpoints.
 
 **Verification:**
-- [ ] Add API tests for successful path, no path, invalid hero, invalid target,
+- [x] Add API tests for successful path, no path, invalid hero, invalid target,
       and marker target requests.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion notes:**
+- Added `POST /api/path-route` with `hero_id` and exactly one of
+  `target_position` or `target_id`.
+- Endpoint resolves explicit coordinates and hero, neutral, town, and portal
+  marker IDs, including hidden hero/neutral visibility through the show-hidden
+  toggle.
+- Response serializes path status, requested/resolved positions, message,
+  steps, walk/portal segment metadata, and portal edge metadata.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent plan and code reviews
+  completed with no blocking findings.
 
 **Dependencies:** Task 21
 
@@ -1443,7 +1455,7 @@ After Tasks 9, 17, and 25:
 | 19 | Implement Land-Only Shortest Path Search | done | 18 |
 | 20 | Add Portal And Subterranean Gate Traversal | done | 19 |
 | 21 | Resolve Blocked Targets And Terminal Markers | done | 20 |
-| 22 | Expose A Pathfinding API Endpoint | todo | 21 |
-| 23 | Add Path Mode UI And Route Rendering | blocked | 22 |
+| 22 | Expose A Pathfinding API Endpoint | done | 21 |
+| 23 | Add Path Mode UI And Route Rendering | todo | 22 |
 | 24 | Add Path Segment List And Cross-Level Navigation | blocked | 23 |
 | 25 | End-To-End Pathfinding Verification | blocked | 18, 19, 20, 21, 22, 23, 24 |
