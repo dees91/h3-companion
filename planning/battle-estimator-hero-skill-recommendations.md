@@ -406,21 +406,38 @@ focused cases.
 
 ## Task 7: Persist Manual Current-Skill State
 
+**Status:** done
+
 **Description:** Extend user config with per-map, per-hero manually edited
 secondary-skill state. When no manual state exists, selected heroes should
 prefill from VCMI starting skills.
 
 **Acceptance criteria:**
-- [ ] Config stores skill state outside the repo.
-- [ ] State is keyed by existing map key and stable hero ID.
-- [ ] Missing state falls back to VCMI starting skills.
-- [ ] Reset removes manual state for that hero and returns to starting skills.
-- [ ] Invalid stored states are ignored or cleaned without breaking GUI load.
+- [x] Config stores skill state outside the repo.
+- [x] State is keyed by existing map key and stable hero ID.
+- [x] Missing state falls back to VCMI starting skills.
+- [x] Reset removes manual state for that hero and returns to starting skills.
+- [x] Invalid stored states are ignored or cleaned without breaking GUI load.
 
 **Verification:**
-- [ ] Add config load/save tests for storing, updating, resetting, and ignoring
+- [x] Add config load/save tests for storing, updating, resetting, and ignoring
       invalid skill states.
-- [ ] Run `python3 -m unittest tests.test_h3_save_parser`.
+- [x] Run `python3 -m unittest tests.test_h3_save_parser`.
+
+**Completion notes:** Added `manual_hero_current_skills_by_map` to the
+user-global config JSON at `~/.config/vcmi-battle-estimator/config.json`, keyed
+by the existing map key and GUI-style stable hero instance IDs such as
+`hero:512`. Added `get_config_hero_skill_state`,
+`set_config_hero_skill_state`, and `reset_config_hero_skill_state`; callers pass
+the standard VCMI hero key separately so missing manual state falls back to the
+hero's starting skills without leaking edits between duplicate hero instances.
+The manual-state loader is deliberately tolerant: malformed maps, hero IDs,
+skill lists, duplicate skills, unknown skill IDs, and invalid levels are ignored
+for that stored hero state and are removed on the next save. Existing strict
+config validation for other fields remains unchanged. Plan and code were
+reviewed by subagents; code review requested two additional tests for manual
+readback and empty-skill reset behavior. Required tests passed with 105 focused
+cases.
 
 **Dependencies:** Task 6
 

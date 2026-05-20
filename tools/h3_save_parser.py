@@ -9,7 +9,7 @@ import json
 import re
 import threading
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from importlib import import_module
 from pathlib import Path
@@ -18,8 +18,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     try:
         from tools.battle_estimator import Creature
+        from tools.hero_skill_recommender import (
+            CurrentSkill,
+            VcmiHeroSkillMetadata,
+        )
     except ImportError:  # pragma: no cover - used only for type checking.
         from battle_estimator import Creature
+        from hero_skill_recommender import CurrentSkill, VcmiHeroSkillMetadata
 
 
 DEFAULT_GAMES_ROOT = (
@@ -156,6 +161,10 @@ class BattleEstimatorConfig:
     hidden_hero_targets_by_map: dict[str, tuple[str, ...]] = field(
         default_factory=dict
     )
+    manual_hero_current_skills_by_map: dict[
+        str,
+        dict[str, tuple["CurrentSkill", ...]],
+    ] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -467,6 +476,10 @@ def load_config(config_path: str | Path = CONFIG_PATH) -> BattleEstimatorConfig:
             data,
             path,
         ),
+        manual_hero_current_skills_by_map=_read_manual_hero_current_skills_by_map(
+            data,
+            path,
+        ),
     )
 
 
@@ -500,13 +513,7 @@ def set_config_autosave_dir(
         raise ConfigError(config_path, "invalid autosave_dir: value must not be blank")
     autosave_path = Path(autosave_dir)
     current = load_config(config_path)
-    updated = BattleEstimatorConfig(
-        autosave_dir=autosave_path,
-        last_hero=current.last_hero,
-        recent_heroes=current.recent_heroes,
-        hidden_neutral_targets_by_map=current.hidden_neutral_targets_by_map,
-        hidden_hero_targets_by_map=current.hidden_hero_targets_by_map,
-    )
+    updated = replace(current, autosave_dir=autosave_path)
     save_config(updated, config_path)
     return updated
 
@@ -517,13 +524,7 @@ def clear_config_autosave_dir(
     """Clear the saved autosave directory while preserving other values."""
 
     current = load_config(config_path)
-    updated = BattleEstimatorConfig(
-        autosave_dir=None,
-        last_hero=current.last_hero,
-        recent_heroes=current.recent_heroes,
-        hidden_neutral_targets_by_map=current.hidden_neutral_targets_by_map,
-        hidden_hero_targets_by_map=current.hidden_hero_targets_by_map,
-    )
+    updated = replace(current, autosave_dir=None)
     save_config(updated, config_path)
     return updated
 
@@ -536,13 +537,7 @@ def set_config_last_hero(
 
     current = load_config(config_path)
     normalized_hero = last_hero.strip() if last_hero else ""
-    updated = BattleEstimatorConfig(
-        autosave_dir=current.autosave_dir,
-        last_hero=normalized_hero or None,
-        recent_heroes=current.recent_heroes,
-        hidden_neutral_targets_by_map=current.hidden_neutral_targets_by_map,
-        hidden_hero_targets_by_map=current.hidden_hero_targets_by_map,
-    )
+    updated = replace(current, last_hero=normalized_hero or None)
     save_config(updated, config_path)
     return updated
 
@@ -566,12 +561,10 @@ def set_config_selected_hero(
             recent_heroes,
             limit,
         )
-    updated = BattleEstimatorConfig(
-        autosave_dir=current.autosave_dir,
+    updated = replace(
+        current,
         last_hero=normalized_hero or None,
         recent_heroes=recent_heroes,
-        hidden_neutral_targets_by_map=current.hidden_neutral_targets_by_map,
-        hidden_hero_targets_by_map=current.hidden_hero_targets_by_map,
     )
     save_config(updated, config_path)
     return updated
@@ -618,13 +611,7 @@ def set_config_hidden_neutral_target(
     else:
         hidden_by_map.pop(normalized_map_key, None)
 
-    updated = BattleEstimatorConfig(
-        autosave_dir=current.autosave_dir,
-        last_hero=current.last_hero,
-        recent_heroes=current.recent_heroes,
-        hidden_neutral_targets_by_map=hidden_by_map,
-        hidden_hero_targets_by_map=current.hidden_hero_targets_by_map,
-    )
+    updated = replace(current, hidden_neutral_targets_by_map=hidden_by_map)
     save_config(updated, config_path)
     return updated
 
@@ -670,13 +657,100 @@ def set_config_hidden_hero_target(
     else:
         hidden_by_map.pop(normalized_map_key, None)
 
-    updated = BattleEstimatorConfig(
-        autosave_dir=current.autosave_dir,
-        last_hero=current.last_hero,
-        recent_heroes=current.recent_heroes,
-        hidden_neutral_targets_by_map=current.hidden_neutral_targets_by_map,
-        hidden_hero_targets_by_map=hidden_by_map,
+    updated = replace(current, hidden_hero_targets_by_map=hidden_by_map)
+    save_config(updated, config_path)
+    return updated
+
+
+def get_config_hero_skill_state(
+    map_key: str,
+    hero_id: str,
+    standard_hero_key: str,
+    config: BattleEstimatorConfig | None = None,
+    config_path: str | Path = CONFIG_PATH,
+    metadata: "VcmiHeroSkillMetadata | None" = None,
+) -> tuple["CurrentSkill", ...]:
+    """Return persisted hero skills or VCMI starting skills when unset."""
+
+    normalized_map_key = _normalize_config_map_key(map_key, config_path)
+    normalized_hero_id = _normalize_config_hero_id(hero_id, config_path)
+    resolved_metadata = _hero_skill_metadata(metadata)
+    hero = _standard_hero_metadata(
+        standard_hero_key,
+        resolved_metadata,
+        config_path,
     )
+    current = load_config(config_path) if config is None else config
+    manual_by_hero = current.manual_hero_current_skills_by_map.get(
+        normalized_map_key,
+        {},
+    )
+    return manual_by_hero.get(normalized_hero_id, hero.starting_skills)
+
+
+def set_config_hero_skill_state(
+    map_key: str,
+    hero_id: str,
+    standard_hero_key: str,
+    skills,
+    config_path: str | Path = CONFIG_PATH,
+    metadata: "VcmiHeroSkillMetadata | None" = None,
+) -> BattleEstimatorConfig:
+    """Persist one hero's manually edited current secondary-skill state.
+
+    Empty skill state is treated as a reset because missing manual state already
+    falls back to the hero's VCMI starting skills.
+    """
+
+    normalized_map_key = _normalize_config_map_key(map_key, config_path)
+    normalized_hero_id = _normalize_config_hero_id(hero_id, config_path)
+    resolved_metadata = _hero_skill_metadata(metadata)
+    _standard_hero_metadata(standard_hero_key, resolved_metadata, config_path)
+    normalized_skills = _validated_manual_hero_current_skills(
+        skills,
+        resolved_metadata,
+        config_path,
+    )
+    if not normalized_skills:
+        return reset_config_hero_skill_state(
+            normalized_map_key,
+            normalized_hero_id,
+            config_path=config_path,
+        )
+
+    current = load_config(config_path)
+    manual_by_map = _copy_manual_hero_current_skills_by_map(
+        current.manual_hero_current_skills_by_map
+    )
+    manual_by_map.setdefault(normalized_map_key, {})[
+        normalized_hero_id
+    ] = normalized_skills
+
+    updated = replace(current, manual_hero_current_skills_by_map=manual_by_map)
+    save_config(updated, config_path)
+    return updated
+
+
+def reset_config_hero_skill_state(
+    map_key: str,
+    hero_id: str,
+    config_path: str | Path = CONFIG_PATH,
+) -> BattleEstimatorConfig:
+    """Remove one hero's manual skill state so callers use starting skills."""
+
+    normalized_map_key = _normalize_config_map_key(map_key, config_path)
+    normalized_hero_id = _normalize_config_hero_id(hero_id, config_path)
+    current = load_config(config_path)
+    manual_by_map = _copy_manual_hero_current_skills_by_map(
+        current.manual_hero_current_skills_by_map
+    )
+    manual_by_hero = manual_by_map.get(normalized_map_key)
+    if manual_by_hero is not None:
+        manual_by_hero.pop(normalized_hero_id, None)
+        if not manual_by_hero:
+            manual_by_map.pop(normalized_map_key, None)
+
+    updated = replace(current, manual_hero_current_skills_by_map=manual_by_map)
     save_config(updated, config_path)
     return updated
 
@@ -1804,6 +1878,40 @@ def _read_hidden_hero_targets_by_map(data: dict, path: Path) -> dict[str, tuple[
     return hidden_by_map
 
 
+def _read_manual_hero_current_skills_by_map(
+    data: dict,
+    path: Path,
+) -> dict[str, dict[str, tuple["CurrentSkill", ...]]]:
+    value = data.get("manual_hero_current_skills_by_map")
+    if value is None or not isinstance(value, dict):
+        return {}
+
+    metadata = _hero_skill_metadata()
+    skills_by_map = {}
+    for raw_map_key, raw_heroes in value.items():
+        if not isinstance(raw_map_key, str) or not isinstance(raw_heroes, dict):
+            continue
+        map_key = raw_map_key.strip()
+        if not map_key:
+            continue
+
+        skills_by_hero = {}
+        for raw_hero_id, raw_skills in raw_heroes.items():
+            hero_id = _normalize_config_hero_id_or_none(raw_hero_id)
+            if hero_id is None:
+                continue
+            normalized_skills = _manual_hero_current_skills_or_none(
+                raw_skills,
+                metadata,
+                path,
+            )
+            if normalized_skills:
+                skills_by_hero[hero_id] = normalized_skills
+        if skills_by_hero:
+            skills_by_map[map_key] = skills_by_hero
+    return skills_by_map
+
+
 def _normalize_hidden_neutral_target_ids(values) -> tuple[str, ...]:
     normalized = {}
     for item in values:
@@ -1884,6 +1992,123 @@ def _hidden_hero_target_sort_key(target_id: str) -> tuple[int, str]:
     )
 
 
+def _normalize_config_map_key(map_key: str, config_path: str | Path) -> str:
+    normalized = map_key.strip() if isinstance(map_key, str) else ""
+    if not normalized:
+        raise ConfigError(config_path, "invalid map_key: value must not be blank")
+    return normalized
+
+
+def _normalize_config_hero_id(hero_id: str, config_path: str | Path) -> str:
+    normalized = _normalize_config_hero_id_or_none(hero_id)
+    if normalized is None:
+        raise ConfigError(config_path, "invalid hero_id: expected hero:<stable_id>")
+    return normalized
+
+
+def _normalize_config_hero_id_or_none(hero_id) -> str | None:
+    if not isinstance(hero_id, str):
+        return None
+    return _normalize_hidden_hero_target_id(hero_id)
+
+
+def _validated_manual_hero_current_skills(
+    skills,
+    metadata: "VcmiHeroSkillMetadata",
+    config_path: str | Path,
+) -> tuple["CurrentSkill", ...]:
+    recommender = _hero_skill_recommender_module()
+    try:
+        normalized_skills = recommender.validate_current_skills(skills)
+    except (TypeError, recommender.HeroSkillRecommendationError) as exc:
+        raise ConfigError(config_path, f"invalid skill state: {exc}") from exc
+
+    for skill in normalized_skills:
+        if skill.skill_id not in metadata.skills:
+            raise ConfigError(
+                config_path,
+                f"invalid skill state: unknown skill {skill.skill_id!r}",
+            )
+    return normalized_skills
+
+
+def _manual_hero_current_skills_or_none(
+    skills,
+    metadata: "VcmiHeroSkillMetadata",
+    config_path: str | Path,
+) -> tuple["CurrentSkill", ...] | None:
+    if not isinstance(skills, list):
+        return None
+    try:
+        return _validated_manual_hero_current_skills(
+            skills,
+            metadata,
+            config_path,
+        )
+    except ConfigError:
+        return None
+
+
+def _copy_manual_hero_current_skills_by_map(
+    value: dict[str, dict[str, tuple["CurrentSkill", ...]]],
+) -> dict[str, dict[str, tuple["CurrentSkill", ...]]]:
+    return {
+        map_key: {
+            hero_id: tuple(skills)
+            for hero_id, skills in skills_by_hero.items()
+        }
+        for map_key, skills_by_hero in value.items()
+    }
+
+
+def _standard_hero_metadata(
+    standard_hero_key: str,
+    metadata: "VcmiHeroSkillMetadata",
+    config_path: str | Path,
+):
+    hero_key = standard_hero_key.strip() if isinstance(standard_hero_key, str) else ""
+    if not hero_key:
+        raise ConfigError(
+            config_path,
+            "invalid standard_hero_key: value must not be blank",
+        )
+
+    hero = metadata.heroes.get(hero_key)
+    if hero is not None:
+        return hero
+
+    casefolded = hero_key.casefold()
+    matches = [
+        candidate
+        for key, candidate in metadata.heroes.items()
+        if key.casefold() == casefolded
+    ]
+    if len(matches) == 1:
+        return matches[0]
+
+    raise ConfigError(
+        config_path,
+        f"invalid standard_hero_key: unknown hero {hero_key!r}",
+    )
+
+
+def _hero_skill_metadata(
+    metadata: "VcmiHeroSkillMetadata | None" = None,
+) -> "VcmiHeroSkillMetadata":
+    if metadata is not None:
+        return metadata
+    return _hero_skill_recommender_module().load_vcmi_hero_skill_metadata()
+
+
+def _hero_skill_recommender_module():
+    try:
+        return import_module("tools.hero_skill_recommender")
+    except ModuleNotFoundError as exc:
+        if exc.name != "tools":
+            raise
+        return import_module("hero_skill_recommender")
+
+
 def _prepend_recent_hero(
     hero_name: str,
     recent_heroes,
@@ -1928,4 +2153,43 @@ def _config_to_json(config: BattleEstimatorConfig) -> dict:
     }
     if hidden_hero_targets_by_map:
         data["hidden_hero_targets_by_map"] = hidden_hero_targets_by_map
+    manual_hero_current_skills_by_map = _manual_hero_current_skills_to_json(
+        config.manual_hero_current_skills_by_map
+    )
+    if manual_hero_current_skills_by_map:
+        data["manual_hero_current_skills_by_map"] = (
+            manual_hero_current_skills_by_map
+        )
     return data
+
+
+def _manual_hero_current_skills_to_json(
+    value: dict[str, dict[str, tuple["CurrentSkill", ...]]],
+) -> dict:
+    data = {}
+    for raw_map_key, raw_skills_by_hero in sorted(value.items()):
+        if not isinstance(raw_map_key, str) or not isinstance(raw_skills_by_hero, dict):
+            continue
+        map_key = raw_map_key.strip()
+        if not map_key:
+            continue
+
+        skills_by_hero = {}
+        for raw_hero_id, skills in sorted(raw_skills_by_hero.items()):
+            hero_id = _normalize_config_hero_id_or_none(raw_hero_id)
+            if hero_id is None or not skills:
+                continue
+            skills_by_hero[hero_id] = [
+                _manual_hero_current_skill_to_json(skill)
+                for skill in skills
+            ]
+        if skills_by_hero:
+            data[map_key] = skills_by_hero
+    return data
+
+
+def _manual_hero_current_skill_to_json(skill) -> dict:
+    return {
+        "skill": skill.skill_id,
+        "level": skill.level,
+    }

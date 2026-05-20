@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from tools import battle_estimator
 from tools import h3_save_parser
+from tools import hero_skill_recommender
 
 
 ISRA_CREATURE_IDS = (57, 59, 63, 65, 67, 56, 69)
@@ -1136,6 +1137,370 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(loaded.recent_heroes, ("Isra",))
         self.assertEqual(loaded.hidden_neutral_targets_by_map["map-key"], ("neutral:1",))
         self.assertEqual(loaded.hidden_hero_targets_by_map["other-map"], ("hero:9",))
+
+    def test_config_manual_hero_current_skills_round_trip_and_clean_invalid(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "manual_hero_current_skills_by_map": {
+                        " Map-Key ": {
+                            " HERO:000512 ": [
+                                {"skill": "necromancy", "level": "Advanced"},
+                                {"skill_id": "earthMagic", "level": " basic "},
+                            ],
+                            "bad": [
+                                {"skill": "logistics", "level": "basic"},
+                            ],
+                            "hero:513": [
+                                {"skill": "unknownSkill", "level": "basic"},
+                            ],
+                            "hero:514": [
+                                {"skill": "logistics", "level": "wrong"},
+                            ],
+                            "hero:515": "not-a-list",
+                            "hero:516": [
+                                {"skill": "logistics", "level": "basic"},
+                                {"skill": "logistics", "level": "advanced"},
+                            ],
+                        },
+                        "blank-after-normalize": {
+                            "bad": [
+                                {"skill": "logistics", "level": "basic"},
+                            ],
+                        },
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            config = h3_save_parser.load_config(config_path)
+            h3_save_parser.save_config(config, config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            config.manual_hero_current_skills_by_map,
+            {
+                "Map-Key": {
+                    "hero:512": (
+                        hero_skill_recommender.CurrentSkill(
+                            "necromancy",
+                            "advanced",
+                        ),
+                        hero_skill_recommender.CurrentSkill(
+                            "earthMagic",
+                            "basic",
+                        ),
+                    ),
+                },
+            },
+        )
+        self.assertEqual(
+            raw_config["manual_hero_current_skills_by_map"],
+            {
+                "Map-Key": {
+                    "hero:512": [
+                        {"level": "advanced", "skill": "necromancy"},
+                        {"level": "basic", "skill": "earthMagic"},
+                    ],
+                },
+            },
+        )
+
+    def test_config_ignores_invalid_manual_hero_current_skill_shapes(self):
+        cases = (
+            {"manual_hero_current_skills_by_map": []},
+            {"manual_hero_current_skills_by_map": {"map-key": []}},
+            {"manual_hero_current_skills_by_map": {"map-key": {"hero:1": []}}},
+            {"manual_hero_current_skills_by_map": {"map-key": {"hero:1": None}}},
+        )
+        for data in cases:
+            with self.subTest(data=data):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    config_path = Path(temp_dir) / "config.json"
+                    config_path.write_text(json.dumps(data), encoding="utf-8")
+
+                    config = h3_save_parser.load_config(config_path)
+                    h3_save_parser.save_config(config, config_path)
+                    raw_config = json.loads(
+                        config_path.read_text(encoding="utf-8")
+                    )
+
+                self.assertEqual(config.manual_hero_current_skills_by_map, {})
+                self.assertNotIn("manual_hero_current_skills_by_map", raw_config)
+
+    def test_set_config_hero_skill_state_keys_by_stable_hero_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    autosave_dir=Path(temp_dir) / "game",
+                    last_hero="Isra",
+                    recent_heroes=("Isra",),
+                    hidden_hero_targets_by_map={
+                        "map-key": ("hero:9",),
+                    },
+                    manual_hero_current_skills_by_map={
+                        "other-map": {
+                            "hero:77": (
+                                hero_skill_recommender.CurrentSkill(
+                                    "logistics",
+                                    "basic",
+                                ),
+                            ),
+                        },
+                    },
+                ),
+                config_path,
+            )
+
+            first = h3_save_parser.set_config_hero_skill_state(
+                " map-key ",
+                " HERO:002 ",
+                "isra",
+                (
+                    hero_skill_recommender.CurrentSkill(
+                        "necromancy",
+                        "expert",
+                    ),
+                ),
+                config_path,
+            )
+            second = h3_save_parser.set_config_hero_skill_state(
+                "map-key",
+                "hero:003",
+                "isra",
+                ({"skill": "earthMagic", "level": "basic"},),
+                config_path,
+            )
+            loaded = h3_save_parser.load_config(config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(first.autosave_dir, Path(temp_dir) / "game")
+        self.assertEqual(second.last_hero, "Isra")
+        self.assertEqual(loaded.recent_heroes, ("Isra",))
+        self.assertEqual(loaded.hidden_hero_targets_by_map["map-key"], ("hero:9",))
+        self.assertEqual(
+            loaded.manual_hero_current_skills_by_map["map-key"],
+            {
+                "hero:2": (
+                    hero_skill_recommender.CurrentSkill(
+                        "necromancy",
+                        "expert",
+                    ),
+                ),
+                "hero:3": (
+                    hero_skill_recommender.CurrentSkill(
+                        "earthMagic",
+                        "basic",
+                    ),
+                ),
+            },
+        )
+        self.assertEqual(
+            loaded.manual_hero_current_skills_by_map["other-map"],
+            {
+                "hero:77": (
+                    hero_skill_recommender.CurrentSkill(
+                        "logistics",
+                        "basic",
+                    ),
+                ),
+            },
+        )
+        self.assertIn(
+            "hero:2",
+            raw_config["manual_hero_current_skills_by_map"]["map-key"],
+        )
+        self.assertNotIn(
+            "isra",
+            raw_config["manual_hero_current_skills_by_map"]["map-key"],
+        )
+
+    def test_get_config_hero_skill_state_falls_back_to_vcmi_starting_skills(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "missing" / "config.json"
+
+            skills = h3_save_parser.get_config_hero_skill_state(
+                "map-key",
+                "hero:2",
+                "isra",
+                config_path=config_path,
+            )
+
+        self.assertEqual(
+            skills,
+            (
+                hero_skill_recommender.CurrentSkill(
+                    "necromancy",
+                    "advanced",
+                ),
+            ),
+        )
+
+    def test_get_config_hero_skill_state_returns_manual_state_when_present(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.set_config_hero_skill_state(
+                "map-key",
+                "hero:2",
+                "isra",
+                (
+                    hero_skill_recommender.CurrentSkill(
+                        "necromancy",
+                        "expert",
+                    ),
+                ),
+                config_path,
+            )
+
+            skills = h3_save_parser.get_config_hero_skill_state(
+                "map-key",
+                "hero:2",
+                "isra",
+                config_path=config_path,
+            )
+
+        self.assertEqual(
+            skills,
+            (
+                hero_skill_recommender.CurrentSkill(
+                    "necromancy",
+                    "expert",
+                ),
+            ),
+        )
+
+    def test_reset_config_hero_skill_state_removes_manual_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.set_config_hero_skill_state(
+                "map-key",
+                "hero:2",
+                "isra",
+                (
+                    hero_skill_recommender.CurrentSkill(
+                        "necromancy",
+                        "expert",
+                    ),
+                ),
+                config_path,
+            )
+
+            updated = h3_save_parser.reset_config_hero_skill_state(
+                "map-key",
+                "hero:2",
+                config_path,
+            )
+            loaded = h3_save_parser.load_config(config_path)
+            skills = h3_save_parser.get_config_hero_skill_state(
+                "map-key",
+                "hero:2",
+                "isra",
+                config_path=config_path,
+            )
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(updated.manual_hero_current_skills_by_map, {})
+        self.assertEqual(loaded.manual_hero_current_skills_by_map, {})
+        self.assertEqual(
+            skills,
+            (
+                hero_skill_recommender.CurrentSkill(
+                    "necromancy",
+                    "advanced",
+                ),
+            ),
+        )
+        self.assertNotIn("manual_hero_current_skills_by_map", raw_config)
+
+    def test_set_config_hero_skill_state_empty_skills_resets_manual_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.set_config_hero_skill_state(
+                "map-key",
+                "hero:2",
+                "isra",
+                (
+                    hero_skill_recommender.CurrentSkill(
+                        "necromancy",
+                        "expert",
+                    ),
+                ),
+                config_path,
+            )
+
+            updated = h3_save_parser.set_config_hero_skill_state(
+                "map-key",
+                "hero:2",
+                "isra",
+                (),
+                config_path,
+            )
+            skills = h3_save_parser.get_config_hero_skill_state(
+                "map-key",
+                "hero:2",
+                "isra",
+                config_path=config_path,
+            )
+
+        self.assertEqual(updated.manual_hero_current_skills_by_map, {})
+        self.assertEqual(
+            skills,
+            (
+                hero_skill_recommender.CurrentSkill(
+                    "necromancy",
+                    "advanced",
+                ),
+            ),
+        )
+
+    def test_set_config_hero_skill_state_rejects_invalid_inputs(self):
+        cases = (
+            (
+                " ",
+                "hero:2",
+                "isra",
+                ({"skill": "logistics", "level": "basic"},),
+                "map_key",
+            ),
+            (
+                "map",
+                "bad",
+                "isra",
+                ({"skill": "logistics", "level": "basic"},),
+                "hero_id",
+            ),
+            (
+                "map",
+                "hero:2",
+                "unknown",
+                ({"skill": "logistics", "level": "basic"},),
+                "standard_hero_key",
+            ),
+            (
+                "map",
+                "hero:2",
+                "isra",
+                ({"skill": "unknownSkill", "level": "basic"},),
+                "unknown skill",
+            ),
+        )
+        for map_key, hero_id, standard_hero_key, skills, expected_reason in cases:
+            with self.subTest(expected_reason=expected_reason):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    config_path = Path(temp_dir) / "config.json"
+
+                    with self.assertRaises(h3_save_parser.ConfigError) as raised:
+                        h3_save_parser.set_config_hero_skill_state(
+                            map_key,
+                            hero_id,
+                            standard_hero_key,
+                            skills,
+                            config_path,
+                        )
+
+                self.assertIn(expected_reason, raised.exception.reason)
 
     def test_set_config_last_hero_blank_clears_value(self):
         with tempfile.TemporaryDirectory() as temp_dir:
