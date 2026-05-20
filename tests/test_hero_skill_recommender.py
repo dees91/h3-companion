@@ -529,5 +529,193 @@ class RecommendationRuleValidationTests(unittest.TestCase):
         self.assertInvalidRules(raw_rules)
 
 
+class HeroSkillRecommendationScoringTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.metadata = recommender.load_vcmi_hero_skill_metadata()
+        cls.raw_rules = json.loads(
+            recommender.DEFAULT_RULES_PATH.read_text(encoding="utf-8")
+        )
+        cls.rules = recommender.validate_recommendation_rules(
+            cls.raw_rules,
+            metadata=cls.metadata,
+        )
+
+    def test_isra_advanced_necromancy_prioritizes_expert_upgrade(self):
+        output = recommender.recommend_hero_skills(
+            "isra",
+            current_skills=({"skill": "necromancy", "level": "advanced"},),
+            metadata=self.metadata,
+            rules=self.rules,
+        )
+
+        top = output.top_next[0]
+
+        self.assertEqual(top.skill_id, "necromancy")
+        self.assertEqual(top.display_name, "Necromancy")
+        self.assertEqual(top.target_level, "expert")
+        self.assertEqual(top.score, 99.0)
+        self.assertEqual(top.tier, "S")
+        self.assertEqual(top.availability, recommender.AVAILABILITY_AVAILABLE)
+        self.assertIn("hero_specialty", top.reason_codes)
+        self.assertIn("advanced_start", top.reason_codes)
+
+    def test_open_slots_include_available_new_skill_recommendations(self):
+        output = recommender.recommend_hero_skills(
+            "isra",
+            current_skills=({"skill": "necromancy", "level": "advanced"},),
+            metadata=self.metadata,
+            rules=self.rules,
+        )
+        by_skill = {entry.skill_id: entry for entry in output.top_next}
+
+        self.assertEqual(by_skill["earthMagic"].target_level, "basic")
+        self.assertEqual(
+            by_skill["earthMagic"].availability,
+            recommender.AVAILABILITY_AVAILABLE,
+        )
+        self.assertEqual(by_skill["logistics"].target_level, "basic")
+        self.assertEqual(
+            by_skill["logistics"].availability,
+            recommender.AVAILABILITY_AVAILABLE,
+        )
+
+    def test_full_slots_mark_new_skills_unavailable_but_keep_upgrades_available(self):
+        output = recommender.recommend_hero_skills(
+            "isra",
+            current_skills=(
+                {"skill": "necromancy", "level": "advanced"},
+                {"skill": "logistics", "level": "basic"},
+                {"skill": "offence", "level": "basic"},
+                {"skill": "armorer", "level": "basic"},
+                {"skill": "airMagic", "level": "basic"},
+                {"skill": "wisdom", "level": "basic"},
+                {"skill": "tactics", "level": "basic"},
+                {"skill": "intelligence", "level": "basic"},
+            ),
+            metadata=self.metadata,
+            rules=self.rules,
+        )
+        by_skill = {entry.skill_id: entry for entry in output.top_next}
+        avoid_by_skill = {entry.skill_id: entry for entry in output.avoid}
+
+        self.assertEqual(
+            by_skill["necromancy"].availability,
+            recommender.AVAILABILITY_AVAILABLE,
+        )
+        self.assertEqual(by_skill["necromancy"].target_level, "expert")
+        self.assertEqual(
+            by_skill["earthMagic"].availability,
+            recommender.AVAILABILITY_UNAVAILABLE,
+        )
+        self.assertIn("no_open_skill_slot", by_skill["earthMagic"].reason_codes)
+        self.assertEqual(
+            avoid_by_skill["earthMagic"].availability,
+            recommender.AVAILABILITY_UNAVAILABLE,
+        )
+
+    def test_existing_expert_skill_is_not_recommended_as_upgrade(self):
+        output = recommender.recommend_hero_skills(
+            "isra",
+            current_skills=({"skill": "necromancy", "level": "expert"},),
+            metadata=self.metadata,
+            rules=self.rules,
+        )
+
+        self.assertNotIn(
+            "necromancy",
+            [entry.skill_id for entry in output.top_next],
+        )
+
+    def test_recommendation_sorting_uses_skill_id_as_deterministic_tie_breaker(self):
+        raw_rules = deepcopy(self.raw_rules)
+        for skill_id in ("airMagic", "earthMagic"):
+            raw_rules["global"]["main"]["skills"][skill_id]["score"] = 80
+            raw_rules["global"]["main"]["skills"][skill_id][
+                "upgrade_priority"
+            ] = 5
+        rules = recommender.validate_recommendation_rules(
+            raw_rules,
+            metadata=self.metadata,
+        )
+
+        output = recommender.recommend_hero_skills(
+            "isra",
+            metadata=self.metadata,
+            rules=rules,
+        )
+        tied_skills = [
+            entry.skill_id
+            for entry in output.top_next
+            if entry.skill_id in ("airMagic", "earthMagic")
+        ]
+
+        self.assertEqual(tied_skills, ["airMagic", "earthMagic"])
+
+    def test_recommendation_sorting_uses_upgrade_priority_before_skill_id(self):
+        raw_rules = deepcopy(self.raw_rules)
+        raw_rules["global"]["main"]["skills"]["airMagic"]["score"] = 80
+        raw_rules["global"]["main"]["skills"]["airMagic"][
+            "upgrade_priority"
+        ] = 1
+        raw_rules["global"]["main"]["skills"]["earthMagic"]["score"] = 80
+        raw_rules["global"]["main"]["skills"]["earthMagic"][
+            "upgrade_priority"
+        ] = 9
+        rules = recommender.validate_recommendation_rules(
+            raw_rules,
+            metadata=self.metadata,
+        )
+
+        output = recommender.recommend_hero_skills(
+            "isra",
+            metadata=self.metadata,
+            rules=rules,
+        )
+        tied_skills = [
+            entry.skill_id
+            for entry in output.top_next
+            if entry.skill_id in ("airMagic", "earthMagic")
+        ]
+
+        self.assertEqual(tied_skills, ["earthMagic", "airMagic"])
+
+    def test_recommendation_limits_are_optional_non_negative_integers(self):
+        output = recommender.recommend_hero_skills(
+            "isra",
+            metadata=self.metadata,
+            rules=self.rules,
+            top_limit=2,
+            avoid_limit=1,
+        )
+
+        self.assertEqual(len(output.top_next), 2)
+        self.assertLessEqual(len(output.avoid), 1)
+
+        for kwargs in (
+            {"top_limit": -1},
+            {"top_limit": True},
+            {"avoid_limit": -1},
+            {"avoid_limit": 1.5},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(recommender.HeroSkillRecommendationError):
+                    recommender.recommend_hero_skills(
+                        "isra",
+                        metadata=self.metadata,
+                        rules=self.rules,
+                        **kwargs,
+                    )
+
+    def test_recommendation_rejects_unknown_current_skill_id(self):
+        with self.assertRaises(recommender.HeroSkillRecommendationError):
+            recommender.recommend_hero_skills(
+                "isra",
+                current_skills=({"skill": "unknownSkill", "level": "basic"},),
+                metadata=self.metadata,
+                rules=self.rules,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

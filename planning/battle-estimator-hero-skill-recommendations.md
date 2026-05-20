@@ -276,24 +276,37 @@ review, `reason_codes` now rejects JSON objects/null/scalars and rules
 
 ## Task 4: Implement Core Recommendation Scoring
 
+**Status:** done
+
 **Description:** Implement score resolution by layering global, faction, class,
 specialty, and hero-specific rules. Generate recommended next legal skill
 offers and low-priority/avoid entries from current skill state.
 
 **Acceptance criteria:**
-- [ ] Existing skills can be recommended only as legal upgrades.
-- [ ] New skills are recommended only when the hero has fewer than 8 distinct
+- [x] Existing skills can be recommended only as legal upgrades.
+- [x] New skills are recommended only when the hero has fewer than 8 distinct
       secondary skills.
-- [ ] Full 8-skill state marks new skills as unavailable.
-- [ ] Sorting is deterministic by score, tier, skill priority, and skill ID.
-- [ ] Output includes concise reason codes explaining each recommendation.
+- [x] Full 8-skill state marks new skills as unavailable.
+- [x] Sorting is deterministic by score, tier, skill priority, and skill ID.
+- [x] Output includes concise reason codes explaining each recommendation.
 
 **Verification:**
-- [ ] Add tests for Isra's `Advanced Necromancy -> Expert Necromancy` priority.
-- [ ] Add tests for new-skill recommendations with open slots.
-- [ ] Add tests for full-slot behavior.
-- [ ] Add tests for deterministic tie ordering.
-- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+- [x] Add tests for Isra's `Advanced Necromancy -> Expert Necromancy` priority.
+- [x] Add tests for new-skill recommendations with open slots.
+- [x] Add tests for full-slot behavior.
+- [x] Add tests for deterministic tie ordering.
+- [x] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Completion notes:** Added `recommend_hero_skills` core scoring that resolves
+layered global, faction, class, specialty, and hero rules into ranked
+`RecommendationOutput` entries. Existing skills are emitted only as legal next
+level upgrades, expert skills are omitted, new skills target Basic, and full
+8-slot builds keep new candidates visible as unavailable with
+`no_open_skill_slot` while existing upgrades remain available. Sorting is
+deterministic by score, tier, upgrade priority, skill ID, and target level, and
+`avoid` uses the same order for D-tier or unavailable entries. Plan and code
+were reviewed by subagents; after code review, a regression test was added for
+upgrade-priority ordering. Required tests passed with 42 focused cases.
 
 **Dependencies:** Task 3
 

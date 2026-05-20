@@ -203,6 +203,67 @@ def derive_tier(
     return "D"
 
 
+def recommend_hero_skills(
+    hero_key: str,
+    role: Optional[str] = None,
+    current_skills: Sequence[Any] = (),
+    metadata: Optional["VcmiHeroSkillMetadata"] = None,
+    rules: Optional["RecommendationRules"] = None,
+    top_limit: Optional[int] = None,
+    avoid_limit: Optional[int] = None,
+) -> "RecommendationOutput":
+    """Rank next secondary-skill candidates for a hero.
+
+    ``top_next`` contains deterministic ranked candidates. Candidates that are
+    blocked by a full 8-skill build are kept with unavailable availability so
+    callers can explain why a high-value new skill cannot be taken.
+    """
+    metadata = metadata or load_vcmi_hero_skill_metadata()
+    rules = rules or load_recommendation_rules(metadata=metadata)
+    hero_key = _normalize_non_empty_string(hero_key, "hero_key")
+    if hero_key not in metadata.heroes:
+        raise HeroSkillRecommendationError(f"unknown hero key: {hero_key}")
+    hero = metadata.heroes[hero_key]
+    role = _normalize_non_empty_string(role or rules.default_role, "role")
+    current_skills = validate_current_skills(current_skills)
+    _validate_known_current_skills(current_skills, metadata)
+    top_limit = _normalize_optional_limit(top_limit, "top_limit")
+    avoid_limit = _normalize_optional_limit(avoid_limit, "avoid_limit")
+
+    skill_rules = _effective_skill_rules_for_hero(rules, hero, role)
+    current_by_skill = {skill.skill_id: skill for skill in current_skills}
+    has_open_slot = len(current_by_skill) < MAX_SECONDARY_SKILLS
+    candidates = []
+    for skill_id, skill_rule in skill_rules.items():
+        current_skill = current_by_skill.get(skill_id)
+        entry = _entry_for_skill_rule(
+            skill_rule,
+            current_skill,
+            has_open_slot,
+            metadata,
+        )
+        if entry is not None:
+            candidates.append((entry, skill_rule.upgrade_priority))
+
+    entries = tuple(
+        entry
+        for entry, _priority in sorted(candidates, key=_candidate_sort_key)
+    )
+    avoid = tuple(
+        entry
+        for entry in entries
+        if entry.availability == AVAILABILITY_UNAVAILABLE or entry.tier == "D"
+    )
+
+    return RecommendationOutput(
+        hero_key=hero.key,
+        role=role,
+        current_skills=current_skills,
+        top_next=_apply_limit(entries, top_limit),
+        avoid=_apply_limit(avoid, avoid_limit),
+    )
+
+
 def validate_current_skills(values: Iterable[Any]) -> Tuple["CurrentSkill", ...]:
     """Normalize current skill slots and enforce distinct skill IDs."""
     skills = tuple(_current_skill_from_input(value) for value in values)
@@ -849,6 +910,17 @@ def _validate_rules_coverage(
         )
 
 
+def _validate_known_current_skills(
+    current_skills: Sequence[CurrentSkill],
+    metadata: VcmiHeroSkillMetadata,
+) -> None:
+    for skill in current_skills:
+        if skill.skill_id not in metadata.skills:
+            raise HeroSkillRecommendationError(
+                f"unknown current skill ID: {skill.skill_id}"
+            )
+
+
 def _effective_skill_rules_for_hero(
     rules: RecommendationRules,
     hero: HeroMetadata,
@@ -864,6 +936,84 @@ def _effective_skill_rules_for_hero(
     ):
         effective.update(layer.get(role, {}))
     return effective
+
+
+def _entry_for_skill_rule(
+    skill_rule: SkillRule,
+    current_skill: Optional[CurrentSkill],
+    has_open_slot: bool,
+    metadata: VcmiHeroSkillMetadata,
+) -> Optional[RecommendationEntry]:
+    if current_skill is not None:
+        target_level = _next_skill_level(current_skill.level)
+        if target_level is None:
+            return None
+        availability = AVAILABILITY_AVAILABLE
+        reason_codes = skill_rule.reason_codes
+    else:
+        target_level = "basic"
+        availability = (
+            AVAILABILITY_AVAILABLE
+            if has_open_slot
+            else AVAILABILITY_UNAVAILABLE
+        )
+        reason_codes = skill_rule.reason_codes
+        if availability == AVAILABILITY_UNAVAILABLE:
+            reason_codes = (*reason_codes, "no_open_skill_slot")
+
+    skill_metadata = metadata.skills[skill_rule.skill_id]
+    return RecommendationEntry(
+        skill_id=skill_rule.skill_id,
+        score=skill_rule.score,
+        tier=skill_rule.tier,
+        availability=availability,
+        reason_codes=reason_codes,
+        display_name=skill_metadata.display_name,
+        target_level=target_level,
+    )
+
+
+def _next_skill_level(level: str) -> Optional[str]:
+    level = normalize_skill_level(level)
+    if level == "basic":
+        return "advanced"
+    if level == "advanced":
+        return "expert"
+    return None
+
+
+def _candidate_sort_key(candidate: Tuple[RecommendationEntry, float]) -> tuple:
+    entry, upgrade_priority = candidate
+    return (
+        -entry.score,
+        VALID_TIERS.index(entry.tier),
+        -upgrade_priority,
+        entry.skill_id,
+        entry.target_level or "",
+    )
+
+
+def _apply_limit(
+    entries: Sequence[RecommendationEntry],
+    limit: Optional[int],
+) -> Tuple[RecommendationEntry, ...]:
+    entries = tuple(entries)
+    if limit is None:
+        return entries
+    return entries[:limit]
+
+
+def _normalize_optional_limit(
+    value: Optional[Any],
+    field_name: str,
+) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HeroSkillRecommendationError(f"{field_name} must be an integer")
+    if value < 0:
+        raise HeroSkillRecommendationError(f"{field_name} cannot be negative")
+    return value
 
 
 def _metadata_factions(metadata: VcmiHeroSkillMetadata) -> Tuple[str, ...]:
