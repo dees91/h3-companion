@@ -1,0 +1,501 @@
+# Implementation Plan: Hero Skill Recommendations
+
+## Overview
+
+Add a separate hero secondary-skill recommendation module for the battle
+estimator GUI. For the selected hero, the tool should show the current
+secondary skills, recommend the best next skills, highlight low-priority traps,
+and compare concrete level-up offers such as `Basic Earth Magic` vs
+`Expert Necromancy`. The MVP is intentionally limited to secondary skills:
+no artifacts, spellbook parsing, banned-skill rules, map-context heuristics, or
+automatic current-skill extraction from save files.
+
+## Product Decisions
+
+- Recommendations are possible with the current codebase, but the current save
+  parser does not yet expose current secondary skills. MVP uses manual skill
+  state in the GUI, prefilled from VCMI hero starting skills.
+- Recommendation rules are custom battle-estimator rules, not generated from
+  VCMI alone. VCMI remains the factual source for hero identity, class,
+  faction, specialty, starting skills, and skill metadata.
+- Scope is standard faction heroes only: 144 heroes from `castle`, `conflux`,
+  `dungeon`, `fortress`, `inferno`, `necropolis`, `rampart`, `stronghold`, and
+  `tower`. Exclude `special.json`, `portraits.json`, and
+  `portraitsChronicles.json`.
+- Full standard-hero rule coverage is required before GUI integration.
+- Recommendations target the user's main use case: multiplayer 2v2 tempo play,
+  map clearing, movement, combat value, and main-hero scaling.
+- MVP has one default role: `main`. The rules format should leave room for
+  future `scout`, `support`, and `economy` roles, but the GUI does not need role
+  switching in MVP.
+- Skill scoring uses numeric scores for deterministic ordering and readable
+  tiers for display.
+- Skill-vs-skill compares concrete offered target levels, not just skill names.
+- If a hero already has 8 different secondary skills, new skills are marked
+  unavailable and only existing-skill upgrades can be recommended.
+- Banned skills, item recommendations, and automatic save parsing of current
+  skills are out of scope for MVP.
+- The GUI should expose a `Skills` action for the currently selected hero and
+  open a scrollable dialog instead of squeezing the workflow into the side
+  panel.
+
+## Data Sources
+
+- `config/heroes/{castle,conflux,dungeon,fortress,inferno,necropolis,rampart,stronghold,tower}.json`
+  for standard hero metadata and starting skills.
+- `config/heroClasses.json` for class-to-faction and might/magic affinity.
+- `config/skills.json` for skill IDs, display metadata, effects, and generic
+  gain chances. This file contains JSON-style comments, so the loader needs
+  JSONC support or a controlled comment-stripping parser.
+- `planning/hero-isra-skills-and-tips.md` as an initial quality reference for
+  Isra/Necropolis rules.
+
+## Proposed Rule File
+
+Recommended path:
+
+- `config/battle_estimator/hero_skill_recommendations.json`
+
+Recommended shape:
+
+```json
+{
+  "version": 1,
+  "scope": {
+    "hero_files": [
+      "castle",
+      "conflux",
+      "dungeon",
+      "fortress",
+      "inferno",
+      "necropolis",
+      "rampart",
+      "stronghold",
+      "tower"
+    ],
+    "excluded_files": ["special", "portraits", "portraitsChronicles"]
+  },
+  "default_role": "main",
+  "tiers": {
+    "S": { "min_score": 90 },
+    "A": { "min_score": 75 },
+    "B": { "min_score": 55 },
+    "C": { "min_score": 35 },
+    "D": { "min_score": 0 }
+  },
+  "global": {
+    "main": {
+      "skills": {
+        "earthMagic": {
+          "score": 95,
+          "reasons": ["mass_slow", "town_portal", "animate_dead"]
+        }
+      }
+    }
+  },
+  "factions": {},
+  "classes": {},
+  "specialties": {},
+  "heroes": {
+    "isra": {
+      "role": "main",
+      "skills": {
+        "necromancy": {
+          "score": 98,
+          "upgrade_priority": 12,
+          "reasons": ["hero_specialty", "snowball"]
+        }
+      }
+    }
+  }
+}
+```
+
+The exact schema can change during Task 1, but it must support global,
+faction, class, specialty, and hero-specific layers without duplicating full
+builds for every hero.
+
+## Recommendation Inputs And Outputs
+
+### Input
+
+```json
+{
+  "hero_key": "isra",
+  "role": "main",
+  "current_skills": [
+    { "skill": "necromancy", "level": "advanced" },
+    { "skill": "earthMagic", "level": "basic" }
+  ],
+  "offers": [
+    { "skill": "necromancy", "level": "expert" },
+    { "skill": "offence", "level": "basic" }
+  ]
+}
+```
+
+### Output
+
+```json
+{
+  "hero_key": "isra",
+  "role": "main",
+  "current_skills": [],
+  "top_next": [],
+  "avoid": [],
+  "offer_comparison": {
+    "winner": "necromancy:expert",
+    "offers": []
+  }
+}
+```
+
+Output entries should include skill ID, display name, offered target level,
+score, tier, availability, and short reason codes.
+
+## Task List
+
+## Task 1: Define Recommendation Data Contracts
+
+**Description:** Create the in-code data contracts for skill IDs, skill levels,
+current skill slots, recommendation entries, offer comparison inputs, and
+recommendation outputs. Keep these contracts independent from the GUI server so
+the module can be tested directly.
+
+**Acceptance criteria:**
+- [ ] Skill levels are normalized to `basic`, `advanced`, and `expert`.
+- [ ] Current skills reject duplicate skill IDs.
+- [ ] Current skills enforce at most 8 distinct secondary skills.
+- [ ] Offer inputs include both skill ID and target level.
+- [ ] Recommendation entries include score, tier, availability, and reason
+      codes.
+
+**Verification:**
+- [ ] Add focused unit tests for valid and invalid contract inputs.
+- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Dependencies:** None
+
+**Files likely touched:**
+- `tools/hero_skill_recommender.py`
+- `tests/test_hero_skill_recommender.py`
+
+**Estimated scope:** Small
+
+## Task 2: Add VCMI Hero And Skill Metadata Loader
+
+**Description:** Add a small metadata loader that reads standard hero files,
+hero classes, and skill metadata from VCMI config. It should produce normalized
+hero records keyed by hero ID and expose starting secondary skills for each
+standard hero.
+
+**Acceptance criteria:**
+- [ ] Loader includes exactly the nine standard faction hero files.
+- [ ] Loader excludes `special.json`, `portraits.json`, and
+      `portraitsChronicles.json`.
+- [ ] Loader finds 144 standard heroes.
+- [ ] Each loaded hero has key, display name, class, faction, affinity,
+      specialty summary, and starting skills.
+- [ ] Loader can parse `config/skills.json` despite JSON-style comments.
+
+**Verification:**
+- [ ] Add metadata tests for hero count, excluded files, Isra starting skills,
+      class/faction lookup, and skill metadata parsing.
+- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Dependencies:** Task 1
+
+**Files likely touched:**
+- `tools/hero_skill_recommender.py`
+- `tests/test_hero_skill_recommender.py`
+
+**Estimated scope:** Medium
+
+## Task 3: Define And Validate Recommendation Rule Schema
+
+**Description:** Add the custom recommendation rules file and validation logic.
+The schema should support global, faction, class, specialty, and hero layers,
+numeric scores, tier derivation, upgrade priority modifiers, and reason codes.
+
+**Acceptance criteria:**
+- [ ] Rules file exists at
+      `config/battle_estimator/hero_skill_recommendations.json`.
+- [ ] Validation rejects unknown skill IDs.
+- [ ] Validation rejects unknown hero, class, and faction keys.
+- [ ] Validation rejects out-of-range scores.
+- [ ] Validation confirms every reason code is a short stable identifier.
+- [ ] Validation confirms all standard heroes are covered by fallback rules,
+      even before hero-specific overrides are complete.
+
+**Verification:**
+- [ ] Add schema validation tests for valid rules and representative invalid
+      rules.
+- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Dependencies:** Task 2
+
+**Files likely touched:**
+- `config/battle_estimator/hero_skill_recommendations.json`
+- `tools/hero_skill_recommender.py`
+- `tests/test_hero_skill_recommender.py`
+
+**Estimated scope:** Medium
+
+## Task 4: Implement Core Recommendation Scoring
+
+**Description:** Implement score resolution by layering global, faction, class,
+specialty, and hero-specific rules. Generate recommended next legal skill
+offers and low-priority/avoid entries from current skill state.
+
+**Acceptance criteria:**
+- [ ] Existing skills can be recommended only as legal upgrades.
+- [ ] New skills are recommended only when the hero has fewer than 8 distinct
+      secondary skills.
+- [ ] Full 8-skill state marks new skills as unavailable.
+- [ ] Sorting is deterministic by score, tier, skill priority, and skill ID.
+- [ ] Output includes concise reason codes explaining each recommendation.
+
+**Verification:**
+- [ ] Add tests for Isra's `Advanced Necromancy -> Expert Necromancy` priority.
+- [ ] Add tests for new-skill recommendations with open slots.
+- [ ] Add tests for full-slot behavior.
+- [ ] Add tests for deterministic tie ordering.
+- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Dependencies:** Task 3
+
+**Files likely touched:**
+- `tools/hero_skill_recommender.py`
+- `tests/test_hero_skill_recommender.py`
+
+**Estimated scope:** Medium
+
+## Task 5: Implement Skill-Vs-Skill Comparison
+
+**Description:** Add a comparison function that evaluates concrete level-up
+offers using the same scoring engine as top-next recommendations.
+
+**Acceptance criteria:**
+- [ ] Comparison accepts two or more concrete offers.
+- [ ] Offers include target levels, such as `basic` or `expert`.
+- [ ] Illegal offers are marked with availability reasons.
+- [ ] Winner selection is deterministic.
+- [ ] The result includes a short explanation for why the winner wins.
+
+**Verification:**
+- [ ] Add tests for upgrade vs new skill.
+- [ ] Add tests for two legal new skills.
+- [ ] Add tests for illegal new skill when slots are full.
+- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Dependencies:** Task 4
+
+**Files likely touched:**
+- `tools/hero_skill_recommender.py`
+- `tests/test_hero_skill_recommender.py`
+
+**Estimated scope:** Small
+
+## Task 6: Prepare Full Standard-Hero Rule Coverage
+
+**Description:** Fill the rules file so every standard hero has useful
+recommendations under the `main` role. This should be done after the validator
+exists, and can later be delegated to xhigh-effort subagents by faction or hero
+class when implementation starts.
+
+**Acceptance criteria:**
+- [ ] All 144 standard heroes are covered.
+- [ ] Each standard faction has faction/class-level guidance.
+- [ ] Important specialists have hero-specific overrides where fallback rules
+      would be too generic.
+- [ ] Rules reflect tempo-oriented multiplayer main-hero play.
+- [ ] Special/campaign heroes remain excluded.
+- [ ] No rule entry copies a full build unnecessarily when a fallback layer is
+      enough.
+
+**Verification:**
+- [ ] Add or run a coverage test that lists any standard hero without effective
+      recommendations.
+- [ ] Manually review at least one hero from each faction.
+- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Dependencies:** Task 5
+
+**Files likely touched:**
+- `config/battle_estimator/hero_skill_recommendations.json`
+- `tests/test_hero_skill_recommender.py`
+
+**Estimated scope:** Medium
+
+## Task 7: Persist Manual Current-Skill State
+
+**Description:** Extend user config with per-map, per-hero manually edited
+secondary-skill state. When no manual state exists, selected heroes should
+prefill from VCMI starting skills.
+
+**Acceptance criteria:**
+- [ ] Config stores skill state outside the repo.
+- [ ] State is keyed by existing map key and stable hero ID.
+- [ ] Missing state falls back to VCMI starting skills.
+- [ ] Reset removes manual state for that hero and returns to starting skills.
+- [ ] Invalid stored states are ignored or cleaned without breaking GUI load.
+
+**Verification:**
+- [ ] Add config load/save tests for storing, updating, resetting, and ignoring
+      invalid skill states.
+- [ ] Run `python3 -m unittest tests.test_h3_save_parser`.
+
+**Dependencies:** Task 6
+
+**Files likely touched:**
+- `tools/h3_save_parser.py`
+- `tests/test_h3_save_parser.py`
+
+**Estimated scope:** Medium
+
+## Task 8: Add Hero Skill Recommendation API
+
+**Description:** Add GUI backend endpoints that return the selected hero's
+skill metadata, current editable state, top recommendations, avoid entries, and
+skill-vs-skill comparison results.
+
+**Acceptance criteria:**
+- [ ] API rejects missing or invalid hero IDs.
+- [ ] API returns starting skills when no manual state exists.
+- [ ] API persists edited current-skill slots.
+- [ ] API returns top recommendations and avoid entries.
+- [ ] API compares concrete level-up offers.
+- [ ] API responses include enough metadata for the GUI dialog without
+      requiring client-side rule evaluation.
+
+**Verification:**
+- [ ] Add API tests for load, save, reset, recommendations, comparison, invalid
+      hero, and invalid skill state.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 7
+
+**Files likely touched:**
+- `tools/battle_estimator_gui.py`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 9: Add Skills Dialog UI
+
+**Description:** Add a `Skills` action for the currently selected hero that
+opens a scrollable dialog. The dialog should show hero metadata, the 8-slot
+skill editor, top recommendations, avoid entries, and a skill-vs-skill compare
+control.
+
+**Acceptance criteria:**
+- [ ] `Skills` action is disabled or clearly unavailable without a selected
+      hero.
+- [ ] Dialog opens for the currently selected hero.
+- [ ] Current skill slots can be edited with skill and level selects.
+- [ ] Duplicate skills and more than 8 skills are prevented.
+- [ ] Reset restores VCMI starting skills.
+- [ ] Top recommendations and avoid entries refresh after edits.
+- [ ] Skill-vs-skill comparison accepts two concrete offers and shows a winner.
+
+**Verification:**
+- [ ] Add GUI tests for dialog open/close, slot editing, reset, recommendation
+      refresh, and offer comparison.
+- [ ] Manual GUI check on Isra and at least one non-Necropolis hero.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 8
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/index.html`
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 10: End-To-End Skill Recommendation Verification
+
+**Description:** Verify the full workflow with real autosaves: select a hero,
+open the skills dialog, edit current skills, compare level-up offers, refresh
+the save, and confirm the manual skill state remains stable for the same
+map/hero.
+
+**Acceptance criteria:**
+- [ ] Full `python3 -m unittest` passes.
+- [ ] GUI loads a current save and opens recommendations for selected hero.
+- [ ] Manual skill edits persist across refresh.
+- [ ] Reset returns to starting skills.
+- [ ] Skill-vs-skill gives a deterministic result for concrete offers.
+- [ ] Standard hero coverage test passes for all 144 scoped heroes.
+
+**Verification:**
+- [ ] Run `python3 -m unittest`.
+- [ ] Manual GUI check with a current Diamond save.
+
+**Dependencies:** Tasks 1, 2, 3, 4, 5, 6, 7, 8, 9
+
+**Files likely touched:**
+- No production files expected unless verification finds issues.
+
+**Estimated scope:** Small
+
+## Checkpoints
+
+### Checkpoint: Recommendation Core
+
+After Tasks 1-5:
+
+- [ ] Metadata loading works for standard heroes and skills.
+- [ ] Rule schema validation works.
+- [ ] Recommender can rank next skills and compare concrete offers.
+- [ ] `python3 -m unittest tests.test_hero_skill_recommender` passes.
+
+### Checkpoint: Full Rules
+
+After Task 6:
+
+- [ ] All 144 standard heroes have effective `main` recommendations.
+- [ ] Faction/class/specialty/hero layers validate cleanly.
+- [ ] At least one hero from each faction has been manually reviewed.
+
+### Checkpoint: Persistence And API
+
+After Tasks 7-8:
+
+- [ ] Manual current-skill state persists per map and hero.
+- [ ] API can load, save, reset, recommend, and compare.
+- [ ] `python3 -m unittest tests.test_h3_save_parser tests.test_battle_estimator_gui`
+      passes.
+
+### Checkpoint: Complete
+
+After Tasks 9-10:
+
+- [ ] Skills dialog works for selected hero.
+- [ ] Top recommendations, avoid entries, and skill-vs-skill are usable in the
+      GUI.
+- [ ] Full `python3 -m unittest` passes.
+- [ ] Manual GUI check confirms the workflow is useful during level-up
+      decisions.
+
+## Risks And Mitigations
+
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+| Rule quality is inconsistent across 144 heroes. | High | Validate coverage mechanically and require manual review by faction before GUI integration. |
+| Rules become a duplicated build list for every hero. | Medium | Use layered global/faction/class/specialty rules and reserve hero overrides for meaningful differences. |
+| Recommendations imply exact game-state awareness that MVP lacks. | Medium | Label current skills as manually maintained and do not claim artifact, spellbook, map, or save-derived context. |
+| Skill IDs drift between VCMI config and custom rules. | Medium | Validate all custom rule skill IDs against loaded VCMI skill metadata. |
+| JSONC parsing of VCMI config is brittle. | Medium | Keep a narrow parser with tests against `config/skills.json`; keep custom rule files strict JSON. |
+| GUI dialog becomes too dense. | Medium | Use a scrollable dialog with compact sections and keep long strategy prose out of MVP. |
+| Manual skill state leaks between games. | High | Key state by map key and stable hero ID, with reset to VCMI starting skills. |
+
+## Future Work
+
+- Parse current secondary skills automatically from save files.
+- Add item/artifact and spellbook-aware advice.
+- Add banned-skill/template rule support.
+- Add role switching for scout/support/economy heroes.
+- Add context-aware recommendations using map terrain, water density, and
+  available towns or spells.
