@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import math
 import re
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
 
@@ -22,7 +24,25 @@ VALID_AVAILABILITY = (
 
 DEFAULT_ROLE = "main"
 
+STANDARD_HERO_FILES = (
+    "castle.json",
+    "conflux.json",
+    "dungeon.json",
+    "fortress.json",
+    "inferno.json",
+    "necropolis.json",
+    "rampart.json",
+    "stronghold.json",
+    "tower.json",
+)
+EXCLUDED_HERO_FILES = (
+    "portraits.json",
+    "portraitsChronicles.json",
+    "special.json",
+)
+
 _REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+_CAMEL_WORD_RE = re.compile(r"(?<!^)(?=[A-Z])")
 
 
 class HeroSkillRecommendationError(ValueError):
@@ -40,6 +60,46 @@ def normalize_skill_level(value: Any) -> str:
             f"skill level must be one of: {allowed}"
         )
     return normalized
+
+
+def load_jsonc(path: Path) -> Any:
+    """Load JSON or JSONC with comments stripped outside string literals."""
+    path = Path(path)
+    return json.loads(_strip_json_comments(path.read_text(encoding="utf-8")))
+
+
+def load_vcmi_hero_skill_metadata(
+    config_root: Optional[Path] = None,
+) -> "VcmiHeroSkillMetadata":
+    """Load standard hero, class, and skill metadata from VCMI config."""
+    root = _default_config_root() if config_root is None else Path(config_root)
+    classes = _load_hero_classes(root / "heroClasses.json")
+    skills = _load_skill_metadata(root / "skills.json")
+
+    heroes = {}
+    for file_name in STANDARD_HERO_FILES:
+        path = root / "heroes" / file_name
+        raw_heroes = load_jsonc(path)
+        for hero_key in sorted(raw_heroes):
+            hero = _hero_metadata_from_entry(
+                hero_key,
+                raw_heroes[hero_key],
+                classes,
+                skills,
+            )
+            if hero.key in heroes:
+                raise HeroSkillRecommendationError(
+                    f"duplicate hero key: {hero.key}"
+                )
+            heroes[hero.key] = hero
+
+    return VcmiHeroSkillMetadata(
+        heroes=heroes,
+        hero_classes=classes,
+        skills=skills,
+        loaded_hero_files=STANDARD_HERO_FILES,
+        excluded_hero_files=EXCLUDED_HERO_FILES,
+    )
 
 
 def validate_current_skills(values: Iterable[Any]) -> Tuple["CurrentSkill", ...]:
@@ -82,6 +142,166 @@ class CurrentSkill:
     @property
     def skill(self) -> str:
         return self.skill_id
+
+
+@dataclass(frozen=True)
+class SkillMetadata:
+    """VCMI secondary-skill metadata used by recommendation rules."""
+
+    key: str
+    display_name: str
+    index: Optional[int]
+    specialty_tags: Tuple[str, ...]
+    level_blocks: Mapping[str, Mapping[str, Any]]
+    gain_chance: Optional[Mapping[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "key",
+            _normalize_non_empty_string(self.key, "key"),
+        )
+        object.__setattr__(
+            self,
+            "display_name",
+            _normalize_non_empty_string(self.display_name, "display_name"),
+        )
+        if self.index is not None:
+            object.__setattr__(self, "index", _normalize_non_bool_int(
+                self.index,
+                "index",
+            ))
+        object.__setattr__(
+            self,
+            "specialty_tags",
+            tuple(_normalize_non_empty_string(tag, "specialty_tag")
+                  for tag in self.specialty_tags),
+        )
+        level_blocks = {}
+        for level in SKILL_LEVELS:
+            block = self.level_blocks.get(level, {})
+            if not isinstance(block, Mapping):
+                raise HeroSkillRecommendationError(
+                    f"{self.key}.{level} metadata must be a mapping"
+                )
+            level_blocks[level] = dict(block)
+        object.__setattr__(self, "level_blocks", level_blocks)
+        if self.gain_chance is not None and not isinstance(
+            self.gain_chance,
+            Mapping,
+        ):
+            raise HeroSkillRecommendationError(
+                f"{self.key}.gain_chance must be a mapping"
+            )
+
+
+@dataclass(frozen=True)
+class HeroClassMetadata:
+    """VCMI hero class metadata relevant to recommendations."""
+
+    key: str
+    faction: str
+    affinity: str
+    index: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "key",
+            _normalize_non_empty_string(self.key, "key"),
+        )
+        object.__setattr__(
+            self,
+            "faction",
+            _normalize_non_empty_string(self.faction, "faction"),
+        )
+        object.__setattr__(
+            self,
+            "affinity",
+            _normalize_non_empty_string(self.affinity, "affinity"),
+        )
+        if self.index is not None:
+            object.__setattr__(self, "index", _normalize_non_bool_int(
+                self.index,
+                "index",
+            ))
+
+
+@dataclass(frozen=True)
+class HeroMetadata:
+    """Standard VCMI hero metadata exposed to the recommender."""
+
+    key: str
+    display_name: str
+    class_id: str
+    faction: str
+    affinity: str
+    specialty_summary: str
+    starting_skills: Tuple[CurrentSkill, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "key",
+            _normalize_non_empty_string(self.key, "key"),
+        )
+        object.__setattr__(
+            self,
+            "display_name",
+            _normalize_non_empty_string(self.display_name, "display_name"),
+        )
+        object.__setattr__(
+            self,
+            "class_id",
+            _normalize_non_empty_string(self.class_id, "class_id"),
+        )
+        object.__setattr__(
+            self,
+            "faction",
+            _normalize_non_empty_string(self.faction, "faction"),
+        )
+        object.__setattr__(
+            self,
+            "affinity",
+            _normalize_non_empty_string(self.affinity, "affinity"),
+        )
+        object.__setattr__(
+            self,
+            "specialty_summary",
+            _normalize_non_empty_string(
+                self.specialty_summary,
+                "specialty_summary",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "starting_skills",
+            validate_current_skills(self.starting_skills),
+        )
+
+
+@dataclass(frozen=True)
+class VcmiHeroSkillMetadata:
+    """Loaded VCMI metadata bundle for hero-skill recommendations."""
+
+    heroes: Mapping[str, HeroMetadata]
+    hero_classes: Mapping[str, HeroClassMetadata]
+    skills: Mapping[str, SkillMetadata]
+    loaded_hero_files: Tuple[str, ...]
+    excluded_hero_files: Tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "heroes", dict(self.heroes))
+        object.__setattr__(self, "hero_classes", dict(self.hero_classes))
+        object.__setattr__(self, "skills", dict(self.skills))
+        object.__setattr__(self, "loaded_hero_files", tuple(
+            _normalize_non_empty_string(name, "loaded_hero_file")
+            for name in self.loaded_hero_files
+        ))
+        object.__setattr__(self, "excluded_hero_files", tuple(
+            _normalize_non_empty_string(name, "excluded_hero_file")
+            for name in self.excluded_hero_files
+        ))
 
 
 @dataclass(frozen=True)
@@ -285,6 +505,178 @@ def _current_skill_from_input(value: Any) -> CurrentSkill:
     )
 
 
+def _default_config_root() -> Path:
+    return Path(__file__).resolve().parents[1] / "config"
+
+
+def _strip_json_comments(text: str) -> str:
+    result = []
+    in_string = False
+    escaped = False
+    index = 0
+    length = len(text)
+
+    while index < length:
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < length else ""
+
+        if in_string:
+            result.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+
+        if char == '"':
+            in_string = True
+            result.append(char)
+            index += 1
+            continue
+
+        if char == "/" and next_char == "/":
+            index += 2
+            while index < length and text[index] not in "\r\n":
+                index += 1
+            continue
+
+        if char == "/" and next_char == "*":
+            result.append(" ")
+            index += 2
+            while index + 1 < length:
+                if text[index] == "*" and text[index + 1] == "/":
+                    index += 2
+                    break
+                if text[index] in "\r\n":
+                    result.append(text[index])
+                index += 1
+            continue
+
+        result.append(char)
+        index += 1
+
+    return "".join(result)
+
+
+def _load_hero_classes(path: Path) -> dict:
+    raw_classes = load_jsonc(path)
+    classes = {}
+    for class_key in sorted(raw_classes):
+        entry = raw_classes[class_key]
+        classes[class_key] = HeroClassMetadata(
+            key=class_key,
+            faction=_required_mapping_value(entry, "faction", class_key),
+            affinity=_required_mapping_value(entry, "affinity", class_key),
+            index=entry.get("index"),
+        )
+    return classes
+
+
+def _load_skill_metadata(path: Path) -> dict:
+    raw_skills = load_jsonc(path)
+    skills = {}
+    for skill_key in sorted(raw_skills):
+        entry = raw_skills[skill_key]
+        display_name = _nested_text_name(entry) or _display_name_from_key(
+            skill_key
+        )
+        skills[skill_key] = SkillMetadata(
+            key=skill_key,
+            display_name=display_name,
+            index=entry.get("index"),
+            specialty_tags=tuple(entry.get("specialty", ())),
+            level_blocks={
+                level: dict(entry.get(level, {}))
+                for level in SKILL_LEVELS
+            },
+            gain_chance=entry.get("gainChance"),
+        )
+    return skills
+
+
+def _hero_metadata_from_entry(
+    hero_key: str,
+    entry: Mapping[str, Any],
+    classes: Mapping[str, HeroClassMetadata],
+    skills: Mapping[str, SkillMetadata],
+) -> HeroMetadata:
+    class_id = _required_mapping_value(entry, "class", hero_key)
+    if class_id not in classes:
+        raise HeroSkillRecommendationError(
+            f"unknown hero class for {hero_key}: {class_id}"
+        )
+    hero_class = classes[class_id]
+
+    starting_skills = validate_current_skills(entry.get("skills", ()))
+    for skill in starting_skills:
+        if skill.skill_id not in skills:
+            raise HeroSkillRecommendationError(
+                f"{hero_key} has unknown starting skill: {skill.skill_id}"
+            )
+
+    return HeroMetadata(
+        key=hero_key,
+        display_name=_nested_text_name(entry) or _display_name_from_key(hero_key),
+        class_id=class_id,
+        faction=hero_class.faction,
+        affinity=hero_class.affinity,
+        specialty_summary=_specialty_summary(entry.get("specialty", {})),
+        starting_skills=starting_skills,
+    )
+
+
+def _required_mapping_value(
+    entry: Mapping[str, Any],
+    key: str,
+    context: str,
+) -> Any:
+    if key not in entry:
+        raise HeroSkillRecommendationError(
+            f"{context} is missing required field: {key}"
+        )
+    return entry[key]
+
+
+def _nested_text_name(entry: Mapping[str, Any]) -> Optional[str]:
+    texts = entry.get("texts")
+    if not isinstance(texts, Mapping):
+        return None
+    name = texts.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return None
+
+
+def _display_name_from_key(key: str) -> str:
+    words = _CAMEL_WORD_RE.sub(" ", key).replace("_", " ").replace("-", " ")
+    return " ".join(word.capitalize() for word in words.split())
+
+
+def _specialty_summary(value: Any) -> str:
+    if not isinstance(value, Mapping) or not value:
+        return "none"
+
+    parts = []
+    for key in sorted(value):
+        item = value[key]
+        if key == "bonuses" and isinstance(item, Mapping):
+            bonus_keys = ",".join(sorted(str(bonus_key) for bonus_key in item))
+            parts.append(f"bonuses:{bonus_keys}")
+        elif isinstance(item, (str, int, float, bool)) and not isinstance(
+            item,
+            bool,
+        ):
+            parts.append(f"{key}:{item}")
+        elif isinstance(item, str):
+            parts.append(f"{key}:{item}")
+        else:
+            parts.append(str(key))
+    return ";".join(parts)
+
+
 def _skill_offer_from_input(value: Any) -> SkillOffer:
     if isinstance(value, SkillOffer):
         return value
@@ -322,6 +714,12 @@ def _normalize_score(value: Any) -> float:
     if not math.isfinite(score) or score < 0 or score > 100:
         raise HeroSkillRecommendationError("score must be between 0 and 100")
     return score
+
+
+def _normalize_non_bool_int(value: Any, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HeroSkillRecommendationError(f"{field_name} must be an integer")
+    return value
 
 
 def _normalize_tier(value: Any) -> str:

@@ -194,24 +194,35 @@ passed with 15 focused cases.
 
 ## Task 2: Add VCMI Hero And Skill Metadata Loader
 
+**Status:** done
+
 **Description:** Add a small metadata loader that reads standard hero files,
 hero classes, and skill metadata from VCMI config. It should produce normalized
 hero records keyed by hero ID and expose starting secondary skills for each
 standard hero.
 
 **Acceptance criteria:**
-- [ ] Loader includes exactly the nine standard faction hero files.
-- [ ] Loader excludes `special.json`, `portraits.json`, and
+- [x] Loader includes exactly the nine standard faction hero files.
+- [x] Loader excludes `special.json`, `portraits.json`, and
       `portraitsChronicles.json`.
-- [ ] Loader finds 144 standard heroes.
-- [ ] Each loaded hero has key, display name, class, faction, affinity,
+- [x] Loader finds 144 standard heroes.
+- [x] Each loaded hero has key, display name, class, faction, affinity,
       specialty summary, and starting skills.
-- [ ] Loader can parse `config/skills.json` despite JSON-style comments.
+- [x] Loader can parse `config/skills.json` despite JSON-style comments.
 
 **Verification:**
-- [ ] Add metadata tests for hero count, excluded files, Isra starting skills,
+- [x] Add metadata tests for hero count, excluded files, Isra starting skills,
       class/faction lookup, and skill metadata parsing.
-- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+- [x] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Completion notes:** Added a VCMI metadata loader with exact standard hero-file
+scope, explicit excluded-file metadata, normalized hero/class/skill records,
+starting secondary skills, and JSONC parsing for commented config files. The
+loader resolves 144 standard heroes, preserves camelCase skill IDs, derives
+display-name fallbacks when config text is absent, and validates starting-skill
+IDs against loaded skill metadata. Plan and code were reviewed by subagents;
+after review, block-comment stripping was tightened so removed comments do not
+merge neighboring JSON tokens. Required tests passed with 22 focused cases.
 
 **Dependencies:** Task 1
 

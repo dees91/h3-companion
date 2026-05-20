@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import tempfile
 import unittest
+from pathlib import Path
 
 from tools import hero_skill_recommender as recommender
 
@@ -214,6 +216,112 @@ class HeroSkillRecommenderContractTests(unittest.TestCase):
                 hero_key="isra",
                 top_next=({"skill_id": "necromancy"},),
             )
+
+
+class VcmiHeroSkillMetadataLoaderTests(unittest.TestCase):
+    def test_load_jsonc_preserves_comment_markers_inside_strings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "sample.jsonc"
+            path.write_text(
+                """
+                {
+                  "url": "https://example.invalid/path//kept",
+                  "quote": "escaped \\" // kept",
+                  // dropped line comment
+                  "value": 3,
+                  /* dropped block
+                     comment */
+                  "tail": true
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            data = recommender.load_jsonc(path)
+
+        self.assertEqual(data["url"], "https://example.invalid/path//kept")
+        self.assertEqual(data["quote"], 'escaped " // kept')
+        self.assertEqual(data["value"], 3)
+        self.assertTrue(data["tail"])
+
+    def test_load_jsonc_does_not_merge_tokens_around_block_comments(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "sample.jsonc"
+            path.write_text("[1/* removed */2]", encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                recommender.load_jsonc(path)
+
+    def test_loader_uses_exact_standard_hero_scope(self):
+        metadata = recommender.load_vcmi_hero_skill_metadata()
+        expected_standard_files = (
+            "castle.json",
+            "conflux.json",
+            "dungeon.json",
+            "fortress.json",
+            "inferno.json",
+            "necropolis.json",
+            "rampart.json",
+            "stronghold.json",
+            "tower.json",
+        )
+
+        self.assertEqual(
+            metadata.loaded_hero_files,
+            expected_standard_files,
+        )
+        self.assertEqual(
+            metadata.excluded_hero_files,
+            recommender.EXCLUDED_HERO_FILES,
+        )
+        self.assertNotIn("special.json", metadata.loaded_hero_files)
+        self.assertNotIn("portraits.json", metadata.loaded_hero_files)
+        self.assertNotIn("portraitsChronicles.json", metadata.loaded_hero_files)
+
+    def test_loader_finds_144_standard_heroes(self):
+        metadata = recommender.load_vcmi_hero_skill_metadata()
+
+        self.assertEqual(len(metadata.heroes), 144)
+
+    def test_loader_exposes_isra_metadata_and_starting_skills(self):
+        metadata = recommender.load_vcmi_hero_skill_metadata()
+
+        isra = metadata.heroes["isra"]
+
+        self.assertEqual(isra.key, "isra")
+        self.assertEqual(isra.display_name, "Isra")
+        self.assertEqual(isra.class_id, "deathknight")
+        self.assertEqual(isra.faction, "necropolis")
+        self.assertEqual(isra.affinity, "might")
+        self.assertEqual(isra.specialty_summary, "secondary:necromancy")
+        self.assertEqual(
+            isra.starting_skills,
+            (recommender.CurrentSkill("necromancy", "advanced"),),
+        )
+
+    def test_loader_exposes_class_faction_lookup(self):
+        metadata = recommender.load_vcmi_hero_skill_metadata()
+
+        deathknight = metadata.hero_classes["deathknight"]
+
+        self.assertEqual(deathknight.key, "deathknight")
+        self.assertEqual(deathknight.faction, "necropolis")
+        self.assertEqual(deathknight.affinity, "might")
+        self.assertEqual(deathknight.index, 8)
+
+    def test_loader_parses_skill_metadata_from_jsonc(self):
+        metadata = recommender.load_vcmi_hero_skill_metadata()
+
+        earth_magic = metadata.skills["earthMagic"]
+        necromancy = metadata.skills["necromancy"]
+
+        self.assertEqual(earth_magic.key, "earthMagic")
+        self.assertEqual(earth_magic.display_name, "Earth Magic")
+        self.assertEqual(earth_magic.index, 17)
+        self.assertIsNone(earth_magic.gain_chance)
+        self.assertIn("basic", earth_magic.level_blocks)
+        self.assertEqual(necromancy.index, 12)
+        self.assertEqual(necromancy.specialty_tags, ("main",))
 
 
 if __name__ == "__main__":
