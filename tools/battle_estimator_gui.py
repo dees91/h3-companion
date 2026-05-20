@@ -1283,6 +1283,19 @@ def build_pathfinding_request(
 def find_land_path(request: PathfindingRequest) -> PathfindingResult:
     """Find a shortest same-level path over land route tiles only."""
 
+    return _find_path_route(request, include_portals=False)
+
+
+def find_path_route(request: PathfindingRequest) -> PathfindingResult:
+    """Find a shortest static route over land tiles and directed portal edges."""
+
+    return _find_path_route(request, include_portals=True)
+
+
+def _find_path_route(
+    request: PathfindingRequest,
+    include_portals: bool,
+) -> PathfindingResult:
     if not isinstance(request, PathfindingRequest):
         raise ValueError("request must be PathfindingRequest")
 
@@ -1292,32 +1305,70 @@ def find_land_path(request: PathfindingRequest) -> PathfindingResult:
     if request.start_position == target_position:
         return _pathfinding_result_for_positions(request, (request.start_position,))
 
+    portal_edges_by_source = (
+        _portal_edges_by_source(request.portal_edges)
+        if include_portals
+        else {}
+    )
     frontier = deque((request.start_position,))
-    previous_by_key = {request.start_position.key: None}
+    previous_by_key = {request.start_position.key: (None, None)}
     position_by_key = {request.start_position.key: request.start_position}
     target_key = target_position.key
 
     while frontier:
         current_position = frontier.popleft()
-        for next_position in _land_neighbor_positions(
+        for next_position, portal_edge in _path_neighbor_edges(
             request.route_map,
             current_position,
+            portal_edges_by_source,
         ):
             next_key = next_position.key
             if next_key in previous_by_key:
                 continue
-            previous_by_key[next_key] = current_position.key
+            previous_by_key[next_key] = (current_position.key, portal_edge)
             position_by_key[next_key] = next_position
             if next_key == target_key:
-                positions = _reconstruct_path_positions(
+                positions, transition_edges = _reconstruct_path_positions(
                     previous_by_key,
                     position_by_key,
                     next_key,
                 )
-                return _pathfinding_result_for_positions(request, positions)
+                return _pathfinding_result_for_positions(
+                    request,
+                    positions,
+                    transition_edges,
+                )
             frontier.append(next_position)
 
     return _path_not_found_result(request, "no land path found")
+
+
+def _portal_edges_by_source(
+    portal_edges: tuple[PathfindingPortalEdge, ...],
+) -> dict[tuple[int, int, int], tuple[PathfindingPortalEdge, ...]]:
+    edges_by_source = {}
+    for edge in portal_edges:
+        edges_by_source.setdefault(edge.source_position.key, []).append(edge)
+    return {
+        source_key: tuple(edges)
+        for source_key, edges in edges_by_source.items()
+    }
+
+
+def _path_neighbor_edges(
+    route_map: PathRouteMap,
+    position: PathPosition,
+    portal_edges_by_source: dict,
+):
+    for next_position in _land_neighbor_positions(route_map, position):
+        yield next_position, None
+    for portal_edge in portal_edges_by_source.get(position.key, ()):
+        destination = portal_edge.destination_position
+        if not route_map.contains(destination):
+            continue
+        if route_map.state_at(destination) != PATH_ROUTE_LAND:
+            continue
+        yield destination, portal_edge
 
 
 def _land_neighbor_positions(
@@ -1337,36 +1388,103 @@ def _reconstruct_path_positions(
     previous_by_key: dict,
     position_by_key: dict,
     target_key: tuple[int, int, int],
-) -> tuple[PathPosition, ...]:
+) -> tuple[tuple[PathPosition, ...], tuple[PathfindingPortalEdge | None, ...]]:
     path_keys = []
+    transition_edges = []
     current_key = target_key
     while current_key is not None:
         path_keys.append(current_key)
-        current_key = previous_by_key[current_key]
+        previous_key, portal_edge = previous_by_key[current_key]
+        if previous_key is not None:
+            transition_edges.append(portal_edge)
+        current_key = previous_key
     path_keys.reverse()
-    return tuple(position_by_key[key] for key in path_keys)
+    transition_edges.reverse()
+    return (
+        tuple(position_by_key[key] for key in path_keys),
+        tuple(transition_edges),
+    )
 
 
 def _pathfinding_result_for_positions(
     request: PathfindingRequest,
     positions: tuple[PathPosition, ...],
+    transition_edges: tuple[PathfindingPortalEdge | None, ...] = (),
 ) -> PathfindingResult:
     if not positions:
         raise ValueError("pathfinding result requires at least one position")
+    if not transition_edges:
+        transition_edges = (None,) * (len(positions) - 1)
+    if len(transition_edges) != len(positions) - 1:
+        raise ValueError("pathfinding transition count must match positions")
     steps = tuple(PathfindingStep(position) for position in positions)
-    segment = PathfindingSegment(
-        PATH_SEGMENT_WALK,
-        positions[0],
-        positions[-1],
-        steps=steps,
-    )
     return PathfindingResult(
         PATH_STATUS_FOUND,
         requested_target_position=request.requested_target_position,
         resolved_target_position=positions[-1],
         steps=steps,
-        segments=(segment,),
+        segments=_path_segments_for_positions(
+            positions,
+            steps,
+            transition_edges,
+        ),
     )
+
+
+def _path_segments_for_positions(
+    positions: tuple[PathPosition, ...],
+    steps: tuple[PathfindingStep, ...],
+    transition_edges: tuple[PathfindingPortalEdge | None, ...],
+) -> tuple[PathfindingSegment, ...]:
+    if len(positions) == 1:
+        return (
+            PathfindingSegment(
+                PATH_SEGMENT_WALK,
+                positions[0],
+                positions[0],
+                steps=(steps[0],),
+            ),
+        )
+
+    segments = []
+    walk_start_index = None
+    for index, portal_edge in enumerate(transition_edges):
+        if portal_edge is None:
+            if walk_start_index is None:
+                walk_start_index = index
+            continue
+
+        if walk_start_index is not None:
+            segments.append(
+                PathfindingSegment(
+                    PATH_SEGMENT_WALK,
+                    positions[walk_start_index],
+                    positions[index],
+                    steps=steps[walk_start_index:index + 1],
+                )
+            )
+            walk_start_index = None
+        segments.append(
+            PathfindingSegment(
+                PATH_SEGMENT_PORTAL,
+                positions[index],
+                positions[index + 1],
+                steps=(steps[index], steps[index + 1]),
+                portal_edge=portal_edge,
+                is_non_deterministic=portal_edge.is_non_deterministic,
+            )
+        )
+
+    if walk_start_index is not None:
+        segments.append(
+            PathfindingSegment(
+                PATH_SEGMENT_WALK,
+                positions[walk_start_index],
+                positions[-1],
+                steps=steps[walk_start_index:],
+            )
+        )
+    return tuple(segments)
 
 
 def _path_not_found_result(

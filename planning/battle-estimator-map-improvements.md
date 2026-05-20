@@ -1136,17 +1136,31 @@ land neighbors and ignore water, blocked tiles, roads, and movement points.
 subterranean gates.
 
 **Acceptance criteria:**
-- [ ] Portal edges can connect different coordinates on the same level.
-- [ ] Portal edges can connect coordinates across levels.
-- [ ] One-way portal edges are not traversed backwards unless the parser emits
+- [x] Portal edges can connect different coordinates on the same level.
+- [x] Portal edges can connect coordinates across levels.
+- [x] One-way portal edges are not traversed backwards unless the parser emits
       a reverse edge.
-- [ ] Multi-exit portal choices are represented as separate possible edges.
-- [ ] A returned path identifies portal segments and marks
+- [x] Multi-exit portal choices are represented as separate possible edges.
+- [x] A returned path identifies portal segments and marks
       `non_deterministic` when the used source has multiple possible exits.
 
 **Verification:**
-- [ ] Add tests for one-way, two-way, cross-level, and multi-exit routes.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Add tests for one-way, two-way, cross-level, and multi-exit routes.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion notes:**
+- Added `find_path_route(...)`, a portal-aware static path search over land
+  route tiles plus directed portal edges, while preserving `find_land_path(...)`
+  as portal-free behavior.
+- Portal traversal uses only emitted directed edges, preserves request order for
+  deterministic BFS, requires portal destinations to be land, and supports
+  same-level and cross-level routes.
+- Returned routes split global steps into walk and portal segments; portal
+  segments include source/destination steps and carry non-deterministic flags
+  from the used edge.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent plan and code reviews
+  completed with no blocking findings.
 
 **Dependencies:** Task 19
 
@@ -1416,8 +1430,8 @@ After Tasks 9, 17, and 25:
 | 17 | End-To-End Workflow Verification | done | 10, 11, 12, 13, 14, 15, 16 |
 | 18 | Add Pathfinding Service Contract | done | 3, 8 |
 | 19 | Implement Land-Only Shortest Path Search | done | 18 |
-| 20 | Add Portal And Subterranean Gate Traversal | todo | 19 |
-| 21 | Resolve Blocked Targets And Terminal Markers | blocked | 20 |
+| 20 | Add Portal And Subterranean Gate Traversal | done | 19 |
+| 21 | Resolve Blocked Targets And Terminal Markers | todo | 20 |
 | 22 | Expose A Pathfinding API Endpoint | blocked | 21 |
 | 23 | Add Path Mode UI And Route Rendering | blocked | 22 |
 | 24 | Add Path Segment List And Cross-Level Navigation | blocked | 23 |

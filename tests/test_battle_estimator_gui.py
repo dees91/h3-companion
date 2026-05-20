@@ -3193,6 +3193,7 @@ class BattleEstimatorGuiPathfindingContractTests(unittest.TestCase):
             portal_entry,
             portal_exit,
             steps=[
+                battle_estimator_gui.PathfindingStep(portal_entry),
                 battle_estimator_gui.PathfindingStep(portal_exit),
             ],
             portal_edge=portal_edge,
@@ -3642,6 +3643,256 @@ class BattleEstimatorGuiLandPathTests(unittest.TestCase):
 
     def _step_keys(self, result):
         return [step.position.key for step in result.steps]
+
+
+class BattleEstimatorGuiPortalPathTests(unittest.TestCase):
+    def test_find_path_route_uses_same_level_one_way_portal_segments(self):
+        request = self._request(
+            [
+                ["LLWLL"],
+            ],
+            (0, 0, 0),
+            (4, 0, 0),
+            (
+                self._portal_edge(
+                    "portal:1",
+                    "portal:3",
+                    (1, 0, 0),
+                    (3, 0, 0),
+                    h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                    "monolith-one-way:1",
+                ),
+            ),
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(
+            self._step_keys(result),
+            [(0, 0, 0), (1, 0, 0), (3, 0, 0), (4, 0, 0)],
+        )
+        self.assertEqual(
+            [segment.segment_type for segment in result.segments],
+            [
+                battle_estimator_gui.PATH_SEGMENT_WALK,
+                battle_estimator_gui.PATH_SEGMENT_PORTAL,
+                battle_estimator_gui.PATH_SEGMENT_WALK,
+            ],
+        )
+        self.assertEqual(
+            self._segment_step_keys(result.segments[1]),
+            [(1, 0, 0), (3, 0, 0)],
+        )
+        self.assertEqual(result.segments[1].portal_edge.destination_id, "portal:3")
+
+    def test_find_path_route_does_not_traverse_one_way_portal_backwards(self):
+        request = self._request(
+            [
+                ["LLWLL"],
+            ],
+            (3, 0, 0),
+            (1, 0, 0),
+            (
+                self._portal_edge(
+                    "portal:1",
+                    "portal:3",
+                    (1, 0, 0),
+                    (3, 0, 0),
+                    h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                    "monolith-one-way:1",
+                ),
+            ),
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_NOT_FOUND)
+        self.assertEqual(result.steps, ())
+        self.assertEqual(result.segments, ())
+
+    def test_find_path_route_uses_reverse_edge_when_parser_emits_it(self):
+        request = self._request(
+            [
+                ["LLWLL"],
+            ],
+            (3, 0, 0),
+            (1, 0, 0),
+            (
+                self._portal_edge(
+                    "portal:1",
+                    "portal:3",
+                    (1, 0, 0),
+                    (3, 0, 0),
+                    h3_map_parser.PORTAL_TYPE_MONOLITH_TWO_WAY,
+                    "monolith-two-way:1",
+                ),
+                self._portal_edge(
+                    "portal:3",
+                    "portal:1",
+                    (3, 0, 0),
+                    (1, 0, 0),
+                    h3_map_parser.PORTAL_TYPE_MONOLITH_TWO_WAY,
+                    "monolith-two-way:1",
+                ),
+            ),
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(self._step_keys(result), [(3, 0, 0), (1, 0, 0)])
+        self.assertEqual(len(result.segments), 1)
+        self.assertEqual(
+            result.segments[0].segment_type,
+            battle_estimator_gui.PATH_SEGMENT_PORTAL,
+        )
+        self.assertEqual(result.segments[0].portal_edge.source_id, "portal:3")
+
+    def test_find_path_route_uses_cross_level_subterranean_edge(self):
+        request = self._request(
+            [
+                ["L"],
+                ["L"],
+            ],
+            (0, 0, 0),
+            (0, 0, 1),
+            (
+                self._portal_edge(
+                    "portal:surface",
+                    "portal:underground",
+                    (0, 0, 0),
+                    (0, 0, 1),
+                    h3_map_parser.PORTAL_TYPE_SUBTERRANEAN_GATE,
+                    "subterranean:surface:underground",
+                ),
+            ),
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(self._step_keys(result), [(0, 0, 0), (0, 0, 1)])
+        self.assertEqual(len(result.segments), 1)
+        self.assertEqual(
+            result.segments[0].segment_type,
+            battle_estimator_gui.PATH_SEGMENT_PORTAL,
+        )
+        self.assertEqual(
+            self._segment_step_keys(result.segments[0]),
+            [(0, 0, 0), (0, 0, 1)],
+        )
+
+    def test_find_path_route_marks_used_multi_exit_portal_segment(self):
+        request = self._request(
+            [
+                ["LWLWL"],
+            ],
+            (0, 0, 0),
+            (4, 0, 0),
+            (
+                self._portal_edge(
+                    "portal:0",
+                    "portal:2",
+                    (0, 0, 0),
+                    (2, 0, 0),
+                    h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                    "monolith-one-way:7",
+                    is_non_deterministic=True,
+                ),
+                self._portal_edge(
+                    "portal:0",
+                    "portal:4",
+                    (0, 0, 0),
+                    (4, 0, 0),
+                    h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                    "monolith-one-way:7",
+                    is_non_deterministic=True,
+                ),
+            ),
+        )
+
+        result = battle_estimator_gui.find_path_route(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(len(request.portal_edges), 2)
+        self.assertEqual(self._step_keys(result), [(0, 0, 0), (4, 0, 0)])
+        self.assertEqual(len(result.segments), 1)
+        portal_segment = result.segments[0]
+        self.assertEqual(
+            portal_segment.segment_type,
+            battle_estimator_gui.PATH_SEGMENT_PORTAL,
+        )
+        self.assertEqual(portal_segment.portal_edge.destination_id, "portal:4")
+        self.assertTrue(portal_segment.is_non_deterministic)
+        self.assertTrue(portal_segment.portal_edge.is_non_deterministic)
+
+    def test_find_path_route_ignores_portal_edges_to_non_land_destinations(self):
+        for blocked_char in (
+            battle_estimator_gui.PATH_ROUTE_WATER,
+            battle_estimator_gui.PATH_ROUTE_BLOCKED,
+        ):
+            with self.subTest(blocked_char=blocked_char):
+                request = self._request(
+                    [
+                        [f"L{blocked_char}LL"],
+                    ],
+                    (0, 0, 0),
+                    (3, 0, 0),
+                    (
+                        self._portal_edge(
+                            "portal:0",
+                            "portal:blocked",
+                            (0, 0, 0),
+                            (1, 0, 0),
+                            h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                            "monolith-one-way:blocked",
+                        ),
+                    ),
+                )
+
+                result = battle_estimator_gui.find_path_route(request)
+
+                self.assertEqual(
+                    result.status,
+                    battle_estimator_gui.PATH_STATUS_NOT_FOUND,
+                )
+                self.assertEqual(result.steps, ())
+                self.assertEqual(result.segments, ())
+
+    def _request(self, route_layers, start_position, target_position, portal_edges):
+        return battle_estimator_gui.PathfindingRequest(
+            start_position=start_position,
+            requested_target_position=target_position,
+            route_map=route_layers,
+            portal_edges=portal_edges,
+        )
+
+    def _portal_edge(
+        self,
+        source_id,
+        destination_id,
+        source_position,
+        destination_position,
+        portal_type,
+        channel_key,
+        is_non_deterministic=False,
+    ):
+        return battle_estimator_gui.PathfindingPortalEdge(
+            source_id=source_id,
+            destination_id=destination_id,
+            source_position=source_position,
+            destination_position=destination_position,
+            portal_type=portal_type,
+            channel_key=channel_key,
+            is_non_deterministic=is_non_deterministic,
+        )
+
+    def _step_keys(self, result):
+        return [step.position.key for step in result.steps]
+
+    def _segment_step_keys(self, segment):
+        return [step.position.key for step in segment.steps]
 
 
 class BattleEstimatorGuiSnapshotTests(unittest.TestCase):
