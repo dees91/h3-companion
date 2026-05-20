@@ -1062,16 +1062,28 @@ results, path steps, and path segments. Keep this separate from the HTTP
 endpoint so the core pathfinder can be tested without the GUI server.
 
 **Acceptance criteria:**
-- [ ] The service accepts selected hero position, requested target position,
+- [x] The service accepts selected hero position, requested target position,
       route layers, and portal edges.
-- [ ] Result states include at least `found`, `not_found`, and `invalid`.
-- [ ] Results can represent requested vs resolved target positions.
-- [ ] Results can represent walk segments and portal segments.
-- [ ] Portal segments can mark non-deterministic traversal.
+- [x] Result states include at least `found`, `not_found`, and `invalid`.
+- [x] Results can represent requested vs resolved target positions.
+- [x] Results can represent walk segments and portal segments.
+- [x] Portal segments can mark non-deterministic traversal.
 
 **Verification:**
-- [ ] Add focused service-contract tests.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Add focused service-contract tests.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion notes:**
+- Added immutable backend pathfinding contract dataclasses for positions, route
+  maps, portal edges, requests, steps, segments, and results.
+- Added `build_pathfinding_request(...)` plus validation helpers for compact
+  `layers[z][y][x]` route maps, selected hero position, requested target
+  position, and normalized portal edges resolved to endpoint positions.
+- Added non-deterministic portal marking for multi-exit edges sharing the same
+  source object and channel key.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent plan and code reviews
+  completed with no blocking findings.
 
 **Dependencies:** Tasks 3, 8
 
@@ -1391,8 +1403,8 @@ After Tasks 9, 17, and 25:
 | 15 | Auto-Refresh Scan After Hero Selection | done | 12, 13 |
 | 16 | Render Scan Difficulty As Marker Rings | done | - |
 | 17 | End-To-End Workflow Verification | done | 10, 11, 12, 13, 14, 15, 16 |
-| 18 | Add Pathfinding Service Contract | todo | 3, 8 |
-| 19 | Implement Land-Only Shortest Path Search | blocked | 18 |
+| 18 | Add Pathfinding Service Contract | done | 3, 8 |
+| 19 | Implement Land-Only Shortest Path Search | todo | 18 |
 | 20 | Add Portal And Subterranean Gate Traversal | blocked | 19 |
 | 21 | Resolve Blocked Targets And Terminal Markers | blocked | 20 |
 | 22 | Expose A Pathfinding API Endpoint | blocked | 21 |

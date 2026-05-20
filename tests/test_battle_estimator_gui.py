@@ -26,7 +26,7 @@ from tests.test_h3_map_parser import (
     _object_template_bytes,
     _town_payload,
 )
-from tools import h3_map_parser
+from tools import h3_map_parser, h3_save_parser
 
 
 class BattleEstimatorGuiServerTests(unittest.TestCase):
@@ -3120,6 +3120,365 @@ assert.strictEqual(fetchCalls, fetchCallsAfterContextActions);
                 self.assertIn("no longer available", payload["error"])
 
             self._with_server(check, app_state=app_state)
+
+
+class BattleEstimatorGuiPathfindingContractTests(unittest.TestCase):
+    def test_pathfinding_request_builder_normalizes_route_map_and_positions(self):
+        request = battle_estimator_gui.build_pathfinding_request(
+            h3_save_parser.HeroPosition(1, 1, 0),
+            (2, 1, 1),
+            [
+                ["BLW", "LLB"],
+                ["BBB", "LWL"],
+            ],
+        )
+
+        self.assertEqual(
+            request.start_position,
+            battle_estimator_gui.PathPosition(1, 1, 0),
+        )
+        self.assertEqual(
+            request.requested_target_position,
+            battle_estimator_gui.PathPosition(2, 1, 1),
+        )
+        self.assertEqual(request.route_map.width, 3)
+        self.assertEqual(request.route_map.height, 2)
+        self.assertEqual(request.route_map.levels, 2)
+        self.assertEqual(
+            request.route_map.state_at((0, 0, 0)),
+            battle_estimator_gui.PATH_ROUTE_BLOCKED,
+        )
+        self.assertEqual(
+            request.route_map.state_at((1, 1, 0)),
+            battle_estimator_gui.PATH_ROUTE_LAND,
+        )
+        self.assertEqual(
+            request.route_map.state_at((2, 0, 0)),
+            battle_estimator_gui.PATH_ROUTE_WATER,
+        )
+        self.assertEqual(
+            request.route_map.state_at((2, 1, 1)),
+            battle_estimator_gui.PATH_ROUTE_LAND,
+        )
+        self.assertIsInstance(request.route_map.layers, tuple)
+        self.assertIsInstance(request.route_map.layers[0], tuple)
+        self.assertEqual(request.portal_edges, ())
+
+    def test_pathfinding_result_contract_represents_statuses_and_segments(self):
+        start = battle_estimator_gui.PathPosition(0, 0, 0)
+        portal_entry = battle_estimator_gui.PathPosition(1, 1, 0)
+        portal_exit = battle_estimator_gui.PathPosition(2, 2, 1)
+        requested = battle_estimator_gui.PathPosition(3, 3, 1)
+        resolved = battle_estimator_gui.PathPosition(2, 3, 1)
+        portal_edge = battle_estimator_gui.PathfindingPortalEdge(
+            source_id="portal:10",
+            destination_id="portal:11",
+            source_position=portal_entry,
+            destination_position=portal_exit,
+            portal_type=h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+            channel_key="monolith-one-way:7",
+            is_non_deterministic=True,
+        )
+        walk_segment = battle_estimator_gui.PathfindingSegment(
+            battle_estimator_gui.PATH_SEGMENT_WALK,
+            start,
+            portal_entry,
+            steps=[
+                battle_estimator_gui.PathfindingStep(start),
+                battle_estimator_gui.PathfindingStep(portal_entry),
+            ],
+        )
+        portal_segment = battle_estimator_gui.PathfindingSegment(
+            battle_estimator_gui.PATH_SEGMENT_PORTAL,
+            portal_entry,
+            portal_exit,
+            steps=[
+                battle_estimator_gui.PathfindingStep(portal_exit),
+            ],
+            portal_edge=portal_edge,
+        )
+
+        found = battle_estimator_gui.PathfindingResult(
+            battle_estimator_gui.PATH_STATUS_FOUND,
+            requested_target_position=requested,
+            resolved_target_position=resolved,
+            steps=[
+                battle_estimator_gui.PathfindingStep(start),
+                battle_estimator_gui.PathfindingStep(portal_entry),
+                battle_estimator_gui.PathfindingStep(portal_exit),
+            ],
+            segments=[walk_segment, portal_segment],
+        )
+        not_found = battle_estimator_gui.PathfindingResult(
+            battle_estimator_gui.PATH_STATUS_NOT_FOUND,
+            requested_target_position=requested,
+            message="no land path",
+        )
+        invalid = battle_estimator_gui.PathfindingResult(
+            battle_estimator_gui.PATH_STATUS_INVALID,
+            requested_target_position=requested,
+            message="selected hero has no parsed position",
+        )
+
+        self.assertEqual(found.resolved_target_position, resolved)
+        self.assertIsInstance(found.steps, tuple)
+        self.assertIsInstance(found.segments, tuple)
+        self.assertEqual(found.segments[0].segment_type, "walk")
+        self.assertEqual(found.segments[1].segment_type, "portal")
+        self.assertTrue(found.segments[1].is_non_deterministic)
+        self.assertEqual(not_found.status, battle_estimator_gui.PATH_STATUS_NOT_FOUND)
+        self.assertEqual(invalid.status, battle_estimator_gui.PATH_STATUS_INVALID)
+        with self.assertRaisesRegex(ValueError, "unknown pathfinding result status"):
+            battle_estimator_gui.PathfindingResult("partial", requested)
+        with self.assertRaisesRegex(ValueError, "walk path segment cannot have"):
+            battle_estimator_gui.PathfindingSegment(
+                battle_estimator_gui.PATH_SEGMENT_WALK,
+                start,
+                portal_entry,
+                portal_edge=portal_edge,
+            )
+
+    def test_pathfinding_portal_edges_resolve_positions_and_random_edges(self):
+        targets = (
+            self._portal_target(
+                10,
+                (1, 1, 0),
+                h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                "monolith-one-way:4",
+            ),
+            self._portal_target(
+                11,
+                (4, 1, 0),
+                h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                "monolith-one-way:4",
+            ),
+            self._portal_target(
+                12,
+                (6, 1, 0),
+                h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                "monolith-one-way:4",
+            ),
+            self._portal_target(
+                20,
+                (2, 3, 0),
+                h3_map_parser.PORTAL_TYPE_SUBTERRANEAN_GATE,
+                "subterranean:20:21",
+            ),
+            self._portal_target(
+                21,
+                (2, 3, 1),
+                h3_map_parser.PORTAL_TYPE_SUBTERRANEAN_GATE,
+                "subterranean:20:21",
+            ),
+        )
+        edges = (
+            self._portal_edge(
+                10,
+                11,
+                h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                "monolith-one-way:4",
+            ),
+            self._portal_edge(
+                10,
+                12,
+                h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                "monolith-one-way:4",
+            ),
+            self._portal_edge(
+                20,
+                21,
+                h3_map_parser.PORTAL_TYPE_SUBTERRANEAN_GATE,
+                "subterranean:20:21",
+            ),
+        )
+
+        path_edges = battle_estimator_gui._pathfinding_portal_edges(targets, edges)
+
+        self.assertEqual(
+            [(edge.source_id, edge.destination_id) for edge in path_edges],
+            [
+                ("portal:10", "portal:11"),
+                ("portal:10", "portal:12"),
+                ("portal:20", "portal:21"),
+            ],
+        )
+        self.assertEqual(
+            path_edges[0].source_position,
+            battle_estimator_gui.PathPosition(1, 1, 0),
+        )
+        self.assertEqual(
+            path_edges[0].destination_position,
+            battle_estimator_gui.PathPosition(4, 1, 0),
+        )
+        self.assertTrue(path_edges[0].is_non_deterministic)
+        self.assertTrue(path_edges[1].is_non_deterministic)
+        self.assertFalse(path_edges[2].is_non_deterministic)
+        request = battle_estimator_gui.build_pathfinding_request(
+            (0, 0, 0),
+            (6, 3, 1),
+            [
+                ["LLLLLLL", "LLLLLLL", "LLLLLLL", "LLLLLLL"],
+                ["LLLLLLL", "LLLLLLL", "LLLLLLL", "LLLLLLL"],
+            ],
+            portal_targets=targets,
+            portal_edges=edges,
+        )
+        self.assertEqual(request.portal_edges, path_edges)
+
+    def test_pathfinding_contract_rejects_invalid_inputs(self):
+        invalid_cases = (
+            (
+                lambda: battle_estimator_gui.PathRouteMap([]),
+                "path route layers must include at least one level",
+            ),
+            (
+                lambda: battle_estimator_gui.PathRouteMap([["LL", "L"]]),
+                "same width",
+            ),
+            (
+                lambda: battle_estimator_gui.PathRouteMap([["LX"]]),
+                "unknown path route state",
+            ),
+            (
+                lambda: battle_estimator_gui.build_pathfinding_request(
+                    None,
+                    (0, 0, 0),
+                    [["L"]],
+                ),
+                "path position is required",
+            ),
+            (
+                lambda: battle_estimator_gui.build_pathfinding_request(
+                    (0, 0, 0),
+                    (1, 0, 0),
+                    [["L"]],
+                ),
+                "requested target position out of bounds",
+            ),
+            (
+                lambda: battle_estimator_gui.build_pathfinding_request(
+                    (0, 0, 0),
+                    (0, 0, 0),
+                    [["W"]],
+                ),
+                "selected hero position must be a land route tile",
+            ),
+            (
+                lambda: battle_estimator_gui._pathfinding_portal_edges(
+                    (
+                        self._portal_target(
+                            10,
+                            (0, 0, 0),
+                            h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                            "monolith-one-way:1",
+                        ),
+                    ),
+                    (
+                        self._portal_edge(
+                            10,
+                            99,
+                            h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                            "monolith-one-way:1",
+                        ),
+                    ),
+                ),
+                "unknown portal destination object_index",
+            ),
+            (
+                lambda: battle_estimator_gui._pathfinding_portal_edges(
+                    (
+                        self._portal_target(
+                            10,
+                            (0, 0, 0),
+                            h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                            "monolith-one-way:1",
+                        ),
+                    ),
+                    (
+                        self._portal_edge(
+                            99,
+                            10,
+                            h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                            "monolith-one-way:1",
+                        ),
+                    ),
+                ),
+                "unknown portal source object_index",
+            ),
+            (
+                lambda: battle_estimator_gui.build_pathfinding_request(
+                    (0, 0, 0),
+                    (0, 0, 0),
+                    [["L"]],
+                    portal_targets=(
+                        self._portal_target(
+                            10,
+                            (0, 0, 0),
+                            h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                            "monolith-one-way:1",
+                        ),
+                        self._portal_target(
+                            11,
+                            (1, 0, 0),
+                            h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                            "monolith-one-way:1",
+                        ),
+                    ),
+                    portal_edges=(
+                        self._portal_edge(
+                            10,
+                            11,
+                            h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                            "monolith-one-way:1",
+                        ),
+                    ),
+                ),
+                "portal destination position out of bounds",
+            ),
+        )
+
+        for action, expected_message in invalid_cases:
+            with self.subTest(expected_message=expected_message):
+                with self.assertRaisesRegex(ValueError, expected_message):
+                    action()
+
+    def _portal_target(self, object_index, position, portal_type, channel_key):
+        template = h3_map_parser.H3ObjectTemplate(
+            template_index=object_index,
+            animation_file=f"AVXportal{object_index}.def",
+            block_mask=b"\x00" * 6,
+            visit_mask=b"\x01" + b"\x00" * 5,
+            terrain_mask=0x01FF,
+            object_id=h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+            subid=0,
+            object_type=0,
+            print_priority=0,
+        )
+        x, y, z = position
+        return h3_map_parser.H3PortalTarget(
+            object_index=object_index,
+            x=x,
+            y=y,
+            z=z,
+            anchor_x=x,
+            anchor_y=y,
+            anchor_z=z,
+            template=template,
+            object_id=h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+            h3m_subid=0,
+            portal_type=portal_type,
+            role=h3_map_parser.PORTAL_ROLE_BOTH,
+            channel_key=channel_key,
+        )
+
+    def _portal_edge(self, source_index, destination_index, portal_type, channel_key):
+        return h3_map_parser.H3PortalEdge(
+            source_object_index=source_index,
+            destination_object_index=destination_index,
+            portal_type=portal_type,
+            channel_key=channel_key,
+            h3m_subid=0,
+        )
 
 
 class BattleEstimatorGuiSnapshotTests(unittest.TestCase):

@@ -41,6 +41,28 @@ CONTENT_TYPES = {
     "js": "application/javascript; charset=utf-8",
     "css": "text/css; charset=utf-8",
 }
+PATH_ROUTE_LAND = "L"
+PATH_ROUTE_WATER = "W"
+PATH_ROUTE_BLOCKED = "B"
+PATH_ROUTE_STATES = frozenset((
+    PATH_ROUTE_LAND,
+    PATH_ROUTE_WATER,
+    PATH_ROUTE_BLOCKED,
+))
+PATH_STATUS_FOUND = "found"
+PATH_STATUS_NOT_FOUND = "not_found"
+PATH_STATUS_INVALID = "invalid"
+PATH_STATUSES = frozenset((
+    PATH_STATUS_FOUND,
+    PATH_STATUS_NOT_FOUND,
+    PATH_STATUS_INVALID,
+))
+PATH_SEGMENT_WALK = "walk"
+PATH_SEGMENT_PORTAL = "portal"
+PATH_SEGMENT_TYPES = frozenset((
+    PATH_SEGMENT_WALK,
+    PATH_SEGMENT_PORTAL,
+))
 
 
 class SnapshotModeError(ValueError):
@@ -119,6 +141,262 @@ class DomainSnapshotSource:
     map_file: Path
     save_fingerprint: dict
     map_fingerprint: dict
+
+
+@dataclass(frozen=True)
+class PathPosition:
+    """One adventure-map tile coordinate used by the pathfinding service."""
+
+    x: int
+    y: int
+    z: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "x", _path_coordinate(self.x, "x"))
+        object.__setattr__(self, "y", _path_coordinate(self.y, "y"))
+        object.__setattr__(self, "z", _path_coordinate(self.z, "z"))
+
+    @classmethod
+    def from_value(cls, value) -> "PathPosition":
+        return _path_position_from_value(value)
+
+    @property
+    def key(self) -> tuple[int, int, int]:
+        return self.x, self.y, self.z
+
+
+@dataclass(frozen=True)
+class PathRouteMap:
+    """Immutable compact route map addressed as layers[z][y][x]."""
+
+    layers: tuple
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "layers",
+            _normalize_path_route_layers(self.layers),
+        )
+
+    @property
+    def levels(self) -> int:
+        return len(self.layers)
+
+    @property
+    def height(self) -> int:
+        return len(self.layers[0])
+
+    @property
+    def width(self) -> int:
+        return len(self.layers[0][0])
+
+    def contains(self, position) -> bool:
+        path_position = _path_position_from_value(position)
+        return (
+            0 <= path_position.x < self.width
+            and 0 <= path_position.y < self.height
+            and 0 <= path_position.z < self.levels
+        )
+
+    def state_at(self, position) -> str:
+        path_position = _path_position_from_value(position)
+        if not self.contains(path_position):
+            raise ValueError(f"path position out of bounds: {path_position.key}")
+        return self.layers[path_position.z][path_position.y][path_position.x]
+
+
+@dataclass(frozen=True)
+class PathfindingPortalEdge:
+    """Directed portal edge with endpoint positions resolved for path search."""
+
+    source_id: str
+    destination_id: str
+    source_position: PathPosition
+    destination_position: PathPosition
+    portal_type: str
+    channel_key: str
+    is_non_deterministic: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "source_id",
+            _required_path_text(self.source_id, "source_id"),
+        )
+        object.__setattr__(
+            self,
+            "destination_id",
+            _required_path_text(self.destination_id, "destination_id"),
+        )
+        object.__setattr__(
+            self,
+            "source_position",
+            _path_position_from_value(self.source_position),
+        )
+        object.__setattr__(
+            self,
+            "destination_position",
+            _path_position_from_value(self.destination_position),
+        )
+        object.__setattr__(
+            self,
+            "portal_type",
+            _required_path_text(self.portal_type, "portal_type"),
+        )
+        object.__setattr__(
+            self,
+            "channel_key",
+            _required_path_text(self.channel_key, "channel_key"),
+        )
+        object.__setattr__(
+            self,
+            "is_non_deterministic",
+            bool(self.is_non_deterministic),
+        )
+
+
+@dataclass(frozen=True)
+class PathfindingRequest:
+    """Validated pathfinding service input independent from the HTTP layer."""
+
+    start_position: PathPosition
+    requested_target_position: PathPosition
+    route_map: PathRouteMap
+    portal_edges: tuple[PathfindingPortalEdge, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        route_map = self.route_map
+        if not isinstance(route_map, PathRouteMap):
+            route_map = PathRouteMap(route_map)
+        start_position = _path_position_from_value(self.start_position)
+        requested_target_position = _path_position_from_value(
+            self.requested_target_position
+        )
+        portal_edges = tuple(self.portal_edges or ())
+
+        if not route_map.contains(start_position):
+            raise ValueError(
+                f"selected hero position out of bounds: {start_position.key}"
+            )
+        if route_map.state_at(start_position) != PATH_ROUTE_LAND:
+            raise ValueError("selected hero position must be a land route tile")
+        if not route_map.contains(requested_target_position):
+            raise ValueError(
+                "requested target position out of bounds: "
+                f"{requested_target_position.key}"
+            )
+        for edge in portal_edges:
+            if not isinstance(edge, PathfindingPortalEdge):
+                raise ValueError("portal_edges must contain PathfindingPortalEdge")
+            if not route_map.contains(edge.source_position):
+                raise ValueError(
+                    f"portal source position out of bounds: {edge.source_position.key}"
+                )
+            if not route_map.contains(edge.destination_position):
+                raise ValueError(
+                    "portal destination position out of bounds: "
+                    f"{edge.destination_position.key}"
+                )
+
+        object.__setattr__(self, "route_map", route_map)
+        object.__setattr__(self, "start_position", start_position)
+        object.__setattr__(
+            self,
+            "requested_target_position",
+            requested_target_position,
+        )
+        object.__setattr__(self, "portal_edges", portal_edges)
+
+
+@dataclass(frozen=True)
+class PathfindingStep:
+    """One tile in a returned path."""
+
+    position: PathPosition
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "position",
+            _path_position_from_value(self.position),
+        )
+
+
+@dataclass(frozen=True)
+class PathfindingSegment:
+    """A contiguous walk or portal fragment in a pathfinding result."""
+
+    segment_type: str
+    start_position: PathPosition
+    end_position: PathPosition
+    steps: tuple[PathfindingStep, ...] = field(default_factory=tuple)
+    portal_edge: PathfindingPortalEdge | None = None
+    is_non_deterministic: bool = False
+
+    def __post_init__(self) -> None:
+        if self.segment_type not in PATH_SEGMENT_TYPES:
+            raise ValueError(f"unknown path segment type: {self.segment_type!r}")
+        if self.segment_type == PATH_SEGMENT_PORTAL and self.portal_edge is None:
+            raise ValueError("portal path segment requires portal_edge")
+        if self.segment_type == PATH_SEGMENT_WALK and self.portal_edge is not None:
+            raise ValueError("walk path segment cannot have portal_edge")
+        is_non_deterministic = bool(self.is_non_deterministic)
+        if self.portal_edge is not None:
+            if not isinstance(self.portal_edge, PathfindingPortalEdge):
+                raise ValueError("portal_edge must be PathfindingPortalEdge")
+            is_non_deterministic = (
+                is_non_deterministic or self.portal_edge.is_non_deterministic
+            )
+
+        object.__setattr__(
+            self,
+            "start_position",
+            _path_position_from_value(self.start_position),
+        )
+        object.__setattr__(
+            self,
+            "end_position",
+            _path_position_from_value(self.end_position),
+        )
+        object.__setattr__(self, "steps", _normalize_path_steps(self.steps))
+        object.__setattr__(
+            self,
+            "is_non_deterministic",
+            is_non_deterministic,
+        )
+
+
+@dataclass(frozen=True)
+class PathfindingResult:
+    """Pathfinding service output for found, not-found, and invalid states."""
+
+    status: str
+    requested_target_position: PathPosition
+    resolved_target_position: PathPosition | None = None
+    steps: tuple[PathfindingStep, ...] = field(default_factory=tuple)
+    segments: tuple[PathfindingSegment, ...] = field(default_factory=tuple)
+    message: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.status not in PATH_STATUSES:
+            raise ValueError(f"unknown pathfinding result status: {self.status!r}")
+        object.__setattr__(
+            self,
+            "requested_target_position",
+            _path_position_from_value(self.requested_target_position),
+        )
+        if self.resolved_target_position is not None:
+            object.__setattr__(
+                self,
+                "resolved_target_position",
+                _path_position_from_value(self.resolved_target_position),
+            )
+        object.__setattr__(self, "steps", _normalize_path_steps(self.steps))
+        object.__setattr__(
+            self,
+            "segments",
+            _normalize_path_segments(self.segments),
+        )
 
 
 class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
@@ -931,9 +1209,9 @@ def _serialize_map_team(team) -> dict:
 
 def _serialize_route_layers(header, route_tiles) -> list[list[str]]:
     state_chars = {
-        h3_map_parser.ROUTE_LAND: "L",
-        h3_map_parser.ROUTE_WATER: "W",
-        h3_map_parser.ROUTE_BLOCKED: "B",
+        h3_map_parser.ROUTE_LAND: PATH_ROUTE_LAND,
+        h3_map_parser.ROUTE_WATER: PATH_ROUTE_WATER,
+        h3_map_parser.ROUTE_BLOCKED: PATH_ROUTE_BLOCKED,
     }
     route_by_position = {}
     for tile in route_tiles:
@@ -971,6 +1249,174 @@ def _serialize_route_layers(header, route_tiles) -> list[list[str]]:
             rows.append("".join(row))
         layers.append(rows)
     return layers
+
+
+def build_pathfinding_request(
+    selected_hero_position,
+    requested_target_position,
+    route_layers,
+    portal_targets=(),
+    portal_edges=(),
+) -> PathfindingRequest:
+    """Build a validated pathfinding request from parsed GUI snapshot data."""
+
+    route_map = PathRouteMap(route_layers)
+    return PathfindingRequest(
+        start_position=_path_position_from_value(selected_hero_position),
+        requested_target_position=_path_position_from_value(requested_target_position),
+        route_map=route_map,
+        portal_edges=_pathfinding_portal_edges(portal_targets, portal_edges),
+    )
+
+
+def _path_position_from_value(value) -> PathPosition:
+    if isinstance(value, PathPosition):
+        return value
+    if value is None:
+        raise ValueError("path position is required")
+    if isinstance(value, dict):
+        return PathPosition(
+            _path_coordinate(value.get("x"), "x"),
+            _path_coordinate(value.get("y"), "y"),
+            _path_coordinate(value.get("z"), "z"),
+        )
+    if isinstance(value, (tuple, list)):
+        if len(value) != 3:
+            raise ValueError("path position tuple must contain x, y, z")
+        x, y, z = value
+        return PathPosition(
+            _path_coordinate(x, "x"),
+            _path_coordinate(y, "y"),
+            _path_coordinate(z, "z"),
+        )
+    if all(hasattr(value, coordinate) for coordinate in ("x", "y", "z")):
+        return PathPosition(
+            _path_coordinate(value.x, "x"),
+            _path_coordinate(value.y, "y"),
+            _path_coordinate(value.z, "z"),
+        )
+    raise ValueError(
+        "path position must be PathPosition, x/y/z object, mapping, or 3-tuple"
+    )
+
+
+def _path_coordinate(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"path position {name} must be an integer")
+    return value
+
+
+def _required_path_text(value, field_name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field_name} must be non-empty text")
+    return value
+
+
+def _normalize_path_route_layers(route_layers) -> tuple[tuple[str, ...], ...]:
+    if isinstance(route_layers, PathRouteMap):
+        return route_layers.layers
+    if isinstance(route_layers, (str, bytes)) or route_layers is None:
+        raise ValueError("path route layers must be a non-empty sequence")
+
+    normalized_layers = []
+    expected_height = None
+    expected_width = None
+    for z, layer in enumerate(route_layers):
+        if isinstance(layer, (str, bytes)) or layer is None:
+            raise ValueError(f"path route layer {z} must be a sequence of rows")
+        rows = []
+        for y, row in enumerate(layer):
+            if not isinstance(row, str) or not row:
+                raise ValueError(f"path route row {z},{y} must be non-empty text")
+            invalid_chars = sorted(set(row) - PATH_ROUTE_STATES)
+            if invalid_chars:
+                raise ValueError(
+                    "unknown path route state at "
+                    f"level {z}, row {y}: {invalid_chars[0]!r}"
+                )
+            if expected_width is None:
+                expected_width = len(row)
+            elif len(row) != expected_width:
+                raise ValueError("path route rows must all have the same width")
+            rows.append(row)
+        if not rows:
+            raise ValueError(f"path route layer {z} must contain at least one row")
+        if expected_height is None:
+            expected_height = len(rows)
+        elif len(rows) != expected_height:
+            raise ValueError("path route layers must all have the same height")
+        normalized_layers.append(tuple(rows))
+
+    if not normalized_layers:
+        raise ValueError("path route layers must include at least one level")
+    return tuple(normalized_layers)
+
+
+def _pathfinding_portal_edges(
+    portal_targets,
+    portal_edges,
+) -> tuple[PathfindingPortalEdge, ...]:
+    target_by_index = {
+        target.object_index: target
+        for target in portal_targets
+    }
+    outgoing_counts = {}
+    for edge in portal_edges:
+        key = (edge.source_object_index, edge.channel_key)
+        outgoing_counts[key] = outgoing_counts.get(key, 0) + 1
+
+    path_edges = []
+    for edge in portal_edges:
+        source = target_by_index.get(edge.source_object_index)
+        if source is None:
+            raise ValueError(
+                "unknown portal source object_index: "
+                f"{edge.source_object_index}"
+            )
+        destination = target_by_index.get(edge.destination_object_index)
+        if destination is None:
+            raise ValueError(
+                "unknown portal destination object_index: "
+                f"{edge.destination_object_index}"
+            )
+        edge_key = (edge.source_object_index, edge.channel_key)
+        path_edges.append(
+            PathfindingPortalEdge(
+                source_id=_portal_target_id_from_index(edge.source_object_index),
+                destination_id=_portal_target_id_from_index(
+                    edge.destination_object_index
+                ),
+                source_position=PathPosition(source.x, source.y, source.z),
+                destination_position=PathPosition(
+                    destination.x,
+                    destination.y,
+                    destination.z,
+                ),
+                portal_type=edge.portal_type,
+                channel_key=edge.channel_key,
+                is_non_deterministic=outgoing_counts[edge_key] > 1,
+            )
+        )
+    return tuple(path_edges)
+
+
+def _normalize_path_steps(steps) -> tuple[PathfindingStep, ...]:
+    if steps is None:
+        return ()
+    return tuple(
+        step if isinstance(step, PathfindingStep) else PathfindingStep(step)
+        for step in steps
+    )
+
+
+def _normalize_path_segments(segments) -> tuple[PathfindingSegment, ...]:
+    if segments is None:
+        return ()
+    normalized = tuple(segments)
+    for segment in normalized:
+        if not isinstance(segment, PathfindingSegment):
+            raise ValueError("segments must contain PathfindingSegment")
+    return normalized
 
 
 def _unique_hero_ids(heroes) -> list[str]:
