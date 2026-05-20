@@ -1018,17 +1018,35 @@ sorting, scan hover/click behavior, auto scan refresh, and scan-ring rendering
 in the local GUI.
 
 **Acceptance criteria:**
-- [ ] Hidden heroes and hidden neutrals behave consistently.
-- [ ] The single map filter controls both markers and scan target type.
-- [ ] Distance and easiest sort modes both work.
-- [ ] Scan hover does not move the map.
-- [ ] Scan click intentionally centers and activates the target.
-- [ ] Auto scan refresh runs only after scan mode has been used.
-- [ ] Scan rings preserve team and neutral marker identity colors.
+- [x] Hidden heroes and hidden neutrals behave consistently.
+- [x] The single map filter controls both markers and scan target type.
+- [x] Distance and easiest sort modes both work.
+- [x] Scan hover does not move the map.
+- [x] Scan click intentionally centers and activates the target.
+- [x] Auto scan refresh runs only after scan mode has been used.
+- [x] Scan rings preserve team and neutral marker identity colors.
 
 **Verification:**
-- [ ] Run `python3 -m unittest`.
-- [ ] Start the GUI and manually verify the workflow on a current save.
+- [x] Run `python3 -m unittest`.
+- [x] Start the GUI and manually verify the workflow on a current save.
+
+**Completion notes:**
+- Full suite passed: `python3 -m unittest` (`Ran 226 tests in 22.625s OK`).
+- Real backend fixture smoke used a temporary GUI server with real fixture save
+  and map data, with no mocks for `/api/state`, `/api/hidden-target`,
+  `/api/show-hidden`, or `/api/scan-radius`. It confirmed hidden heroes and
+  hidden neutrals are exposed by the hidden-target toggle, are omitted from scan
+  results, and that the Heroes/Monsters map filter constrains marker visibility.
+  The full GUI test suite additionally covers default hidden-marker visibility
+  and scan target-type request mapping.
+- Deterministic browser workflow verified no scan before scan mode use,
+  Distance and Easiest result ordering, no extra request on sort change,
+  hover without map movement, click activation, auto-refresh after hero
+  selection with radius/filter/sort preserved, and canvas rendering for team
+  fills, neutral fills, scan difficulty rings, hover rings, and active rings.
+- Verification: `python3 -m unittest`; real-backend GUI smoke via Chrome DevTools
+  Protocol; deterministic browser workflow via Chrome DevTools Protocol;
+  `git diff --check`; subagent plan and evidence reviews.
 
 **Dependencies:** Tasks 10, 11, 12, 13, 14, 15, 16
 
@@ -1372,7 +1390,7 @@ After Tasks 9, 17, and 25:
 | 14 | Improve Scan Result Hover And Click Behavior | done | - |
 | 15 | Auto-Refresh Scan After Hero Selection | done | 12, 13 |
 | 16 | Render Scan Difficulty As Marker Rings | done | - |
-| 17 | End-To-End Workflow Verification | blocked | 10, 11, 12, 13, 14, 15, 16 |
+| 17 | End-To-End Workflow Verification | done | 10, 11, 12, 13, 14, 15, 16 |
 | 18 | Add Pathfinding Service Contract | todo | 3, 8 |
 | 19 | Implement Land-Only Shortest Path Search | blocked | 18 |
 | 20 | Add Portal And Subterranean Gate Traversal | blocked | 19 |
