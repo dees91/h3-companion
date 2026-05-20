@@ -1100,15 +1100,26 @@ without portal traversal. Use uniform-cost shortest path over 8-directional
 land neighbors and ignore water, blocked tiles, roads, and movement points.
 
 **Acceptance criteria:**
-- [ ] Search starts from the selected hero's current `(x, y, z)`.
-- [ ] Normal movement uses 8-directional neighboring `land` tiles.
-- [ ] `water` and `blocked` tiles are not traversed.
-- [ ] The returned path is the shortest path by number of graph steps.
-- [ ] No path is returned when the target is unreachable on land.
+- [x] Search starts from the selected hero's current `(x, y, z)`.
+- [x] Normal movement uses 8-directional neighboring `land` tiles.
+- [x] `water` and `blocked` tiles are not traversed.
+- [x] The returned path is the shortest path by number of graph steps.
+- [x] No path is returned when the target is unreachable on land.
 
 **Verification:**
-- [ ] Add tests for reachable, unreachable, diagonal, water, and blocked cases.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Add tests for reachable, unreachable, diagonal, water, and blocked cases.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion notes:**
+- Added `find_land_path(...)`, a same-level BFS over deterministic 8-directional
+  neighbors that only traverses `land` route tiles and ignores portal edges.
+- Returned found paths include start/target `PathfindingStep`s and one walk
+  segment. Unreachable, water, and blocked targets return `not_found`.
+- MVP diagonal movement intentionally permits corner cutting when the diagonal
+  destination tile is land.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent plan and code reviews
+  completed with no blocking findings.
 
 **Dependencies:** Task 18
 
@@ -1404,8 +1415,8 @@ After Tasks 9, 17, and 25:
 | 16 | Render Scan Difficulty As Marker Rings | done | - |
 | 17 | End-To-End Workflow Verification | done | 10, 11, 12, 13, 14, 15, 16 |
 | 18 | Add Pathfinding Service Contract | done | 3, 8 |
-| 19 | Implement Land-Only Shortest Path Search | todo | 18 |
-| 20 | Add Portal And Subterranean Gate Traversal | blocked | 19 |
+| 19 | Implement Land-Only Shortest Path Search | done | 18 |
+| 20 | Add Portal And Subterranean Gate Traversal | todo | 19 |
 | 21 | Resolve Blocked Targets And Terminal Markers | blocked | 20 |
 | 22 | Expose A Pathfinding API Endpoint | blocked | 21 |
 | 23 | Add Path Mode UI And Route Rendering | blocked | 22 |

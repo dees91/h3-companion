@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -63,6 +64,16 @@ PATH_SEGMENT_TYPES = frozenset((
     PATH_SEGMENT_WALK,
     PATH_SEGMENT_PORTAL,
 ))
+_LAND_NEIGHBOR_DELTAS = (
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-1, 0),
+    (1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+)
 
 
 class SnapshotModeError(ValueError):
@@ -1266,6 +1277,106 @@ def build_pathfinding_request(
         requested_target_position=_path_position_from_value(requested_target_position),
         route_map=route_map,
         portal_edges=_pathfinding_portal_edges(portal_targets, portal_edges),
+    )
+
+
+def find_land_path(request: PathfindingRequest) -> PathfindingResult:
+    """Find a shortest same-level path over land route tiles only."""
+
+    if not isinstance(request, PathfindingRequest):
+        raise ValueError("request must be PathfindingRequest")
+
+    target_position = request.requested_target_position
+    if request.route_map.state_at(target_position) != PATH_ROUTE_LAND:
+        return _path_not_found_result(request, "target is not a land route tile")
+    if request.start_position == target_position:
+        return _pathfinding_result_for_positions(request, (request.start_position,))
+
+    frontier = deque((request.start_position,))
+    previous_by_key = {request.start_position.key: None}
+    position_by_key = {request.start_position.key: request.start_position}
+    target_key = target_position.key
+
+    while frontier:
+        current_position = frontier.popleft()
+        for next_position in _land_neighbor_positions(
+            request.route_map,
+            current_position,
+        ):
+            next_key = next_position.key
+            if next_key in previous_by_key:
+                continue
+            previous_by_key[next_key] = current_position.key
+            position_by_key[next_key] = next_position
+            if next_key == target_key:
+                positions = _reconstruct_path_positions(
+                    previous_by_key,
+                    position_by_key,
+                    next_key,
+                )
+                return _pathfinding_result_for_positions(request, positions)
+            frontier.append(next_position)
+
+    return _path_not_found_result(request, "no land path found")
+
+
+def _land_neighbor_positions(
+    route_map: PathRouteMap,
+    position: PathPosition,
+):
+    for dx, dy in _LAND_NEIGHBOR_DELTAS:
+        candidate = PathPosition(position.x + dx, position.y + dy, position.z)
+        if not route_map.contains(candidate):
+            continue
+        if route_map.state_at(candidate) != PATH_ROUTE_LAND:
+            continue
+        yield candidate
+
+
+def _reconstruct_path_positions(
+    previous_by_key: dict,
+    position_by_key: dict,
+    target_key: tuple[int, int, int],
+) -> tuple[PathPosition, ...]:
+    path_keys = []
+    current_key = target_key
+    while current_key is not None:
+        path_keys.append(current_key)
+        current_key = previous_by_key[current_key]
+    path_keys.reverse()
+    return tuple(position_by_key[key] for key in path_keys)
+
+
+def _pathfinding_result_for_positions(
+    request: PathfindingRequest,
+    positions: tuple[PathPosition, ...],
+) -> PathfindingResult:
+    if not positions:
+        raise ValueError("pathfinding result requires at least one position")
+    steps = tuple(PathfindingStep(position) for position in positions)
+    segment = PathfindingSegment(
+        PATH_SEGMENT_WALK,
+        positions[0],
+        positions[-1],
+        steps=steps,
+    )
+    return PathfindingResult(
+        PATH_STATUS_FOUND,
+        requested_target_position=request.requested_target_position,
+        resolved_target_position=positions[-1],
+        steps=steps,
+        segments=(segment,),
+    )
+
+
+def _path_not_found_result(
+    request: PathfindingRequest,
+    message: str,
+) -> PathfindingResult:
+    return PathfindingResult(
+        PATH_STATUS_NOT_FOUND,
+        requested_target_position=request.requested_target_position,
+        message=message,
     )
 
 

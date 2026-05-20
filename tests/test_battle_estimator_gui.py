@@ -3481,6 +3481,169 @@ class BattleEstimatorGuiPathfindingContractTests(unittest.TestCase):
         )
 
 
+class BattleEstimatorGuiLandPathTests(unittest.TestCase):
+    def test_find_land_path_returns_shortest_diagonal_route(self):
+        request = self._land_request(
+            [
+                ["LLLL", "LLLL", "LLLL"],
+            ],
+            (0, 0, 0),
+            (3, 2, 0),
+        )
+
+        result = battle_estimator_gui.find_land_path(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(
+            result.requested_target_position,
+            battle_estimator_gui.PathPosition(3, 2, 0),
+        )
+        self.assertEqual(
+            result.resolved_target_position,
+            result.requested_target_position,
+        )
+        self.assertEqual(
+            self._step_keys(result),
+            [(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 2, 0)],
+        )
+        self.assertEqual(len(result.steps) - 1, 3)
+        self.assertEqual(len(result.segments), 1)
+        self.assertEqual(
+            result.segments[0].segment_type,
+            battle_estimator_gui.PATH_SEGMENT_WALK,
+        )
+        self.assertEqual(result.segments[0].steps, result.steps)
+        self.assertTrue(all(step.position.z == 0 for step in result.steps))
+
+    def test_find_land_path_allows_diagonal_corner_cutting_in_mvp(self):
+        request = self._land_request(
+            [
+                ["LB", "BL"],
+            ],
+            (0, 0, 0),
+            (1, 1, 0),
+        )
+
+        result = battle_estimator_gui.find_land_path(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(self._step_keys(result), [(0, 0, 0), (1, 1, 0)])
+
+    def test_find_land_path_does_not_traverse_water_or_blocked_tiles(self):
+        request = self._land_request(
+            [
+                ["LLL", "WBL", "LLL"],
+            ],
+            (0, 2, 0),
+            (2, 0, 0),
+        )
+
+        result = battle_estimator_gui.find_land_path(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertGreater(len(result.steps) - 1, 2)
+        for step in result.steps:
+            self.assertEqual(
+                request.route_map.state_at(step.position),
+                battle_estimator_gui.PATH_ROUTE_LAND,
+            )
+
+    def test_find_land_path_returns_not_found_for_unreachable_land_target(self):
+        request = self._land_request(
+            [
+                ["LWL", "WWW", "LLL"],
+            ],
+            (0, 0, 0),
+            (2, 0, 0),
+        )
+
+        result = battle_estimator_gui.find_land_path(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_NOT_FOUND)
+        self.assertEqual(result.steps, ())
+        self.assertEqual(result.segments, ())
+        self.assertIsNone(result.resolved_target_position)
+        self.assertIn("no land path", result.message)
+
+    def test_find_land_path_returns_not_found_for_water_or_blocked_target(self):
+        for target_position in ((1, 0, 0), (2, 0, 0)):
+            with self.subTest(target_position=target_position):
+                request = self._land_request(
+                    [
+                        ["LWB"],
+                    ],
+                    (0, 0, 0),
+                    target_position,
+                )
+
+                result = battle_estimator_gui.find_land_path(request)
+
+                self.assertEqual(
+                    result.status,
+                    battle_estimator_gui.PATH_STATUS_NOT_FOUND,
+                )
+                self.assertEqual(result.requested_target_position.key, target_position)
+                self.assertEqual(result.steps, ())
+                self.assertEqual(result.segments, ())
+                self.assertIn("not a land route tile", result.message)
+
+    def test_find_land_path_ignores_portal_edges(self):
+        portal_edge = battle_estimator_gui.PathfindingPortalEdge(
+            source_id="portal:0",
+            destination_id="portal:1",
+            source_position=(0, 0, 0),
+            destination_position=(2, 0, 0),
+            portal_type=h3_map_parser.PORTAL_TYPE_MONOLITH_TWO_WAY,
+            channel_key="monolith-two-way:1",
+        )
+        request = battle_estimator_gui.PathfindingRequest(
+            start_position=(0, 0, 0),
+            requested_target_position=(2, 0, 0),
+            route_map=[
+                ["LWL", "WWW", "LLL"],
+            ],
+            portal_edges=(portal_edge,),
+        )
+
+        result = battle_estimator_gui.find_land_path(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_NOT_FOUND)
+        self.assertEqual(result.steps, ())
+        self.assertEqual(result.segments, ())
+
+    def test_find_land_path_handles_start_equal_to_target(self):
+        request = self._land_request(
+            [
+                ["L"],
+            ],
+            (0, 0, 0),
+            (0, 0, 0),
+        )
+
+        result = battle_estimator_gui.find_land_path(request)
+
+        self.assertEqual(result.status, battle_estimator_gui.PATH_STATUS_FOUND)
+        self.assertEqual(self._step_keys(result), [(0, 0, 0)])
+        self.assertEqual(
+            result.segments[0].start_position,
+            result.segments[0].end_position,
+        )
+
+    def test_find_land_path_rejects_non_request_input(self):
+        with self.assertRaisesRegex(ValueError, "request must be PathfindingRequest"):
+            battle_estimator_gui.find_land_path(object())
+
+    def _land_request(self, route_layers, start_position, target_position):
+        return battle_estimator_gui.build_pathfinding_request(
+            start_position,
+            target_position,
+            route_layers,
+        )
+
+    def _step_keys(self, result):
+        return [step.position.key for step in result.steps]
+
+
 class BattleEstimatorGuiSnapshotTests(unittest.TestCase):
     def test_route_layers_serializer_uses_compact_rows_per_level(self):
         header = h3_map_parser.H3MapHeader(
