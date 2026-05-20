@@ -56,6 +56,13 @@ H3M_OBJECT_MONOLITH_ONE_WAY_EXIT = 44
 H3M_OBJECT_MONOLITH_TWO_WAY = 45
 H3M_OBJECT_SUBTERRANEAN_GATE = 103
 
+PORTAL_TYPE_MONOLITH_ONE_WAY = "monolith_one_way"
+PORTAL_TYPE_MONOLITH_TWO_WAY = "monolith_two_way"
+PORTAL_TYPE_SUBTERRANEAN_GATE = "subterranean_gate"
+PORTAL_ROLE_ENTRANCE = "entrance"
+PORTAL_ROLE_EXIT = "exit"
+PORTAL_ROLE_BOTH = "both"
+
 H3M_TERRAIN_WATER = 8
 H3M_TERRAIN_ROCK = 9
 ROUTE_LAND = "land"
@@ -74,6 +81,13 @@ H3M_MONSTER_OBJECT_IDS = frozenset((
 H3M_TOWN_OBJECT_IDS = frozenset((
     H3M_OBJECT_RANDOM_TOWN,
     H3M_OBJECT_TOWN,
+))
+
+H3M_PORTAL_OBJECT_IDS = frozenset((
+    H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+    H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+    H3M_OBJECT_MONOLITH_TWO_WAY,
+    H3M_OBJECT_SUBTERRANEAN_GATE,
 ))
 
 H3M_ROUTE_TRANSPARENT_OBJECT_IDS = H3M_MONSTER_OBJECT_IDS | frozenset((
@@ -381,6 +395,36 @@ class H3TownTarget:
 
 
 @dataclass(frozen=True)
+class H3PortalTarget:
+    """Teleport target derived from an H3M map object."""
+
+    object_index: int
+    x: int
+    y: int
+    z: int
+    anchor_x: int
+    anchor_y: int
+    anchor_z: int
+    template: H3ObjectTemplate
+    object_id: int
+    h3m_subid: int
+    portal_type: str
+    role: str
+    channel_key: str
+
+
+@dataclass(frozen=True)
+class H3PortalEdge:
+    """Directed static teleport edge between two portal targets."""
+
+    source_object_index: int
+    destination_object_index: int
+    portal_type: str
+    channel_key: str
+    h3m_subid: int | None = None
+
+
+@dataclass(frozen=True)
 class LoadedH3Map:
     """Decompressed H3M map bytes and parsed smoke-level metadata."""
 
@@ -396,6 +440,8 @@ class LoadedH3Map:
     objects: tuple[H3MapObject, ...] = field(default_factory=tuple)
     neutral_targets: tuple[H3NeutralMonsterTarget, ...] = field(default_factory=tuple)
     town_targets: tuple[H3TownTarget, ...] = field(default_factory=tuple)
+    portal_targets: tuple[H3PortalTarget, ...] = field(default_factory=tuple)
+    portal_edges: tuple[H3PortalEdge, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -425,12 +471,15 @@ class _ParsedH3MStructures:
     objects: tuple[H3MapObject, ...]
     neutral_targets: tuple[H3NeutralMonsterTarget, ...]
     town_targets: tuple[H3TownTarget, ...]
+    portal_targets: tuple[H3PortalTarget, ...]
+    portal_edges: tuple[H3PortalEdge, ...]
 
 
 @dataclass(frozen=True)
 class _ObjectPayloadResult:
     neutral_target: H3NeutralMonsterTarget | None = None
     town_target: H3TownTarget | None = None
+    portal_target: H3PortalTarget | None = None
 
 
 class H3MapLoadError(ValueError):
@@ -544,6 +593,8 @@ def load_h3m_bytes(
             objects=parsed.objects,
             neutral_targets=parsed.neutral_targets,
             town_targets=parsed.town_targets,
+            portal_targets=parsed.portal_targets,
+            portal_edges=parsed.portal_edges,
         )
 
     header = parse_h3m_header(data, h3m_offset, map_path)
@@ -854,7 +905,8 @@ def _parse_h3m_structures(
     _skip_predefined_heroes(reader, features)
     terrain_tiles = _read_terrain(reader, header)
     templates = _read_object_templates(reader)
-    objects, targets, town_targets = _read_objects(reader, templates, features)
+    objects, targets, town_targets, portal_targets = _read_objects(reader, templates, features)
+    portal_targets, portal_edges = _build_portal_topology(portal_targets)
     route_tiles = _build_route_tiles(header, terrain_tiles, templates, objects)
     return _ParsedH3MStructures(
         header=header,
@@ -866,6 +918,8 @@ def _parse_h3m_structures(
         objects=objects,
         neutral_targets=targets,
         town_targets=town_targets,
+        portal_targets=portal_targets,
+        portal_edges=portal_edges,
     )
 
 
@@ -1268,11 +1322,13 @@ def _read_objects(
     tuple[H3MapObject, ...],
     tuple[H3NeutralMonsterTarget, ...],
     tuple[H3TownTarget, ...],
+    tuple[H3PortalTarget, ...],
 ]:
     count = reader.read_u32("object count")
     objects = []
     neutral_targets = []
     town_targets = []
+    portal_targets = []
     for object_index in range(count):
         x = reader.read_u8(f"object {object_index} x")
         y = reader.read_u8(f"object {object_index} y")
@@ -1304,8 +1360,10 @@ def _read_objects(
             neutral_targets.append(payload.neutral_target)
         if payload.town_target is not None:
             town_targets.append(payload.town_target)
+        if payload.portal_target is not None:
+            portal_targets.append(payload.portal_target)
 
-    return tuple(objects), tuple(neutral_targets), tuple(town_targets)
+    return tuple(objects), tuple(neutral_targets), tuple(town_targets), tuple(portal_targets)
 
 
 def _read_object_payload(
@@ -1365,6 +1423,10 @@ def _read_object_payload(
     elif object_id in H3M_TOWN_OBJECT_IDS:
         return _ObjectPayloadResult(
             town_target=_read_town_target(reader, features, map_object, template),
+        )
+    elif object_id in H3M_PORTAL_OBJECT_IDS:
+        return _ObjectPayloadResult(
+            portal_target=_read_portal_target(map_object, template),
         )
     return _ObjectPayloadResult()
 
@@ -1775,6 +1837,221 @@ def _project_first_visitable_mask_tile(
                     map_object.z,
                 )
     return map_object.x, map_object.y, map_object.z
+
+
+def _read_portal_target(
+    map_object: H3MapObject,
+    template: H3ObjectTemplate,
+) -> H3PortalTarget:
+    portal_type, role = _portal_type_and_role(template.object_id)
+    x, y, z = _project_first_visitable_mask_tile(map_object, template)
+    return H3PortalTarget(
+        object_index=map_object.object_index,
+        x=x,
+        y=y,
+        z=z,
+        anchor_x=map_object.x,
+        anchor_y=map_object.y,
+        anchor_z=map_object.z,
+        template=template,
+        object_id=template.object_id,
+        h3m_subid=template.subid,
+        portal_type=portal_type,
+        role=role,
+        channel_key=_initial_portal_channel_key(map_object, template, portal_type),
+    )
+
+
+def _portal_type_and_role(object_id: int) -> tuple[str, str]:
+    if object_id == H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE:
+        return PORTAL_TYPE_MONOLITH_ONE_WAY, PORTAL_ROLE_ENTRANCE
+    if object_id == H3M_OBJECT_MONOLITH_ONE_WAY_EXIT:
+        return PORTAL_TYPE_MONOLITH_ONE_WAY, PORTAL_ROLE_EXIT
+    if object_id == H3M_OBJECT_MONOLITH_TWO_WAY:
+        return PORTAL_TYPE_MONOLITH_TWO_WAY, PORTAL_ROLE_BOTH
+    if object_id == H3M_OBJECT_SUBTERRANEAN_GATE:
+        return PORTAL_TYPE_SUBTERRANEAN_GATE, PORTAL_ROLE_BOTH
+    raise ValueError(f"unsupported portal object id: {object_id}")
+
+
+def _initial_portal_channel_key(
+    map_object: H3MapObject,
+    template: H3ObjectTemplate,
+    portal_type: str,
+) -> str:
+    if portal_type == PORTAL_TYPE_MONOLITH_ONE_WAY:
+        return f"monolith-one-way:{template.subid}"
+    if portal_type == PORTAL_TYPE_MONOLITH_TWO_WAY:
+        return f"monolith-two-way:{template.subid}"
+    return f"subterranean:{map_object.object_index}"
+
+
+def _build_portal_topology(
+    portal_targets: tuple[H3PortalTarget, ...],
+) -> tuple[tuple[H3PortalTarget, ...], tuple[H3PortalEdge, ...]]:
+    channel_keys = {
+        target.object_index: target.channel_key
+        for target in portal_targets
+    }
+    edges = []
+    edges.extend(_build_one_way_monolith_edges(portal_targets))
+    edges.extend(_build_two_way_monolith_edges(portal_targets))
+
+    subterranean_edges, subterranean_channel_keys = _build_subterranean_gate_edges(
+        portal_targets,
+    )
+    edges.extend(subterranean_edges)
+    channel_keys.update(subterranean_channel_keys)
+
+    updated_targets = tuple(
+        replace(target, channel_key=channel_keys[target.object_index])
+        for target in portal_targets
+    )
+    return updated_targets, tuple(edges)
+
+
+def _build_one_way_monolith_edges(
+    portal_targets: tuple[H3PortalTarget, ...],
+) -> tuple[H3PortalEdge, ...]:
+    entrances = {}
+    exits = {}
+    for target in portal_targets:
+        if target.portal_type != PORTAL_TYPE_MONOLITH_ONE_WAY:
+            continue
+        if target.role == PORTAL_ROLE_ENTRANCE:
+            entrances.setdefault(target.h3m_subid, []).append(target)
+        elif target.role == PORTAL_ROLE_EXIT:
+            exits.setdefault(target.h3m_subid, []).append(target)
+
+    edges = []
+    for subid in sorted(entrances):
+        channel_key = f"monolith-one-way:{subid}"
+        for source in entrances[subid]:
+            for destination in exits.get(subid, ()):
+                edges.append(
+                    _portal_edge(
+                        source,
+                        destination,
+                        PORTAL_TYPE_MONOLITH_ONE_WAY,
+                        channel_key,
+                        subid,
+                    )
+                )
+    return tuple(edges)
+
+
+def _build_two_way_monolith_edges(
+    portal_targets: tuple[H3PortalTarget, ...],
+) -> tuple[H3PortalEdge, ...]:
+    groups = {}
+    for target in portal_targets:
+        if target.portal_type != PORTAL_TYPE_MONOLITH_TWO_WAY:
+            continue
+        groups.setdefault(target.h3m_subid, []).append(target)
+
+    edges = []
+    for subid in sorted(groups):
+        group = groups[subid]
+        if len(group) < 2:
+            continue
+        channel_key = f"monolith-two-way:{subid}"
+        for source in group:
+            for destination in group:
+                if source.object_index == destination.object_index:
+                    continue
+                edges.append(
+                    _portal_edge(
+                        source,
+                        destination,
+                        PORTAL_TYPE_MONOLITH_TWO_WAY,
+                        channel_key,
+                        subid,
+                    )
+                )
+    return tuple(edges)
+
+
+def _build_subterranean_gate_edges(
+    portal_targets: tuple[H3PortalTarget, ...],
+) -> tuple[tuple[H3PortalEdge, ...], dict[int, str]]:
+    gates = [
+        target
+        for target in portal_targets
+        if target.portal_type == PORTAL_TYPE_SUBTERRANEAN_GATE
+    ]
+    surface_gates = sorted(
+        (target for target in gates if target.z == 0),
+        key=lambda target: (target.z, target.y, target.x),
+    )
+    underground_gates = [
+        target
+        for target in gates
+        if target.z == 1
+    ]
+    assigned_underground = set()
+    channel_keys = {}
+    edges = []
+
+    for surface in surface_gates:
+        best_gate = None
+        best_distance = None
+        for candidate in underground_gates:
+            if candidate.object_index in assigned_underground:
+                continue
+            distance = _portal_distance_2d_sq(surface, candidate)
+            if best_distance is None or distance < best_distance:
+                best_gate = candidate
+                best_distance = distance
+
+        if best_gate is None:
+            continue
+
+        assigned_underground.add(best_gate.object_index)
+        channel_key = f"subterranean:{surface.object_index}:{best_gate.object_index}"
+        channel_keys[surface.object_index] = channel_key
+        channel_keys[best_gate.object_index] = channel_key
+        edges.append(
+            _portal_edge(
+                surface,
+                best_gate,
+                PORTAL_TYPE_SUBTERRANEAN_GATE,
+                channel_key,
+                None,
+            )
+        )
+        edges.append(
+            _portal_edge(
+                best_gate,
+                surface,
+                PORTAL_TYPE_SUBTERRANEAN_GATE,
+                channel_key,
+                None,
+            )
+        )
+
+    return tuple(edges), channel_keys
+
+
+def _portal_distance_2d_sq(source: H3PortalTarget, destination: H3PortalTarget) -> int:
+    dx = source.x - destination.x
+    dy = source.y - destination.y
+    return dx * dx + dy * dy
+
+
+def _portal_edge(
+    source: H3PortalTarget,
+    destination: H3PortalTarget,
+    portal_type: str,
+    channel_key: str,
+    h3m_subid: int | None,
+) -> H3PortalEdge:
+    return H3PortalEdge(
+        source_object_index=source.object_index,
+        destination_object_index=destination.object_index,
+        portal_type=portal_type,
+        channel_key=channel_key,
+        h3m_subid=h3m_subid,
+    )
 
 
 def _skip_map_event_common(

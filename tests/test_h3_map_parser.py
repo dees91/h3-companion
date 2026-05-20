@@ -468,6 +468,28 @@ class H3MapParserContractTests(unittest.TestCase):
             custom_name="Synthetic Town",
             has_garrison=True,
         )
+        portal_target = h3_map_parser.H3PortalTarget(
+            object_index=12,
+            x=38,
+            y=70,
+            z=1,
+            anchor_x=39,
+            anchor_y=70,
+            anchor_z=1,
+            template=template,
+            object_id=h3_map_parser.H3M_OBJECT_MONOLITH_TWO_WAY,
+            h3m_subid=4,
+            portal_type=h3_map_parser.PORTAL_TYPE_MONOLITH_TWO_WAY,
+            role=h3_map_parser.PORTAL_ROLE_BOTH,
+            channel_key="monolith-two-way:4",
+        )
+        portal_edge = h3_map_parser.H3PortalEdge(
+            source_object_index=12,
+            destination_object_index=13,
+            portal_type=h3_map_parser.PORTAL_TYPE_MONOLITH_TWO_WAY,
+            channel_key="monolith-two-way:4",
+            h3m_subid=4,
+        )
         terrain_tile = h3_map_parser.H3TerrainTile(
             x=1,
             y=2,
@@ -491,6 +513,9 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(town_target.initial_owner, 2)
         self.assertEqual(town_target.custom_name, "Synthetic Town")
         self.assertTrue(town_target.has_garrison)
+        self.assertEqual(portal_target.channel_key, "monolith-two-way:4")
+        self.assertEqual(portal_target.role, h3_map_parser.PORTAL_ROLE_BOTH)
+        self.assertEqual(portal_edge.destination_object_index, 13)
         self.assertEqual(terrain_tile.terrain_type, 8)
         self.assertEqual(terrain_tile.road_direction, 4)
 
@@ -1192,6 +1217,360 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(town.initial_owner, 1)
         self.assertEqual(town.custom_name, "")
         self.assertFalse(town.has_garrison)
+
+    def test_parse_one_way_portals_with_multiple_exits_keeps_stream_offset(self):
+        entrance_visit_mask = bytes((0x01, 0x00, 0x00, 0x00, 0x00, 0x40))
+        templates = (
+            _object_template_bytes(
+                "AVXmn1e.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+                subid=2,
+                visit_mask=entrance_visit_mask,
+            ),
+            _object_template_bytes(
+                "AVXmn1x.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+                subid=2,
+            ),
+            _object_template_bytes(
+                "AVXmn1y.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+                subid=3,
+            ),
+            _object_template_bytes(
+                "AVXmn2w.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_TWO_WAY,
+                subid=2,
+            ),
+            _object_template_bytes(
+                "AVWgnll0.def",
+                h3_map_parser.H3M_OBJECT_MONSTER,
+                subid=98,
+                object_type=2,
+            ),
+        )
+        objects = (
+            _object_bytes((7, 5, 0), 0, b""),
+            _object_bytes((1, 1, 0), 1, b""),
+            _object_bytes((2, 2, 0), 1, b""),
+            _object_bytes((3, 3, 0), 2, b""),
+            _object_bytes((4, 4, 0), 3, b""),
+            _object_bytes((5, 5, 0), 4, _monster_payload(count=17)),
+        )
+        payload = _minimal_h3m_with_templates_and_objects(
+            h3_map_parser.H3M_FORMAT_SOD,
+            templates,
+            objects,
+            map_size=8,
+        )
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "/tmp/one-way-portals.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(len(loaded.portal_targets), 5)
+        entrance = loaded.portal_targets[0]
+        self.assertEqual(entrance.object_index, 0)
+        self.assertEqual((entrance.x, entrance.y, entrance.z), (6, 5, 0))
+        self.assertEqual(entrance.role, h3_map_parser.PORTAL_ROLE_ENTRANCE)
+        self.assertEqual(entrance.channel_key, "monolith-one-way:2")
+        self.assertEqual(loaded.portal_targets[1].role, h3_map_parser.PORTAL_ROLE_EXIT)
+        self.assertEqual(loaded.portal_targets[4].portal_type, h3_map_parser.PORTAL_TYPE_MONOLITH_TWO_WAY)
+        self.assertEqual(
+            {
+                (
+                    edge.source_object_index,
+                    edge.destination_object_index,
+                    edge.portal_type,
+                    edge.channel_key,
+                    edge.h3m_subid,
+                )
+                for edge in loaded.portal_edges
+            },
+            {
+                (0, 1, h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY, "monolith-one-way:2", 2),
+                (0, 2, h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY, "monolith-one-way:2", 2),
+            },
+        )
+        self.assertEqual(len(loaded.neutral_targets), 1)
+        self.assertEqual(loaded.neutral_targets[0].object_index, 5)
+        self.assertEqual(
+            h3_map_parser.parse_h3m_neutral_monsters(
+                payload,
+                path="/tmp/one-way-portals.h3m",
+            ),
+            loaded.neutral_targets,
+        )
+
+    def test_parse_two_way_portals_builds_bidirectional_edges_without_self_edges(self):
+        templates = (
+            _object_template_bytes(
+                "AVXmn2w.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_TWO_WAY,
+                subid=7,
+            ),
+            _object_template_bytes(
+                "AVXmn2x.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_TWO_WAY,
+                subid=8,
+            ),
+        )
+        objects = (
+            _object_bytes((1, 1, 0), 0, b""),
+            _object_bytes((2, 2, 0), 0, b""),
+            _object_bytes((3, 3, 0), 0, b""),
+            _object_bytes((4, 4, 0), 1, b""),
+        )
+        payload = _minimal_h3m_with_templates_and_objects(
+            h3_map_parser.H3M_FORMAT_SOD,
+            templates,
+            objects,
+            map_size=5,
+        )
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "/tmp/two-way-portals.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(
+            [(target.object_index, target.channel_key) for target in loaded.portal_targets],
+            [
+                (0, "monolith-two-way:7"),
+                (1, "monolith-two-way:7"),
+                (2, "monolith-two-way:7"),
+                (3, "monolith-two-way:8"),
+            ],
+        )
+        self.assertEqual(
+            {
+                (edge.source_object_index, edge.destination_object_index)
+                for edge in loaded.portal_edges
+            },
+            {
+                (0, 1),
+                (0, 2),
+                (1, 0),
+                (1, 2),
+                (2, 0),
+                (2, 1),
+            },
+        )
+        self.assertTrue(
+            all(
+                edge.portal_type == h3_map_parser.PORTAL_TYPE_MONOLITH_TWO_WAY
+                and edge.channel_key == "monolith-two-way:7"
+                and edge.h3m_subid == 7
+                for edge in loaded.portal_edges
+            )
+        )
+        self.assertFalse(
+            any(edge.source_object_index == edge.destination_object_index for edge in loaded.portal_edges)
+        )
+
+    def test_parse_subterranean_gates_pairs_nearest_underground_in_vcmi_order(self):
+        templates = (
+            _object_template_bytes(
+                "AVXsubg.def",
+                h3_map_parser.H3M_OBJECT_SUBTERRANEAN_GATE,
+            ),
+        )
+        objects = (
+            _object_bytes((5, 5, 0), 0, b""),
+            _object_bytes((4, 5, 1), 0, b""),
+            _object_bytes((6, 5, 1), 0, b""),
+            _object_bytes((20, 20, 0), 0, b""),
+            _object_bytes((21, 20, 1), 0, b""),
+        )
+        payload = _minimal_h3m_with_templates_and_objects(
+            h3_map_parser.H3M_FORMAT_SOD,
+            templates,
+            objects,
+            map_size=32,
+            levels=2,
+        )
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "/tmp/subterranean-gates.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(
+            [(target.object_index, target.channel_key) for target in loaded.portal_targets],
+            [
+                (0, "subterranean:0:1"),
+                (1, "subterranean:0:1"),
+                (2, "subterranean:2"),
+                (3, "subterranean:3:4"),
+                (4, "subterranean:3:4"),
+            ],
+        )
+        self.assertEqual(
+            {
+                (
+                    edge.source_object_index,
+                    edge.destination_object_index,
+                    edge.portal_type,
+                    edge.channel_key,
+                    edge.h3m_subid,
+                )
+                for edge in loaded.portal_edges
+            },
+            {
+                (0, 1, h3_map_parser.PORTAL_TYPE_SUBTERRANEAN_GATE, "subterranean:0:1", None),
+                (1, 0, h3_map_parser.PORTAL_TYPE_SUBTERRANEAN_GATE, "subterranean:0:1", None),
+                (3, 4, h3_map_parser.PORTAL_TYPE_SUBTERRANEAN_GATE, "subterranean:3:4", None),
+                (4, 3, h3_map_parser.PORTAL_TYPE_SUBTERRANEAN_GATE, "subterranean:3:4", None),
+            },
+        )
+
+    def test_parse_subterranean_gates_sorts_surface_gates_by_visitable_position(self):
+        templates = (
+            _object_template_bytes(
+                "AVXsubg.def",
+                h3_map_parser.H3M_OBJECT_SUBTERRANEAN_GATE,
+            ),
+        )
+        objects = (
+            _object_bytes((2, 0, 0), 0, b""),
+            _object_bytes((1, 0, 1), 0, b""),
+            _object_bytes((0, 0, 0), 0, b""),
+            _object_bytes((31, 0, 1), 0, b""),
+        )
+        payload = _minimal_h3m_with_templates_and_objects(
+            h3_map_parser.H3M_FORMAT_SOD,
+            templates,
+            objects,
+            map_size=32,
+            levels=2,
+        )
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "/tmp/subterranean-surface-sort.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(
+            [(target.object_index, target.channel_key) for target in loaded.portal_targets],
+            [
+                (0, "subterranean:0:3"),
+                (1, "subterranean:2:1"),
+                (2, "subterranean:2:1"),
+                (3, "subterranean:0:3"),
+            ],
+        )
+        self.assertEqual(
+            {
+                (edge.source_object_index, edge.destination_object_index)
+                for edge in loaded.portal_edges
+            },
+            {
+                (0, 3),
+                (3, 0),
+                (2, 1),
+                (1, 2),
+            },
+        )
+
+    def test_parse_subterranean_gates_ignores_z_above_one_for_pairing(self):
+        templates = (
+            _object_template_bytes(
+                "AVXsubg.def",
+                h3_map_parser.H3M_OBJECT_SUBTERRANEAN_GATE,
+            ),
+        )
+        objects = (
+            _object_bytes((0, 0, 0), 0, b""),
+            _object_bytes((0, 0, 2), 0, b""),
+            _object_bytes((1, 0, 1), 0, b""),
+        )
+        payload = _minimal_h3m_with_templates_and_objects(
+            h3_map_parser.H3M_FORMAT_SOD,
+            templates,
+            objects,
+            map_size=2,
+            levels=2,
+        )
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "/tmp/subterranean-z-above-one.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(
+            [(target.object_index, target.channel_key) for target in loaded.portal_targets],
+            [
+                (0, "subterranean:0:2"),
+                (1, "subterranean:1"),
+                (2, "subterranean:0:2"),
+            ],
+        )
+        self.assertEqual(
+            {
+                (edge.source_object_index, edge.destination_object_index)
+                for edge in loaded.portal_edges
+            },
+            {
+                (0, 2),
+                (2, 0),
+            },
+        )
+
+    def test_parse_impassable_portal_channels_keep_targets_without_edges(self):
+        templates = (
+            _object_template_bytes(
+                "AVXmn1e.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+                subid=1,
+            ),
+            _object_template_bytes(
+                "AVXmn1x.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+                subid=2,
+            ),
+            _object_template_bytes(
+                "AVXmn2w.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_TWO_WAY,
+                subid=3,
+            ),
+            _object_template_bytes(
+                "AVXsubg.def",
+                h3_map_parser.H3M_OBJECT_SUBTERRANEAN_GATE,
+            ),
+        )
+        objects = tuple(
+            _object_bytes((index, index, 0), index, b"")
+            for index in range(len(templates))
+        )
+        payload = _minimal_h3m_with_templates_and_objects(
+            h3_map_parser.H3M_FORMAT_SOD,
+            templates,
+            objects,
+            map_size=4,
+        )
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "/tmp/impassable-portals.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(
+            [(target.object_index, target.channel_key) for target in loaded.portal_targets],
+            [
+                (0, "monolith-one-way:1"),
+                (1, "monolith-one-way:2"),
+                (2, "monolith-two-way:3"),
+                (3, "subterranean:3"),
+            ],
+        )
+        self.assertEqual(loaded.portal_edges, ())
 
     def test_filter_removed_neutral_targets_excludes_by_object_index_and_subid(self):
         template = h3_map_parser.H3ObjectTemplate(

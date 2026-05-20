@@ -465,16 +465,32 @@ and portals.
 portal edges matching VCMI's static channel rules.
 
 **Acceptance criteria:**
-- [ ] One-way monolith entrances and exits are grouped by `subid`.
-- [ ] Two-way monoliths are grouped bidirectionally by `subid`.
-- [ ] Subterranean gates are paired with the nearest opposite-level gate using
+- [x] One-way monolith entrances and exits are grouped by `subid`.
+- [x] Two-way monoliths are grouped bidirectionally by `subid`.
+- [x] Subterranean gates are paired with the nearest opposite-level gate using
       the VCMI-style matching rule.
-- [ ] Multiple exits are represented as multiple possible destinations.
-- [ ] Portal targets use stable IDs based on object index.
+- [x] Multiple exits are represented as multiple possible destinations.
+- [x] Portal targets use stable IDs based on object index.
 
 **Verification:**
-- [ ] Add parser tests for one-way, two-way, and subterranean gate topology.
-- [ ] Run `python3 -m unittest tests.test_h3_map_parser`.
+- [x] Add parser tests for one-way, two-way, and subterranean gate topology.
+- [x] Run `python3 -m unittest tests.test_h3_map_parser`.
+
+**Completion Notes (2026-05-20):**
+- Added `H3PortalTarget` and `H3PortalEdge` parser contracts and exposed
+  `portal_targets`/`portal_edges` from `LoadedH3Map` when object parsing is
+  enabled.
+- Parsed one-way monoliths, two-way monoliths, and subterranean gates without
+  consuming payload bytes, preserving object stream offsets and existing neutral
+  monster parsing compatibility.
+- Built stable portal channel keys from object index or H3M subid, with
+  directed edges for one-way exits, complete two-way monolith groups, and VCMI-
+  style nearest unassigned subterranean gate pairing.
+- Added parser tests for multiple one-way exits, two-way channels, impassable
+  singleton/missing channels, subterranean tie/order behavior, surface sort
+  order, and `z > 1` gate ignoring for pair edges.
+- Verification: `python3 -m unittest tests.test_h3_map_parser` and
+  `python3 -m unittest`.
 
 **Dependencies:** Task 1
 
@@ -843,8 +859,8 @@ After Tasks 9 and 17:
 | 4 | Render The Route Overlay | done | 3 |
 | 5 | Parse Town Targets | done | 1 |
 | 6 | Show Town Markers In The GUI | done | 5 |
-| 7 | Parse Portal Targets And Edges | todo | 1 |
-| 8 | Show Portal Markers And Destinations In The GUI | blocked | 7 |
+| 7 | Parse Portal Targets And Edges | done | 1 |
+| 8 | Show Portal Markers And Destinations In The GUI | todo | 7 |
 | 9 | End-To-End Map Verification | blocked | 4, 6, 8 |
 | 10 | Add Hidden Hero Target State | todo | - |
 | 11 | Add Hero Marker Context Actions | blocked | 10 |
