@@ -45,7 +45,9 @@ across the map:
 - show towns as unique markers,
 - show portals and subterranean gates as unique markers,
 - show portal/gate destination information,
-- make target visibility and scan controls easier to use during play.
+- make target visibility and scan controls easier to use during play,
+- find strategic land routes from the selected hero to clicked map tiles using
+  portals and subterranean gates.
 
 This is not a full Heroes III pathfinder. It is a pragmatic static route
 visualization layer built from the `.h3m` map, combined with the existing save
@@ -83,6 +85,24 @@ data for heroes and neutral-monster removal where already available.
   simulation because the scan already contains the estimate.
 - Scan result difficulty colors should be drawn as marker borders/rings, not as
   marker fills, so owner/team colors remain visible.
+- Pathfinding MVP is land-only: it can use land route tiles plus portal and
+  subterranean-gate edges, but it does not route over water.
+- Neutral monsters are route-passable for pathfinding in this iteration. A
+  later iteration can run battle estimates for required blockers.
+- Towns and ordinary visitable objects are terminals, not transit corridors.
+  The route may end at their target tile, but should not use them as ordinary
+  intermediate path nodes.
+- Pathfinding is started from a GUI `Path mode`; in that mode, marker clicks
+  request a route instead of running battle simulation.
+- Pathfinding optimizes for the fewest tile steps, not movement points, terrain
+  movement cost, or roads.
+- Multi-exit portals are treated as possible edges and must be marked as
+  non-deterministic when used in a returned route.
+- If the clicked tile is blocked, the pathfinder should route to the nearest
+  reachable neighboring tile and report that fallback in the result.
+- Cross-level paths are shown as per-level route segments. The GUI should not
+  automatically switch levels after calculating a path; segment selection can
+  switch level and center the relevant fragment.
 - Roads, movement points, terrain movement cost, fog of war, Fly, Water Walk,
   boats, current town ownership, and exact pathfinding rules are out of scope
   for this iteration.
@@ -213,6 +233,68 @@ easiest = highest win percentage first, then lower distance, then stable target 
 
 If future estimates expose better loss/risk data, `easiest` can be refined, but
 the first implementation should use fields already present in scan results.
+
+### Pathfinding MVP
+
+The pathfinding feature should build on the already parsed static map data:
+
+- `route_layers` for land/water/blocked tile state,
+- `portal_targets` for portal marker positions,
+- `portal_edges` for directed static portal traversal.
+
+Use a simple uniform-cost shortest-path search for MVP. Breadth-first search is
+acceptable because every normal tile step and every portal jump is treated as
+one step. A* is also acceptable if implemented cleanly, but it is not required.
+
+Path graph rules:
+
+- node identity is `(x, y, z)`,
+- normal edges connect 8-directional neighboring `land` tiles on the same
+  level,
+- `water` tiles are not connected in the MVP,
+- `blocked` tiles are not connected,
+- neutral monster positions remain traversable because the existing route layer
+  treats them as route-capable,
+- portal edges connect source portal tile to destination portal tile using the
+  serialized `portal_edges`,
+- one-way portal edges remain one-way,
+- two-way monoliths and subterranean gates are represented by directed edges in
+  both directions when the parser emits both directions.
+
+Destination rules:
+
+- path mode click on an empty land tile routes to that tile,
+- path mode click on a marker routes to that marker's target position,
+- path mode click on a blocked tile routes to the nearest reachable neighbor
+  and includes a fallback note,
+- path mode click on another map level is allowed; the route can use portal or
+  subterranean-gate edges to cross levels.
+
+The returned route should include enough metadata for the GUI to draw both the
+visible path and an explanatory segment list:
+
+```json
+{
+  "status": "found",
+  "start": {"x": 10, "y": 20, "z": 0},
+  "requested_target": {"x": 50, "y": 60, "z": 1},
+  "resolved_target": {"x": 49, "y": 60, "z": 1},
+  "target_fallback": "nearest_reachable_neighbor",
+  "path": [
+    {"x": 10, "y": 20, "z": 0},
+    {"x": 11, "y": 21, "z": 0}
+  ],
+  "segments": [
+    {"type": "walk", "z": 0, "from_index": 0, "to_index": 12},
+    {"type": "portal", "from_index": 12, "to_index": 13, "non_deterministic": false},
+    {"type": "walk", "z": 1, "from_index": 13, "to_index": 24}
+  ]
+}
+```
+
+The exact JSON can change during implementation, but it must preserve these
+concepts: status, requested/resolved target, path coordinates, segment
+metadata, and non-deterministic portal flag.
 
 ## Task 1: Parse Terrain Tiles From H3M
 
@@ -899,6 +981,228 @@ in the local GUI.
 
 **Estimated scope:** Small
 
+## Task 18: Add Pathfinding Service Contract
+
+**Description:** Define backend dataclasses/helpers for pathfinding requests,
+results, path steps, and path segments. Keep this separate from the HTTP
+endpoint so the core pathfinder can be tested without the GUI server.
+
+**Acceptance criteria:**
+- [ ] The service accepts selected hero position, requested target position,
+      route layers, and portal edges.
+- [ ] Result states include at least `found`, `not_found`, and `invalid`.
+- [ ] Results can represent requested vs resolved target positions.
+- [ ] Results can represent walk segments and portal segments.
+- [ ] Portal segments can mark non-deterministic traversal.
+
+**Verification:**
+- [ ] Add focused service-contract tests.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Tasks 3, 8
+
+**Files likely touched:**
+- `tools/battle_estimator_gui.py`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Small
+
+## Task 19: Implement Land-Only Shortest Path Search
+
+**Description:** Implement the first pathfinding pass over static `route_layers`
+without portal traversal. Use uniform-cost shortest path over 8-directional
+land neighbors and ignore water, blocked tiles, roads, and movement points.
+
+**Acceptance criteria:**
+- [ ] Search starts from the selected hero's current `(x, y, z)`.
+- [ ] Normal movement uses 8-directional neighboring `land` tiles.
+- [ ] `water` and `blocked` tiles are not traversed.
+- [ ] The returned path is the shortest path by number of graph steps.
+- [ ] No path is returned when the target is unreachable on land.
+
+**Verification:**
+- [ ] Add tests for reachable, unreachable, diagonal, water, and blocked cases.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 18
+
+**Files likely touched:**
+- `tools/battle_estimator_gui.py`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 20: Add Portal And Subterranean Gate Traversal
+
+**Description:** Extend the pathfinding graph with directed portal edges from
+`portal_edges`, including one-way monoliths, two-way monoliths, and
+subterranean gates.
+
+**Acceptance criteria:**
+- [ ] Portal edges can connect different coordinates on the same level.
+- [ ] Portal edges can connect coordinates across levels.
+- [ ] One-way portal edges are not traversed backwards unless the parser emits
+      a reverse edge.
+- [ ] Multi-exit portal choices are represented as separate possible edges.
+- [ ] A returned path identifies portal segments and marks
+      `non_deterministic` when the used source has multiple possible exits.
+
+**Verification:**
+- [ ] Add tests for one-way, two-way, cross-level, and multi-exit routes.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 19
+
+**Files likely touched:**
+- `tools/battle_estimator_gui.py`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 21: Resolve Blocked Targets And Terminal Markers
+
+**Description:** Add destination resolution rules for path mode: route to marker
+target positions, allow a terminal destination without treating it as a transit
+node, and fall back from blocked clicked tiles to the nearest reachable
+neighbor.
+
+**Acceptance criteria:**
+- [ ] Clicking a land tile routes to that tile.
+- [ ] Clicking a hero, neutral, town, or portal marker routes to that marker's
+      position in path mode.
+- [ ] Towns and ordinary terminal targets can be final destinations but are not
+      used as ordinary intermediate path nodes.
+- [ ] Clicking a blocked tile resolves to the nearest reachable neighboring
+      tile when one exists.
+- [ ] The result reports the fallback when the resolved target differs from the
+      requested target.
+
+**Verification:**
+- [ ] Add tests for marker destinations, terminal destinations, blocked target
+      fallback, and blocked target with no reachable neighbor.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 20
+
+**Files likely touched:**
+- `tools/battle_estimator_gui.py`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 22: Expose A Pathfinding API Endpoint
+
+**Description:** Add a GUI backend endpoint that accepts selected hero ID and a
+requested target tile or marker ID, then returns the serialized pathfinding
+result from the service.
+
+**Acceptance criteria:**
+- [ ] The endpoint rejects requests without a selected/valid hero.
+- [ ] The endpoint accepts explicit target coordinates.
+- [ ] The endpoint accepts marker IDs for visible/known markers.
+- [ ] The endpoint returns path status, path coordinates, segment metadata, and
+      fallback notes.
+- [ ] The endpoint handles stale save/map snapshots consistently with existing
+      GUI endpoints.
+
+**Verification:**
+- [ ] Add API tests for successful path, no path, invalid hero, invalid target,
+      and marker target requests.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 21
+
+**Files likely touched:**
+- `tools/battle_estimator_gui.py`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 23: Add Path Mode UI And Route Rendering
+
+**Description:** Add a `Path mode` control to the GUI. In path mode, clicking a
+tile or marker requests pathfinding instead of running battle simulation, then
+draws the returned path on the canvas.
+
+**Acceptance criteria:**
+- [ ] Path mode can be toggled on and off.
+- [ ] In path mode, clicking an empty tile requests a path to that tile.
+- [ ] In path mode, clicking a marker requests a path to that marker.
+- [ ] Normal click-to-simulate behavior remains unchanged outside path mode.
+- [ ] The visible path segment for the active level is drawn above the route
+      overlay and below markers.
+- [ ] No-path and invalid-path states are shown clearly in the side panel.
+
+**Verification:**
+- [ ] Manual GUI check for tile target, marker target, no path, and normal mode
+      simulation.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 22
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/index.html`
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 24: Add Path Segment List And Cross-Level Navigation
+
+**Description:** Add a path result panel that lists walk and portal segments.
+Segment selection should switch to the segment level and center the relevant
+part of the path without automatically changing level immediately after path
+calculation.
+
+**Acceptance criteria:**
+- [ ] Path results list walk segments and portal/gate segments.
+- [ ] Portal segments show source and destination coordinates.
+- [ ] Non-deterministic portal segments are labeled clearly.
+- [ ] Clicking a segment switches to its level and centers the segment.
+- [ ] Cross-level paths can be inspected one level at a time.
+
+**Verification:**
+- [ ] Manual GUI check with a path using a subterranean gate.
+- [ ] Manual GUI check with a path using a monolith, if the current map has
+      one.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 23
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 25: End-To-End Pathfinding Verification
+
+**Description:** Verify pathfinding on real generated maps with same-level
+routes, cross-level routes through subterranean gates, and routes through
+monoliths when available.
+
+**Acceptance criteria:**
+- [ ] Same-level land route draws a plausible shortest path.
+- [ ] Blocked target fallback is reported and visualized.
+- [ ] Cross-level route through a subterranean gate is segmented correctly.
+- [ ] Portal route shows portal segment metadata.
+- [ ] Normal simulation clicks still work outside path mode.
+- [ ] Pathfinding does not route over water in MVP.
+
+**Verification:**
+- [ ] Run `python3 -m unittest`.
+- [ ] Start the GUI and manually verify path mode on at least one current
+      Diamond save/map.
+
+**Dependencies:** Tasks 18, 19, 20, 21, 22, 23, 24
+
+**Files likely touched:**
+- No production files expected unless verification finds issues.
+
+**Estimated scope:** Small
+
 ## Checkpoints
 
 ### Checkpoint: Route Foundation
@@ -930,9 +1234,19 @@ After Tasks 10-17:
 - [ ] Scan target difficulty is shown as rings/borders without replacing team
       colors.
 
+### Checkpoint: Pathfinding MVP
+
+After Tasks 18-25:
+
+- [ ] Pathfinding service returns land-only paths, no-path states, and blocked
+      target fallback.
+- [ ] Portal and subterranean-gate edges are usable in routes.
+- [ ] Path mode does not interfere with normal click-to-simulate behavior.
+- [ ] Cross-level paths can be inspected through the segment list.
+
 ### Checkpoint: Complete
 
-After Tasks 9 and 17:
+After Tasks 9, 17, and 25:
 
 - [ ] `python3 -m unittest` passes.
 - [ ] Route overlay, water, towns, portals, heroes, and neutrals are all
@@ -941,6 +1255,7 @@ After Tasks 9 and 17:
       across levels.
 - [ ] Target hiding, map filtering, scan sorting, scan hover, scan click, auto
       refresh, and scan rings work together in the GUI.
+- [ ] Path mode can find and display same-level and cross-level land routes.
 
 ## Risks And Mitigations
 
@@ -956,6 +1271,10 @@ After Tasks 9 and 17:
 | Merging map and scan filters removes useful flexibility. | Low | Product decision is intentional for simpler play workflow; the backend can still keep internal target-type mapping. |
 | Auto scan refresh causes unexpected work. | Medium | Only trigger after the user has already run scan in the current session, and cancel stale in-flight requests. |
 | Scan rings make markers visually noisy. | Low | Keep fills as identity colors and use restrained outer rings with hover/active priority. |
+| Pathfinding is mistaken for exact Heroes III movement. | Medium | Label it as strategic route search and keep movement points, roads, terrain costs, water, and spells explicitly out of MVP. |
+| Portal with multiple exits produces misleading route certainty. | Medium | Mark path segments through multi-exit portals as non-deterministic. |
+| Blocked target fallback hides that the clicked tile itself is unreachable. | Low | Return both requested and resolved target plus a visible fallback note. |
+| Path mode conflicts with simulation clicks. | Medium | Gate route requests behind an explicit Path mode toggle and leave normal mode behavior unchanged. |
 
 ## Parallelization Opportunities
 
@@ -970,8 +1289,12 @@ After Tasks 9 and 17:
   hidden hero state.
 - Task 15 should wait for Tasks 12 and 13 so it can use the final filter and
   sort controls.
-- Tasks 9 and 17 are verification tasks and should run after their respective
-  feature groups are complete.
+- Task 18 can start once route layers and portal edges are available. Tasks
+  19-24 are sequential because each builds on the previous pathfinding layer.
+- Task 23 can be split between API integration and frontend rendering only
+  after Task 22 defines the endpoint contract.
+- Tasks 9, 17, and 25 are verification tasks and should run after their
+  respective feature groups are complete.
 
 ## Summary Table
 
@@ -990,7 +1313,15 @@ After Tasks 9 and 17:
 | 11 | Add Hero Marker Context Actions | done | 10 |
 | 12 | Merge Map Filter And Scan Target Type | done | - |
 | 13 | Add Scan Sort Modes | done | - |
-| 14 | Improve Scan Result Hover And Click Behavior | todo | - |
+| 14 | Improve Scan Result Hover And Click Behavior | in-progress | - |
 | 15 | Auto-Refresh Scan After Hero Selection | todo | 12, 13 |
 | 16 | Render Scan Difficulty As Marker Rings | todo | - |
 | 17 | End-To-End Workflow Verification | blocked | 10, 11, 12, 13, 14, 15, 16 |
+| 18 | Add Pathfinding Service Contract | todo | 3, 8 |
+| 19 | Implement Land-Only Shortest Path Search | blocked | 18 |
+| 20 | Add Portal And Subterranean Gate Traversal | blocked | 19 |
+| 21 | Resolve Blocked Targets And Terminal Markers | blocked | 20 |
+| 22 | Expose A Pathfinding API Endpoint | blocked | 21 |
+| 23 | Add Path Mode UI And Route Rendering | blocked | 22 |
+| 24 | Add Path Segment List And Cross-Level Navigation | blocked | 23 |
+| 25 | End-To-End Pathfinding Verification | blocked | 18, 19, 20, 21, 22, 23, 24 |
