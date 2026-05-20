@@ -306,6 +306,16 @@ targets, towns, and portals.
 - [ ] Add or update GUI snapshot tests in `tests/test_battle_estimator_gui.py`.
 - [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
 
+**Completion Notes (2026-05-20):**
+- Added compact `route_layers` serialization to the GUI state snapshot using
+  `L`, `W`, and `B` row strings grouped by level.
+- Added internal validation for duplicate, out-of-bounds, missing, or unknown
+  route tiles before exposing the snapshot.
+- Added snapshot and HTTP `/api/state` tests for route-layer presence,
+  dimensions, and multi-level row serialization.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui` and
+  `python3 -m unittest`.
+
 **Dependencies:** Task 2
 
 **Files likely touched:**
@@ -774,8 +784,8 @@ After Tasks 9 and 17:
 | --- | --- | --- | --- |
 | 1 | Parse Terrain Tiles From H3M | done | - |
 | 2 | Build The Static Route Layer | done | 1 |
-| 3 | Expose Route Layers In The GUI Snapshot | todo | 2 |
-| 4 | Render The Route Overlay | blocked | 3 |
+| 3 | Expose Route Layers In The GUI Snapshot | done | 2 |
+| 4 | Render The Route Overlay | todo | 3 |
 | 5 | Parse Town Targets | todo | 1 |
 | 6 | Show Town Markers In The GUI | blocked | 5 |
 | 7 | Parse Portal Targets And Edges | todo | 1 |

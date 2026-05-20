@@ -676,6 +676,10 @@ def _build_domain_snapshot_from_source(
             _serialize_map_team(team)
             for team in loaded_map.teams
         ],
+        "route_layers": _serialize_route_layers(
+            loaded_map.header,
+            loaded_map.route_tiles,
+        ),
         "heroes": _serialize_heroes(hero_entries, team_by_color),
         "neutral_targets": [
             _serialize_neutral_target(target)
@@ -849,6 +853,50 @@ def _serialize_map_team(team) -> dict:
         "player_indices": list(team.player_indices),
         "color_names": list(team.color_names),
     }
+
+
+def _serialize_route_layers(header, route_tiles) -> list[list[str]]:
+    state_chars = {
+        h3_map_parser.ROUTE_LAND: "L",
+        h3_map_parser.ROUTE_WATER: "W",
+        h3_map_parser.ROUTE_BLOCKED: "B",
+    }
+    route_by_position = {}
+    for tile in route_tiles:
+        position = (tile.x, tile.y, tile.z)
+        if position in route_by_position:
+            raise ValueError(f"duplicate route tile at {position}")
+        if not (
+            0 <= tile.x < header.map_size
+            and 0 <= tile.y < header.map_size
+            and 0 <= tile.z < header.levels
+        ):
+            raise ValueError(f"route tile out of bounds at {position}")
+        if tile.state not in state_chars:
+            raise ValueError(f"unknown route tile state at {position}: {tile.state!r}")
+        route_by_position[position] = state_chars[tile.state]
+
+    expected_count = header.map_size * header.map_size * header.levels
+    if len(route_by_position) != expected_count:
+        raise ValueError(
+            "route tile count mismatch: "
+            f"expected {expected_count}, got {len(route_by_position)}"
+        )
+
+    layers = []
+    for z in range(header.levels):
+        rows = []
+        for y in range(header.map_size):
+            row = []
+            for x in range(header.map_size):
+                position = (x, y, z)
+                route_char = route_by_position.get(position)
+                if route_char is None:
+                    raise ValueError(f"missing route tile at {position}")
+                row.append(route_char)
+            rows.append("".join(row))
+        layers.append(rows)
+    return layers
 
 
 def _unique_hero_ids(heroes) -> list[str]:

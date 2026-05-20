@@ -20,6 +20,7 @@ from tests.test_battle_estimator_cli import (
     _write_h3m_map,
     _write_xor_hero_window,
 )
+from tools import h3_map_parser
 
 
 class BattleEstimatorGuiServerTests(unittest.TestCase):
@@ -712,6 +713,7 @@ assert.strictEqual(
                 self.assertEqual(payload["save_file"], str(save_path))
                 self.assertEqual(payload["selected_hero_id"], "hero:256")
                 self.assertEqual(payload["recent_heroes"], ["Isra", "Marius"])
+                self.assertEqual(payload["route_layers"], [["L"]])
 
             self._with_server(check, app_state=app_state)
 
@@ -1758,6 +1760,73 @@ assert.strictEqual(
 
 
 class BattleEstimatorGuiSnapshotTests(unittest.TestCase):
+    def test_route_layers_serializer_uses_compact_rows_per_level(self):
+        header = h3_map_parser.H3MapHeader(
+            format_version=h3_map_parser.H3M_FORMAT_SOD,
+            format_name="SoD",
+            map_size=2,
+            levels=2,
+            are_any_players=True,
+        )
+        route_tiles = (
+            h3_map_parser.H3RouteTile(0, 0, 0, h3_map_parser.ROUTE_LAND),
+            h3_map_parser.H3RouteTile(1, 0, 0, h3_map_parser.ROUTE_WATER),
+            h3_map_parser.H3RouteTile(0, 1, 0, h3_map_parser.ROUTE_BLOCKED),
+            h3_map_parser.H3RouteTile(1, 1, 0, h3_map_parser.ROUTE_LAND),
+            h3_map_parser.H3RouteTile(0, 0, 1, h3_map_parser.ROUTE_BLOCKED),
+            h3_map_parser.H3RouteTile(1, 0, 1, h3_map_parser.ROUTE_LAND),
+            h3_map_parser.H3RouteTile(0, 1, 1, h3_map_parser.ROUTE_WATER),
+            h3_map_parser.H3RouteTile(1, 1, 1, h3_map_parser.ROUTE_BLOCKED),
+        )
+
+        self.assertEqual(
+            battle_estimator_gui._serialize_route_layers(header, route_tiles),
+            [
+                ["LW", "BL"],
+                ["BL", "WB"],
+            ],
+        )
+
+    def test_route_layers_serializer_rejects_invalid_tiles(self):
+        header = h3_map_parser.H3MapHeader(
+            format_version=h3_map_parser.H3M_FORMAT_SOD,
+            format_name="SoD",
+            map_size=1,
+            levels=1,
+            are_any_players=True,
+        )
+
+        cases = (
+            (
+                (
+                    h3_map_parser.H3RouteTile(0, 0, 0, h3_map_parser.ROUTE_LAND),
+                    h3_map_parser.H3RouteTile(0, 0, 0, h3_map_parser.ROUTE_WATER),
+                ),
+                "duplicate route tile",
+            ),
+            (
+                (
+                    h3_map_parser.H3RouteTile(1, 0, 0, h3_map_parser.ROUTE_LAND),
+                ),
+                "out of bounds",
+            ),
+            (
+                (
+                    h3_map_parser.H3RouteTile(0, 0, 0, "lava"),
+                ),
+                "unknown route tile state",
+            ),
+            (
+                (),
+                "route tile count mismatch",
+            ),
+        )
+
+        for route_tiles, expected_message in cases:
+            with self.subTest(expected_message=expected_message):
+                with self.assertRaisesRegex(ValueError, expected_message):
+                    battle_estimator_gui._serialize_route_layers(header, route_tiles)
+
     def test_follow_latest_snapshot_uses_latest_numeric_save_and_marks_removed_neutrals(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -1790,6 +1859,12 @@ class BattleEstimatorGuiSnapshotTests(unittest.TestCase):
             self.assertNotEqual(snapshot["save_file"], str(older_save))
             self.assertEqual(snapshot["map_file"], str(map_path))
             self.assertEqual(snapshot["map"], {"width": 1, "height": 1, "levels": 1})
+            self.assertEqual(snapshot["route_layers"], [["B"]])
+            self.assertEqual(len(snapshot["route_layers"]), snapshot["map"]["levels"])
+            for level_rows in snapshot["route_layers"]:
+                self.assertEqual(len(level_rows), snapshot["map"]["height"])
+                for row in level_rows:
+                    self.assertEqual(len(row), snapshot["map"]["width"])
             self.assertEqual(
                 snapshot["save_fingerprint"],
                 _expected_fingerprint(latest_save),
