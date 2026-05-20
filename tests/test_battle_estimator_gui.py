@@ -229,6 +229,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             '"/api/select-hero"',
             '"/api/simulate-target"',
             '"/api/scan-radius"',
+            '"/api/path-route"',
             '"/api/hidden-target"',
             '"/api/show-hidden"',
             '"/api/saves"',
@@ -265,6 +266,15 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "routeRowsForLevel",
             "routeStateForChar",
             "routeStyleForChar",
+            "pathModeToggle",
+            "pathState",
+            "setPathMode",
+            "drawPathRoute",
+            "tilePositionForCanvasPoint",
+            "isFreshPathPayload",
+            "currentPathStateForTest",
+            "Select a hero before pathing.",
+            "Path target is outside the map.",
             "use_latest_game_folder",
             "town_targets",
             "portal_targets",
@@ -316,12 +326,15 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="show-removed-toggle"',
             'id="show-hidden-toggle"',
             'id="show-route-overlay-toggle"',
+            'id="path-mode-toggle"',
             'id="target-filter-control"',
             'Route Overlay',
+            'Path Mode',
             'id="map-stage"',
             'id="map-tooltip"',
             'id="target-context-menu"',
             'id="scan-radius"',
+            'id="path-state"',
             'id="scan-sort-control"',
             'id="scan-button"',
         ):
@@ -350,6 +363,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".segmented-control",
             ".toggle-control",
             ".map-tooltip",
+            ".path-result",
+            "#battle-map.path-mode",
             ".target-context-menu",
             ".context-menu-title",
             "#battle-map",
@@ -543,6 +558,10 @@ const fetchRequests = [];
 let deferNextScanResponse = false;
 let nextScanResults = null;
 const pendingScanResponses = [];
+let deferNextPathResponse = false;
+let nextPathPayload = null;
+let nextPathError = null;
+const pendingPathResponses = [];
 function heroNameForId(heroId) {{
   const snapshots = [markerSnapshot, hiddenHeroSnapshot].filter(Boolean);
   for (const source of snapshots) {{
@@ -557,7 +576,10 @@ global.fetch = (path, options = {{}}) => {{
   fetchCalls += 1;
   fetchRequests.push({{ path, options }});
   let payload = snapshot;
+  let responseOk = true;
+  let responseStatus = 200;
   let deferResponse = false;
+  let deferredResponses = pendingScanResponses;
   if (path === "/api/health") {{
     payload = {{ ok: true }};
   }} else if (path === "/api/select-hero") {{
@@ -578,6 +600,7 @@ global.fetch = (path, options = {{}}) => {{
     const requestPayload = JSON.parse(options.body || "{{}}");
     const resultType = requestPayload.target_type === "hero" ? "hero" : "neutral";
     deferResponse = deferNextScanResponse;
+    deferredResponses = pendingScanResponses;
     deferNextScanResponse = false;
     const defaultResults = [
       {{
@@ -617,14 +640,53 @@ global.fetch = (path, options = {{}}) => {{
       results: nextScanResults || defaultResults
     }};
     nextScanResults = null;
+  }} else if (path === "/api/path-route") {{
+    const requestPayload = JSON.parse(options.body || "{{}}");
+    deferResponse = deferNextPathResponse;
+    deferredResponses = pendingPathResponses;
+    deferNextPathResponse = false;
+    if (nextPathError) {{
+      responseOk = false;
+      responseStatus = nextPathError.status || 400;
+      payload = {{ error: nextPathError.error || "path failed" }};
+      nextPathError = null;
+    }} else {{
+      payload = nextPathPayload || {{
+        hero_id: requestPayload.hero_id,
+        target_id: requestPayload.target_id,
+        status: "found",
+        requested_target_position: requestPayload.target_position || {{ x: 1, y: 3, z: 0 }},
+        resolved_target_position: requestPayload.target_position || {{ x: 1, y: 3, z: 0 }},
+        steps: [
+          {{ position: {{ x: 1, y: 2, z: 0 }}, route: "land", cost: 0 }},
+          {{ position: {{ x: 1, y: 3, z: 0 }}, route: "land", cost: 1 }},
+          {{ position: {{ x: 2, y: 3, z: 0 }}, route: "land", cost: 2 }}
+        ],
+        segments: [
+          {{
+            segment_type: "walk",
+            from_position: {{ x: 1, y: 2, z: 0 }},
+            to_position: {{ x: 2, y: 3, z: 0 }},
+            steps: [
+              {{ position: {{ x: 1, y: 2, z: 0 }}, route: "land", cost: 0 }},
+              {{ position: {{ x: 1, y: 3, z: 0 }}, route: "land", cost: 1 }},
+              {{ position: {{ x: 2, y: 3, z: 0 }}, route: "land", cost: 2 }}
+            ]
+          }}
+        ],
+        message: null
+      }};
+      nextPathPayload = null;
+    }}
   }}
   const response = {{
-    ok: true,
+    ok: responseOk,
+    status: responseStatus,
     json: () => Promise.resolve(payload)
   }};
   if (deferResponse) {{
     return new Promise((resolve) => {{
-      pendingScanResponses.push(() => resolve(response));
+      deferredResponses.push(() => resolve(response));
     }});
   }}
   return Promise.resolve(response);
@@ -1219,6 +1281,10 @@ const portalFillsAfterRender = drawOperations.filter((operation) => (
 ));
 assert.ok(portalFillsAfterRender.length >= 1);
 const renderedView = helpers.currentMapViewForTest();
+assert.strictEqual(elements["path-mode-toggle"].disabled, false);
+assert.strictEqual(elements["path-mode-toggle"].checked, false);
+assert.strictEqual(renderedView.pathMode, false);
+assert.strictEqual(elements["path-state"].textContent, "No path requested.");
 function targetFilterButtons() {{
   return elements["target-filter-control"].children;
 }}
@@ -1230,6 +1296,11 @@ function scanRequestsSince(startIndex) {{
   return fetchRequests
     .slice(startIndex)
     .filter((request) => request.path === "/api/scan-radius");
+}}
+function pathRequestsSince(startIndex) {{
+  return fetchRequests
+    .slice(startIndex)
+    .filter((request) => request.path === "/api/path-route");
 }}
 function scanSortButtons() {{
   return elements["scan-sort-control"].children;
@@ -1249,6 +1320,9 @@ function treeText(node) {{
     return "";
   }}
   return [node.textContent || "", ...node.children.map((child) => treeText(child))].join(" ");
+}}
+function mapTileScreenPoint(x, y, view) {{
+  return helpers.worldToScreen({{ x: (x + 0.5) * 28, y: (y + 0.5) * 28 }}, view);
 }}
 assert.deepStrictEqual(
   targetFilterButtons().map((button) => button.textContent),
@@ -1712,6 +1786,235 @@ const overlayFillsAfterToggleOn = drawOperations.filter((operation) => (
 ));
 assert.ok(overlayFillsAfterToggleOn.length >= 3);
 assert.strictEqual(fetchCalls, fetchCallsAfterContextActions);
+
+const noHeroPathSnapshot = {{
+  ...markerSnapshot,
+  selected_hero_id: null,
+  heroes: [],
+  neutral_targets: [],
+  town_targets: [],
+  portal_targets: [],
+  portal_edges: []
+}};
+helpers.renderSnapshot(noHeroPathSnapshot, {{ preserveView: false }});
+elements["path-mode-toggle"].checked = true;
+elements["path-mode-toggle"].dispatch("change", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().pathMode, true);
+const noHeroPathStart = fetchRequests.length;
+const noHeroPoint = mapTileScreenPoint(1, 1, helpers.currentMapViewForTest());
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 21,
+  clientX: noHeroPoint.x,
+  clientY: noHeroPoint.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 21,
+  clientX: noHeroPoint.x,
+  clientY: noHeroPoint.y
+}});
+assert.strictEqual(pathRequestsSince(noHeroPathStart).length, 0);
+assert.ok(elements["path-state"].textContent.includes("Select a hero before pathing."));
+assert.ok(elements["estimate-state"].textContent.includes("No simulation run."));
+
+const pathMarkerSnapshot = {{
+  ...markerSnapshot,
+  selected_hero_id: "hero:0"
+}};
+helpers.renderSnapshot(pathMarkerSnapshot, {{ preserveView: false }});
+targetFilterButtons()[0].dispatch("click", {{}});
+elements["path-mode-toggle"].checked = true;
+elements["path-mode-toggle"].dispatch("change", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().pathMode, true);
+assert.strictEqual(elements["path-mode-toggle"].checked, true);
+const pathView = helpers.currentMapViewForTest();
+const pathNeutral = pathView.markers.find((marker) => marker.id === "neutral:0");
+const pathNeutralScreen = helpers.worldToScreen(pathNeutral.world, pathView);
+const foundPathStart = fetchRequests.length;
+const foundPathDrawStart = drawOperations.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 22,
+  clientX: pathNeutralScreen.x,
+  clientY: pathNeutralScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 22,
+  clientX: pathNeutralScreen.x,
+  clientY: pathNeutralScreen.y
+}});
+await flushPromises();
+let pathRequests = pathRequestsSince(foundPathStart);
+assert.strictEqual(pathRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(pathRequests[0].options.body), {{
+  hero_id: "hero:0",
+  target_id: "neutral:0"
+}});
+assert.strictEqual(
+  fetchRequests.slice(foundPathStart).filter((request) => request.path === "/api/simulate-target").length,
+  0
+);
+assert.ok(treeText(elements["path-state"]).includes("found"));
+assert.ok(treeText(elements["path-state"]).includes("3"));
+const foundPathOps = drawOperations.slice(foundPathDrawStart);
+assert.ok(foundPathOps.some((operation) => (
+  operation.op === "stroke"
+  && operation.strokeStyle === "#dc2626"
+  && operation.lineWidth === 3
+)), "found path should draw the route stroke");
+assert.ok(foundPathOps.some((operation) => operation.op === "save"));
+assert.ok(foundPathOps.some((operation) => operation.op === "restore"));
+
+const emptyTilePoint = mapTileScreenPoint(2, 2, helpers.currentMapViewForTest());
+assert.deepStrictEqual(
+  helpers.tilePositionForCanvasPoint(
+    emptyTilePoint,
+    helpers.currentMapViewForTest().snapshot,
+    helpers.currentMapViewForTest()
+  ),
+  {{ x: 2, y: 2, z: 0 }}
+);
+const emptyTilePathStart = fetchRequests.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 23,
+  clientX: emptyTilePoint.x,
+  clientY: emptyTilePoint.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 23,
+  clientX: emptyTilePoint.x,
+  clientY: emptyTilePoint.y
+}});
+await flushPromises();
+pathRequests = pathRequestsSince(emptyTilePathStart);
+assert.strictEqual(pathRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(pathRequests[0].options.body), {{
+  hero_id: "hero:0",
+  target_position: {{ x: 2, y: 2, z: 0 }}
+}});
+
+nextPathPayload = {{
+  hero_id: "hero:0",
+  target_id: "neutral:0",
+  status: "not_found",
+  requested_target_position: {{ x: 1, y: 3, z: 0 }},
+  resolved_target_position: null,
+  steps: [],
+  segments: [],
+  message: "no land path found"
+}};
+const notFoundPathStart = fetchRequests.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 24,
+  clientX: pathNeutralScreen.x,
+  clientY: pathNeutralScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 24,
+  clientX: pathNeutralScreen.x,
+  clientY: pathNeutralScreen.y
+}});
+await flushPromises();
+assert.strictEqual(pathRequestsSince(notFoundPathStart).length, 1);
+assert.ok(elements["path-state"].className.includes("error"));
+assert.ok(treeText(elements["path-state"]).includes("not_found"));
+assert.ok(treeText(elements["path-state"]).includes("no land path found"));
+
+nextPathPayload = {{
+  hero_id: "hero:0",
+  target_id: "neutral:0",
+  status: "invalid",
+  requested_target_position: {{ x: 9, y: 9, z: 0 }},
+  resolved_target_position: null,
+  steps: [],
+  segments: [],
+  message: "target is outside map"
+}};
+const invalidPathStart = fetchRequests.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 25,
+  clientX: pathNeutralScreen.x,
+  clientY: pathNeutralScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 25,
+  clientX: pathNeutralScreen.x,
+  clientY: pathNeutralScreen.y
+}});
+await flushPromises();
+assert.strictEqual(pathRequestsSince(invalidPathStart).length, 1);
+assert.ok(elements["path-state"].className.includes("error"));
+assert.ok(treeText(elements["path-state"]).includes("invalid"));
+assert.ok(treeText(elements["path-state"]).includes("target is outside map"));
+
+nextPathError = {{ status: 400, error: "bad target" }};
+const errorPathStart = fetchRequests.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 26,
+  clientX: pathNeutralScreen.x,
+  clientY: pathNeutralScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 26,
+  clientX: pathNeutralScreen.x,
+  clientY: pathNeutralScreen.y
+}});
+await flushPromises();
+assert.strictEqual(pathRequestsSince(errorPathStart).length, 1);
+assert.ok(elements["path-state"].className.includes("error"));
+assert.ok(elements["path-state"].textContent.includes("Path error: bad target"));
+
+nextPathPayload = {{
+  hero_id: "hero:0",
+  target_id: "neutral:0",
+  status: "found",
+  requested_target_position: {{ x: 1, y: 3, z: 0 }},
+  resolved_target_position: {{ x: 1, y: 3, z: 0 }},
+  steps: [
+    {{ position: {{ x: 1, y: 2, z: 0 }}, route: "land", cost: 0 }},
+    {{ position: {{ x: 1, y: 3, z: 0 }}, route: "land", cost: 1 }}
+  ],
+  segments: [],
+  message: "stale path should not render"
+}};
+deferNextPathResponse = true;
+const stalePathStart = fetchRequests.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 27,
+  clientX: pathNeutralScreen.x,
+  clientY: pathNeutralScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 27,
+  clientX: pathNeutralScreen.x,
+  clientY: pathNeutralScreen.y
+}});
+assert.strictEqual(pathRequestsSince(stalePathStart).length, 1);
+assert.strictEqual(pendingPathResponses.length, 1);
+const pendingPathRequestId = helpers.currentPathStateForTest().requestId;
+assert.strictEqual(helpers.currentPathStateForTest().running, true);
+elements["path-mode-toggle"].checked = false;
+elements["path-mode-toggle"].dispatch("change", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().pathMode, false);
+assert.ok(helpers.currentPathStateForTest().requestId > pendingPathRequestId);
+assert.strictEqual(helpers.currentPathStateForTest().result, null);
+assert.strictEqual(elements["path-state"].textContent, "No path requested.");
+pendingPathResponses.shift()();
+await flushPromises();
+assert.strictEqual(helpers.currentPathStateForTest().result, null);
+assert.ok(!treeText(elements["path-state"]).includes("stale path should not render"));
 }})().catch((error) => {{
   console.error(error && error.stack ? error.stack : error);
   process.exit(1);

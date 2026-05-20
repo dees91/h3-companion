@@ -26,6 +26,7 @@
     showRemovedToggle: document.getElementById("show-removed-toggle"),
     showHiddenToggle: document.getElementById("show-hidden-toggle"),
     routeOverlayToggle: document.getElementById("show-route-overlay-toggle"),
+    pathModeToggle: document.getElementById("path-mode-toggle"),
     heroRankingButton: document.getElementById("hero-ranking-button"),
     mapStage: document.getElementById("map-stage"),
     mapTooltip: document.getElementById("map-tooltip"),
@@ -34,6 +35,7 @@
     mapOverlayDetail: document.getElementById("map-overlay-detail"),
     targetState: document.getElementById("target-state"),
     estimateState: document.getElementById("estimate-state"),
+    pathState: document.getElementById("path-state"),
     scanRadius: document.getElementById("scan-radius"),
     scanSortControl: document.getElementById("scan-sort-control"),
     scanButton: document.getElementById("scan-button"),
@@ -59,6 +61,7 @@
     showRemovedNeutrals: false,
     showHiddenNeutrals: false,
     showRouteOverlay: true,
+    pathMode: false,
     targetFilter: "both",
     markers: [],
     hoveredMarkerId: null,
@@ -89,6 +92,12 @@
     hoveredResultTargetId: null,
     results: [],
     resultByTargetId: new Map()
+  };
+  const pathState = {
+    requestId: 0,
+    running: false,
+    result: null,
+    target: null
   };
   const saveNavigation = {
     saves: []
@@ -828,6 +837,28 @@
     };
   }
 
+  function tilePositionForCanvasPoint(point, snapshot, view) {
+    const current = snapshot || mapView.snapshot;
+    const activeView = view || mapView;
+    if (!current || !current.map) {
+      return null;
+    }
+    const tileSize = tileSizeForMap(current.map);
+    const worldPoint = screenToWorld(point, activeView);
+    const x = Math.floor(worldPoint.x / tileSize);
+    const y = Math.floor(worldPoint.y / tileSize);
+    const width = Math.max(1, current.map.width || 1);
+    const height = Math.max(1, current.map.height || width);
+    if (x < 0 || y < 0 || x >= width || y >= height) {
+      return null;
+    }
+    return {
+      x,
+      y,
+      z: normalizeLevelForSnapshot(activeView.level, current)
+    };
+  }
+
   function syncCanvasSize() {
     const rect = elements.canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
@@ -974,6 +1005,25 @@
       button.addEventListener("click", () => setScanSortMode(mode.id));
       elements.scanSortControl.appendChild(button);
     });
+  }
+
+  function updatePathModeControl() {
+    elements.pathModeToggle.checked = mapView.pathMode;
+    elements.pathModeToggle.disabled = !mapView.snapshot;
+    elements.canvas.classList.toggle("path-mode", mapView.pathMode);
+  }
+
+  function setPathMode(enabled) {
+    const nextValue = Boolean(enabled && mapView.snapshot);
+    if (nextValue === mapView.pathMode) {
+      updatePathModeControl();
+      return;
+    }
+    mapView.pathMode = nextValue;
+    updatePathModeControl();
+    if (!mapView.pathMode) {
+      clearPathResult("No path requested.");
+    }
   }
 
   function setScanSortMode(mode) {
@@ -1259,6 +1309,7 @@
     }
     canvasContext.stroke();
 
+    drawPathRoute(tileSize);
     drawMarkers();
     elements.zoom.textContent = `Zoom ${Math.round(mapView.zoom * 100)}%`;
   }
@@ -1293,6 +1344,71 @@
         );
       }
     }
+    canvasContext.restore();
+  }
+
+  function pathStepPosition(step) {
+    return step && step.position ? step.position : null;
+  }
+
+  function pathPointForPosition(position, tileSize) {
+    return {
+      x: (position.x + 0.5) * tileSize,
+      y: (position.y + 0.5) * tileSize
+    };
+  }
+
+  function drawPathRoute(tileSize) {
+    const result = pathState.result;
+    if (!result || result.status !== "found" || !Array.isArray(result.steps)) {
+      return;
+    }
+    const positions = result.steps
+      .map(pathStepPosition)
+      .filter(Boolean);
+    if (positions.length === 0) {
+      return;
+    }
+
+    canvasContext.save();
+    canvasContext.lineCap = "round";
+    canvasContext.lineJoin = "round";
+    canvasContext.strokeStyle = "#ffffff";
+    canvasContext.lineWidth = 7;
+    canvasContext.beginPath();
+    let hasLine = false;
+    for (let index = 0; index < positions.length - 1; index += 1) {
+      const current = positions[index];
+      const next = positions[index + 1];
+      if (current.z !== mapView.level || next.z !== mapView.level) {
+        continue;
+      }
+      const from = worldToScreen(pathPointForPosition(current, tileSize), mapView);
+      const to = worldToScreen(pathPointForPosition(next, tileSize), mapView);
+      canvasContext.moveTo(from.x, from.y);
+      canvasContext.lineTo(to.x, to.y);
+      hasLine = true;
+    }
+    if (hasLine) {
+      canvasContext.stroke();
+      canvasContext.strokeStyle = "#dc2626";
+      canvasContext.lineWidth = 3;
+      canvasContext.stroke();
+    }
+
+    positions.forEach((position) => {
+      if (position.z !== mapView.level) {
+        return;
+      }
+      const screen = worldToScreen(pathPointForPosition(position, tileSize), mapView);
+      canvasContext.beginPath();
+      canvasContext.fillStyle = "#dc2626";
+      canvasContext.strokeStyle = "#ffffff";
+      canvasContext.lineWidth = 2;
+      canvasContext.arc(screen.x, screen.y, 4, 0, Math.PI * 2);
+      canvasContext.fill();
+      canvasContext.stroke();
+    });
     canvasContext.restore();
   }
 
@@ -1497,6 +1613,27 @@
     elements.estimateState.title = text;
   }
 
+  function invalidatePathRequests() {
+    pathState.requestId += 1;
+    pathState.running = false;
+    return pathState.requestId;
+  }
+
+  function setPathMessage(text, className) {
+    clearNode(elements.pathState);
+    elements.pathState.className = `result-box ${className || "empty-state"}`.trim();
+    elements.pathState.textContent = text;
+    elements.pathState.title = text;
+  }
+
+  function clearPathResult(message) {
+    invalidatePathRequests();
+    pathState.result = null;
+    pathState.target = null;
+    setPathMessage(message || "No path requested.");
+    drawMap();
+  }
+
   function selectedHero() {
     return heroState.heroes.find((hero) => hero.id === heroState.selectedHeroId) || null;
   }
@@ -1633,9 +1770,19 @@
       zoom: mapView.zoom,
       pan: { x: mapView.pan.x, y: mapView.pan.y },
       level: mapView.level,
+      pathMode: mapView.pathMode,
       activeMarkerId: mapView.activeMarkerId,
       hoveredMarkerId: mapView.hoveredMarkerId,
       markers: mapView.markers
+    };
+  }
+
+  function currentPathStateForTest() {
+    return {
+      requestId: pathState.requestId,
+      running: pathState.running,
+      result: pathState.result,
+      target: pathState.target
     };
   }
 
@@ -1685,6 +1832,115 @@
     appendEstimateRow(grid, "Verdict", verdictForWinPct(estimate.win_pct));
     appendEstimateRow(grid, "Note", estimate.note || "No note.", "long-value");
     elements.estimateState.appendChild(grid);
+  }
+
+  function isFreshPathPayload(payload, request, currentRequestId, selectedHeroId) {
+    return (
+      payload
+      && request
+      && request.requestId === currentRequestId
+      && payload.hero_id === request.heroId
+      && request.heroId === selectedHeroId
+    );
+  }
+
+  function renderPathResult(payload) {
+    pathState.result = payload;
+    clearNode(elements.pathState);
+    elements.pathState.className = `result-box path-result ${payload.status === "found" ? "" : "error"}`.trim();
+    elements.pathState.title = "";
+
+    const grid = document.createElement("div");
+    grid.className = "estimate-grid";
+    appendEstimateRow(grid, "Status", payload.status || "unknown");
+    appendEstimateRow(
+      grid,
+      "Target",
+      positionText(payload.requested_target_position),
+      "long-value"
+    );
+    appendEstimateRow(
+      grid,
+      "Resolved",
+      payload.resolved_target_position
+        ? positionText(payload.resolved_target_position)
+        : "none",
+      "long-value"
+    );
+    appendEstimateRow(
+      grid,
+      "Steps",
+      Array.isArray(payload.steps) ? String(payload.steps.length) : "0"
+    );
+    appendEstimateRow(grid, "Note", payload.message || "No note.", "long-value");
+    elements.pathState.appendChild(grid);
+  }
+
+  function requestPath(marker, point) {
+    invalidateEstimateRequests();
+    setEstimateMessage("No simulation run.");
+    const requestId = invalidatePathRequests();
+    pathState.result = null;
+    pathState.target = null;
+
+    if (!heroState.selectedHeroId) {
+      setPathMessage("Select a hero before pathing.", "error");
+      return;
+    }
+
+    const payload = { hero_id: heroState.selectedHeroId };
+    let label = "tile";
+    if (marker && marker.id) {
+      payload.target_id = marker.id;
+      label = marker.label || marker.id;
+    } else {
+      const targetPosition = tilePositionForCanvasPoint(point, mapView.snapshot, mapView);
+      if (!targetPosition) {
+        setPathMessage("Path target is outside the map.", "error");
+        return;
+      }
+      payload.target_position = targetPosition;
+      label = positionText(targetPosition);
+    }
+
+    const request = {
+      requestId,
+      heroId: heroState.selectedHeroId,
+      target: payload.target_id || payload.target_position
+    };
+    pathState.running = true;
+    pathState.target = request.target;
+    setPathMessage(`Finding path to ${label}...`, "running");
+
+    postJson("/api/path-route", payload, "path request failed")
+      .then((responsePayload) => {
+        if (!isFreshPathPayload(
+          responsePayload,
+          request,
+          pathState.requestId,
+          heroState.selectedHeroId
+        )) {
+          return;
+        }
+        pathState.running = false;
+        renderPathResult(responsePayload);
+        drawMap();
+      })
+      .catch((error) => {
+        if (
+          request.requestId !== pathState.requestId
+          || request.heroId !== heroState.selectedHeroId
+        ) {
+          return;
+        }
+        pathState.running = false;
+        pathState.result = null;
+        setPathMessage(`Path error: ${error.message}`, "error");
+        drawMap();
+        if (error.status === 409) {
+          loadState();
+        }
+      });
   }
 
   function simulateTarget(marker) {
@@ -2649,6 +2905,7 @@
       && heroId !== previousSelectedHeroId
     );
     invalidateEstimateRequests();
+    clearPathResult("No path requested.");
     heroState.selectedHeroId = heroId || null;
     heroState.recentHeroes = recentHeroes || heroState.recentHeroes;
     if (mapView.snapshot) {
@@ -2758,9 +3015,11 @@
     }
     updateLevelControls(snapshot);
     updateMapMetrics(snapshot);
+    updatePathModeControl();
     drawMap();
 
     setEstimateMessage("No simulation run.");
+    clearPathResult("No path requested.");
     clearScanResults("No scan results.");
     syncSaveControls(snapshot);
     syncGameFolderControls();
@@ -2797,11 +3056,14 @@
     elements.canvas.classList.remove("has-marker-hover");
     elements.showHiddenToggle.checked = false;
     elements.showHiddenToggle.disabled = true;
+    mapView.pathMode = false;
+    updatePathModeControl();
     hideMapTooltip();
     hideTargetContextMenu();
     invalidateEstimateRequests();
     setTargetDetails(null);
     setEstimateMessage("No simulation run.");
+    clearPathResult("No path requested.");
     clearScanResults("No scan results.");
     syncSaveControls(null);
     syncGameFolderControls();
@@ -2963,6 +3225,10 @@
     drawMap();
   });
 
+  elements.pathModeToggle.addEventListener("change", () => {
+    setPathMode(elements.pathModeToggle.checked);
+  });
+
   elements.scanButton.addEventListener("click", () => {
     runRadiusScan();
   });
@@ -3033,7 +3299,11 @@
     const marker = hitTestMarker(mapView.markers, point, mapView);
     mapView.activeMarkerId = marker ? marker.id : null;
     setTargetDetails(marker);
-    simulateTarget(marker);
+    if (mapView.pathMode) {
+      requestPath(marker, point);
+    } else {
+      simulateTarget(marker);
+    }
     drawMap();
   });
 
@@ -3110,21 +3380,28 @@
     routeStateForChar,
     routeStyleForChar,
     drawRouteOverlay,
+    drawPathRoute,
+    pathPointForPosition,
+    pathStepPosition,
     scanClassForWinPct,
     scanResultLookup,
     sameMapGeometry,
     sortedScanResults,
-	    screenToWorld,
-	    centerOnHero,
-	    centerOnMarkerId,
-	    currentMapViewForTest,
-	    focusPortalDestination,
-	    isFreshEstimatePayload,
-	    isFreshScanPayload,
-	    portalDestinationText,
-	    portalMarkerLabel,
-	    portalTypeLabel,
-	    simulationClickDecision,
+    screenToWorld,
+    centerOnHero,
+    centerOnMarkerId,
+    currentMapViewForTest,
+    currentPathStateForTest,
+    focusPortalDestination,
+    isFreshEstimatePayload,
+    isFreshPathPayload,
+    isFreshScanPayload,
+    portalDestinationText,
+    portalMarkerLabel,
+    portalTypeLabel,
+    setPathMode,
+    simulationClickDecision,
+    tilePositionForCanvasPoint,
     verdictForWinPct,
     worldToScreen,
     zoomAtPoint
@@ -3134,6 +3411,7 @@
   elements.showHiddenToggle.checked = mapView.showHiddenNeutrals;
   elements.showHiddenToggle.disabled = true;
   elements.routeOverlayToggle.checked = mapView.showRouteOverlay;
+  updatePathModeControl();
   renderTargetFilterControl();
   renderScanSortControl();
   syncHeroRankingControls();

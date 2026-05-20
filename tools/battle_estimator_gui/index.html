@@ -91,6 +91,10 @@
               <input id="show-route-overlay-toggle" type="checkbox" checked>
               <span>Route Overlay</span>
             </label>
+            <label class="toggle-control" for="path-mode-toggle">
+              <input id="path-mode-toggle" type="checkbox" disabled>
+              <span>Path Mode</span>
+            </label>
             <button id="hero-ranking-button" class="secondary-button toolbar-button" type="button" disabled>Hero Ranking</button>
             <span id="zoom-status">Zoom 100%</span>
             <span id="object-count">0 targets</span>
@@ -115,6 +119,10 @@
         <section class="panel-section">
           <h2>Estimate</h2>
           <div id="estimate-state" class="result-box empty-state">No simulation run.</div>
+        </section>
+        <section class="panel-section">
+          <h2>Path</h2>
+          <div id="path-state" class="result-box empty-state">No path requested.</div>
         </section>
         <section class="panel-section">
           <h2>Radius Scan</h2>

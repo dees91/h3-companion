@@ -1259,18 +1259,33 @@ tile or marker requests pathfinding instead of running battle simulation, then
 draws the returned path on the canvas.
 
 **Acceptance criteria:**
-- [ ] Path mode can be toggled on and off.
-- [ ] In path mode, clicking an empty tile requests a path to that tile.
-- [ ] In path mode, clicking a marker requests a path to that marker.
-- [ ] Normal click-to-simulate behavior remains unchanged outside path mode.
-- [ ] The visible path segment for the active level is drawn above the route
+- [x] Path mode can be toggled on and off.
+- [x] In path mode, clicking an empty tile requests a path to that tile.
+- [x] In path mode, clicking a marker requests a path to that marker.
+- [x] Normal click-to-simulate behavior remains unchanged outside path mode.
+- [x] The visible path segment for the active level is drawn above the route
       overlay and below markers.
-- [ ] No-path and invalid-path states are shown clearly in the side panel.
+- [x] No-path and invalid-path states are shown clearly in the side panel.
 
 **Verification:**
-- [ ] Manual GUI check for tile target, marker target, no path, and normal mode
+- [x] Manual GUI check for tile target, marker target, no path, and normal mode
       simulation.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion notes:**
+- Added a Path Mode toolbar toggle and a Path result panel that requests
+  `/api/path-route` for marker IDs or clicked tile coordinates.
+- Path mode invalidates in-flight simulation/path requests, clears stale route
+  rendering on toggle-off or hero/snapshot changes, and guards route responses
+  with request ID plus hero ID freshness checks.
+- Found routes render active-level path strokes/dots above route overlays and
+  below markers; not-found, invalid, and fetch-error states render in the side
+  panel.
+- Verification: `node --check tools/battle_estimator_gui/app.js`;
+  `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; headless browser smoke check for
+  normal simulation, marker path, tile path, invalid target, and toggle-off;
+  subagent plan and code reviews completed with no blocking findings.
 
 **Dependencies:** Task 22
 
@@ -1456,6 +1471,6 @@ After Tasks 9, 17, and 25:
 | 20 | Add Portal And Subterranean Gate Traversal | done | 19 |
 | 21 | Resolve Blocked Targets And Terminal Markers | done | 20 |
 | 22 | Expose A Pathfinding API Endpoint | done | 21 |
-| 23 | Add Path Mode UI And Route Rendering | todo | 22 |
-| 24 | Add Path Segment List And Cross-Level Navigation | blocked | 23 |
+| 23 | Add Path Mode UI And Route Rendering | done | 22 |
+| 24 | Add Path Segment List And Cross-Level Navigation | todo | 23 |
 | 25 | End-To-End Pathfinding Verification | blocked | 18, 19, 20, 21, 22, 23, 24 |
