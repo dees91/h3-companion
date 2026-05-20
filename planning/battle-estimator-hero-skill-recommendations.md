@@ -157,22 +157,32 @@ score, tier, availability, and short reason codes.
 
 ## Task 1: Define Recommendation Data Contracts
 
+**Status:** done
+
 **Description:** Create the in-code data contracts for skill IDs, skill levels,
 current skill slots, recommendation entries, offer comparison inputs, and
 recommendation outputs. Keep these contracts independent from the GUI server so
 the module can be tested directly.
 
 **Acceptance criteria:**
-- [ ] Skill levels are normalized to `basic`, `advanced`, and `expert`.
-- [ ] Current skills reject duplicate skill IDs.
-- [ ] Current skills enforce at most 8 distinct secondary skills.
-- [ ] Offer inputs include both skill ID and target level.
-- [ ] Recommendation entries include score, tier, availability, and reason
+- [x] Skill levels are normalized to `basic`, `advanced`, and `expert`.
+- [x] Current skills reject duplicate skill IDs.
+- [x] Current skills enforce at most 8 distinct secondary skills.
+- [x] Offer inputs include both skill ID and target level.
+- [x] Recommendation entries include score, tier, availability, and reason
       codes.
 
 **Verification:**
-- [ ] Add focused unit tests for valid and invalid contract inputs.
-- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+- [x] Add focused unit tests for valid and invalid contract inputs.
+- [x] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Completion notes:** Added GUI-independent recommendation contract types in
+`tools/hero_skill_recommender.py` with normalized skill levels, current-skill
+deduplication and slot-limit checks, concrete offer inputs, recommendation
+entries, and typed recommendation/comparison outputs. Plan and code were
+reviewed by subagents; the output comparison contract was tightened after code
+review to require two offers and a winner matching one of them. Required tests
+passed with 15 focused cases.
 
 **Dependencies:** None
 
