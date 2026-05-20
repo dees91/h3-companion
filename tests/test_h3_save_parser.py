@@ -72,12 +72,18 @@ def _build_xor_hero_fixture(
     counts=ISRA_COUNTS,
     name_offset=256,
     position=None,
+    owner_color_id=0,
     xor_key=h3_save_parser.HERO_ARMY_XOR_KEY,
     position_from_name_offset=h3_save_parser.HERO_STRUCT_POSITION_FROM_NAME_OFFSET,
 ):
     data = bytearray(name_offset + h3_save_parser.HERO_NAME_SIZE + 32)
     ids_offset = name_offset + h3_save_parser.HERO_ARMY_TYPES_FROM_NAME_OFFSET
     counts_offset = name_offset + h3_save_parser.HERO_ARMY_COUNTS_FROM_NAME_OFFSET
+    owner_offset = name_offset - h3_save_parser.HERO_STRUCT_NAME_OFFSET
+
+    if owner_offset >= 0 and owner_color_id is not None:
+        encoded_owner = _xor_encode(bytes([int(owner_color_id)]), xor_key)
+        data[owner_offset:owner_offset + 1] = encoded_owner
 
     for slot, creature_id in enumerate(creature_ids):
         encoded = _xor_encode(int(creature_id).to_bytes(4, "little"), xor_key)
@@ -134,13 +140,14 @@ def _build_multi_xor_hero_fixture(hero_specs):
             counts=spec.get("counts", ISRA_COUNTS),
             name_offset=spec.get("name_offset", 256),
             position=spec.get("position"),
+            owner_color_id=spec.get("owner_color_id", 0),
         )
         chunks.append(chunk)
         chunks.append(b"\x00" * 64)
     return b"".join(chunks)
 
 
-def _hero_army(hero_name, stacks, source_offset=0):
+def _hero_army(hero_name, stacks, source_offset=0, owner_color_id=None):
     return h3_save_parser.HeroArmy(
         hero_name=hero_name,
         stacks=tuple(
@@ -148,10 +155,17 @@ def _hero_army(hero_name, stacks, source_offset=0):
             for creature_id, count in stacks
         ),
         source_offset=source_offset,
+        owner_color_id=owner_color_id,
     )
 
 
-def _positioned_hero_army(hero_name, stacks, position, source_offset=0):
+def _positioned_hero_army(
+    hero_name,
+    stacks,
+    position,
+    source_offset=0,
+    owner_color_id=None,
+):
     return h3_save_parser.HeroArmy(
         hero_name=hero_name,
         stacks=tuple(
@@ -160,6 +174,7 @@ def _positioned_hero_army(hero_name, stacks, position, source_offset=0):
         ),
         source_offset=source_offset,
         position=h3_save_parser.HeroPosition(*position),
+        owner_color_id=owner_color_id,
     )
 
 
@@ -1330,6 +1345,26 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(hero.y, 70)
         self.assertEqual(hero.z, 1)
 
+    def test_parse_xor01_hero_at_reads_owner_color(self):
+        data, name_offset = _build_xor_hero_fixture(owner_color_id=2)
+
+        hero = h3_save_parser.parse_xor01_hero_at(data, name_offset)
+
+        self.assertIsNotNone(hero)
+        self.assertEqual(hero.owner_color_id, 2)
+        self.assertEqual(hero.owner_color_name, "tan")
+
+    def test_parse_xor01_hero_at_treats_unowned_color_as_missing(self):
+        data, name_offset = _build_xor_hero_fixture(
+            owner_color_id=h3_save_parser.HERO_OWNER_UNOWNED,
+        )
+
+        hero = h3_save_parser.parse_xor01_hero_at(data, name_offset)
+
+        self.assertIsNotNone(hero)
+        self.assertIsNone(hero.owner_color_id)
+        self.assertIsNone(hero.owner_color_name)
+
     def test_parse_xor01_hero_at_keeps_army_when_position_window_is_invalid(self):
         data, name_offset = _build_xor_hero_fixture(name_offset=180)
 
@@ -1661,6 +1696,38 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(targets[0].hero_name, "Underground")
         self.assertEqual(targets[0].z, 0)
 
+    def test_build_other_hero_targets_excludes_same_team_when_mapping_available(self):
+        selected = _positioned_hero_army(
+            "Isra",
+            [(57, 10)],
+            position=(39, 69, 1),
+            source_offset=100,
+            owner_color_id=0,
+        )
+        allied = _positioned_hero_army(
+            "Kyrre",
+            [(0, 5)],
+            position=(40, 69, 1),
+            source_offset=200,
+            owner_color_id=1,
+        )
+        enemy = _positioned_hero_army(
+            "Gem",
+            [(1, 5)],
+            position=(41, 69, 1),
+            source_offset=300,
+            owner_color_id=2,
+        )
+
+        targets = h3_save_parser.build_other_hero_targets(
+            (selected, allied, enemy),
+            selected,
+            same_level_z=1,
+            team_by_color={0: 0, 1: 0, 2: 1},
+        )
+
+        self.assertEqual([target.hero_name for target in targets], ["Gem"])
+
     def test_build_other_hero_targets_from_synthetic_multi_hero_save(self):
         data = _build_multi_xor_hero_fixture([
             {
@@ -1673,6 +1740,7 @@ class H3SaveParserContractTests(unittest.TestCase):
                 "creature_ids": (0, 1, 63, 65, 67, 56, 69),
                 "counts": (5, 2, 0, 0, 0, 0, 0),
                 "position": (47, 70, 1),
+                "owner_color_id": 2,
             },
             {
                 "hero_name": "Dace",

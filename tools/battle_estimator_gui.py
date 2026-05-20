@@ -105,6 +105,7 @@ class DomainSnapshot:
     visible_neutral_targets: tuple
     neutral_by_id: dict
     removed_records: tuple
+    team_by_color: dict
 
 
 @dataclass(frozen=True)
@@ -413,6 +414,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             domain_snapshot.heroes,
             selected_hero,
             same_level_z=selected_hero.z,
+            team_by_color=domain_snapshot.team_by_color,
         )
         scan_targets = battle_estimator.build_nearby_scan_targets(
             selected_hero,
@@ -629,8 +631,10 @@ def _build_domain_snapshot_from_source(
     save_fingerprint = source.save_fingerprint
     map_fingerprint = source.map_fingerprint
     loaded_save = h3_save_parser.load_save(save_context.save_file)
-    heroes = h3_save_parser.scan_xor01_hero_armies(loaded_save.data)
+    detected_heroes = h3_save_parser.scan_xor01_hero_armies(loaded_save.data)
     loaded_map = h3_map_parser.load_h3m(resolved_map_file, parse_objects=True)
+    team_by_color = _team_by_color(loaded_map.players)
+    heroes = _prefer_owned_heroes(detected_heroes)
     if removed_neutral_cache is None:
         removed_records = h3_save_parser.load_removed_neutral_records_for_save(
             save_context.save_file,
@@ -664,7 +668,15 @@ def _build_domain_snapshot_from_source(
             "height": loaded_map.header.map_size,
             "levels": loaded_map.header.levels,
         },
-        "heroes": _serialize_heroes(hero_entries),
+        "players": [
+            _serialize_map_player(player)
+            for player in loaded_map.players
+        ],
+        "teams": [
+            _serialize_map_team(team)
+            for team in loaded_map.teams
+        ],
+        "heroes": _serialize_heroes(hero_entries, team_by_color),
         "neutral_targets": [
             _serialize_neutral_target(target)
             for target in neutral_targets
@@ -685,6 +697,7 @@ def _build_domain_snapshot_from_source(
             for target in neutral_targets
         },
         removed_records=removed_records,
+        team_by_color=team_by_color,
     )
 
 
@@ -791,11 +804,51 @@ def _hero_entries(heroes) -> tuple:
     return tuple(zip(hero_ids, heroes))
 
 
-def _serialize_heroes(hero_entries) -> list[dict]:
+def _team_by_color(players) -> dict[int, int]:
+    return {
+        player.player_index: player.team_id
+        for player in players
+        if player.enabled and player.team_id is not None
+    }
+
+
+def _prefer_owned_heroes(heroes) -> tuple:
+    owned_heroes = tuple(
+        hero
+        for hero in heroes
+        if hero.owner_color_id is not None
+    )
+    if owned_heroes:
+        return owned_heroes
+    return tuple(heroes)
+
+
+def _serialize_heroes(hero_entries, team_by_color: dict[int, int]) -> list[dict]:
     return [
-        _serialize_hero(hero, hero_id)
+        _serialize_hero(hero, hero_id, team_by_color)
         for hero_id, hero in hero_entries
     ]
+
+
+def _serialize_map_player(player) -> dict:
+    return {
+        "player_index": player.player_index,
+        "color_name": player.color_name,
+        "enabled": player.enabled,
+        "can_human_play": player.can_human_play,
+        "can_computer_play": player.can_computer_play,
+        "team_id": player.team_id,
+        "main_town_position": _serialize_tuple_position(player.main_town_position),
+        "random_hero": player.random_hero,
+    }
+
+
+def _serialize_map_team(team) -> dict:
+    return {
+        "team_id": team.team_id,
+        "player_indices": list(team.player_indices),
+        "color_names": list(team.color_names),
+    }
 
 
 def _unique_hero_ids(heroes) -> list[str]:
@@ -834,12 +887,16 @@ def _position_identity(position) -> str:
     return f"{position.x},{position.y},{position.z}"
 
 
-def _serialize_hero(hero, hero_id: str) -> dict:
+def _serialize_hero(hero, hero_id: str, team_by_color: dict[int, int]) -> dict:
+    owner_color_id = hero.owner_color_id
     return {
         "id": hero_id,
         "name": hero.hero_name,
         "source_offset": hero.source_offset,
         "position": _serialize_position(hero.position),
+        "owner_color_id": owner_color_id,
+        "owner_color_name": hero.owner_color_name,
+        "team_id": None if owner_color_id is None else team_by_color.get(owner_color_id),
         "army": [_serialize_hero_stack(stack) for stack in hero.stacks],
         "army_summary": hero.army_summary,
         "total_creatures": hero.total_creatures,
@@ -885,6 +942,17 @@ def _serialize_position(position) -> dict | None:
         "x": position.x,
         "y": position.y,
         "z": position.z,
+    }
+
+
+def _serialize_tuple_position(position) -> dict | None:
+    if position is None:
+        return None
+    x, y, z = position
+    return {
+        "x": x,
+        "y": y,
+        "z": z,
     }
 
 
@@ -1300,6 +1368,7 @@ def _single_scan_target(
         selected_hero,
         target_id,
         same_level_z=None,
+        team_by_color=domain_snapshot.team_by_color,
     )
     if hero_target is not None:
         return _scan_target_for_raw_target("hero", selected_hero, hero_target), target_id
@@ -1312,11 +1381,13 @@ def _hero_target_by_id(
     selected_hero,
     target_id: str,
     same_level_z: int | None,
+    team_by_color: dict[int, int] | None = None,
 ):
     hero_targets = h3_save_parser.build_other_hero_targets(
         domain_snapshot.heroes,
         selected_hero,
         same_level_z=same_level_z,
+        team_by_color=team_by_color,
     )
     for hero_target in hero_targets:
         if _hero_id_for_army(domain_snapshot, hero_target.army) == target_id:
@@ -1400,14 +1471,17 @@ def _serialize_scan_target(
         return _serialize_neutral_target(target)
 
     target_id = _hero_id_for_army(domain_snapshot, target.army)
-    return {
-        "id": target_id,
-        "name": target.hero_name,
-        "position": _serialize_position(target.position),
-        "army_summary": target.army_summary,
-        "total_creatures": target.total_creatures,
-        "ai_value": target.ai_value,
-    }
+    payload = _serialize_hero(
+        target.army,
+        target_id,
+        domain_snapshot.team_by_color,
+    )
+    payload["name"] = target.hero_name
+    payload["position"] = _serialize_position(target.position)
+    payload["army_summary"] = target.army_summary
+    payload["total_creatures"] = target.total_creatures
+    payload["ai_value"] = target.ai_value
+    return payload
 
 
 def server_url(server: ThreadingHTTPServer) -> str:

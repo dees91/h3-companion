@@ -128,6 +128,62 @@ def _build_minimal_sod_h3m_with_monster(
     ))
 
 
+def _enabled_sod_player(position, human=True, computer=True):
+    return b"".join((
+        bytes([1 if human else 0]),
+        bytes([1 if computer else 0]),
+        b"\x00",  # AI tactic
+        b"\x00",  # selectable faction flag
+        b"\xff\x01",  # factions bitmask
+        b"\x00",  # random faction flag
+        b"\x01",  # main town flag
+        b"\x01",  # generate hero at main town
+        b"\x00",  # unused starting town type
+        bytes(position),
+        b"\x00",  # random hero flag
+        b"\xff",  # no main hero
+        b"\x00",  # unused AB byte
+        (0).to_bytes(4, "little"),  # custom hero names count
+    ))
+
+
+def _build_minimal_sod_h3m_with_teams():
+    header = b"".join((
+        _build_minimal_h3m_header(map_size=1, levels=1),
+        _base_string("Synthetic Teams"),
+        _base_string(""),
+        b"\x00",  # difficulty
+        b"\x00",  # level limit
+    ))
+    players = b"".join((
+        _enabled_sod_player((70, 55, 0)),
+        _enabled_sod_player((50, 38, 0)),
+        _enabled_sod_player((95, 54, 0)),
+        _enabled_sod_player((7, 41, 0)),
+        (b"\x00\x00" + (b"\x00" * 13)) * 4,
+    ))
+    return b"".join((
+        header,
+        players,
+        b"\xff",  # standard victory
+        b"\xff",  # standard loss
+        b"\x08",  # team assignments present
+        bytes([0, 0, 1, 1, 4, 5, 6, 7]),
+        b"\x00" * 20,  # allowed heroes
+        (0).to_bytes(4, "little"),  # placeholder heroes
+        b"\x00",  # disposed heroes
+        b"\x00" * 31,  # map options
+        b"\x00" * 18,  # allowed artifacts
+        b"\x00" * 9,  # allowed spells
+        b"\x00" * 4,  # allowed skills
+        (0).to_bytes(4, "little"),  # rumors
+        b"\x00" * 156,  # predefined heroes
+        b"\x00" * 7,  # one terrain tile
+        (0).to_bytes(4, "little"),  # templates
+        (0).to_bytes(4, "little"),  # objects
+    ))
+
+
 class H3MapParserContractTests(unittest.TestCase):
     def test_h3m_def_mapping_covers_all_estimator_creatures(self):
         mapped_names = set(h3_map_parser.H3M_DEF_TO_ESTIMATOR_CREATURE_NAME.values())
@@ -202,6 +258,43 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(target.count, 37)
         self.assertFalse(target.removed)
         self.assertIsNone(target.removal_note)
+
+    def test_load_h3m_reads_player_colors_and_teams(self):
+        payload = _build_minimal_sod_h3m_with_teams()
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "teams.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(
+            [
+                (player.color_name, player.enabled, player.team_id)
+                for player in loaded.players
+            ],
+            [
+                ("red", True, 0),
+                ("blue", True, 0),
+                ("tan", True, 1),
+                ("green", True, 1),
+                ("orange", False, None),
+                ("purple", False, None),
+                ("teal", False, None),
+                ("pink", False, None),
+            ],
+        )
+        self.assertEqual(loaded.players[0].main_town_position, (70, 55, 0))
+        self.assertEqual(
+            [
+                (team.team_id, team.color_names)
+                for team in loaded.teams
+            ],
+            [
+                (0, ("red", "blue")),
+                (1, ("tan", "green")),
+            ],
+        )
 
     def test_load_h3m_reads_gzip_with_format_id_at_offset_zero(self):
         payload = _build_minimal_h3m_header()

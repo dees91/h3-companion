@@ -33,9 +33,14 @@ def _write_xor_hero_window(
     counts=ISRA_COUNTS,
     name_offset=256,
     position=None,
+    owner_color_id=0,
 ):
     ids_offset = name_offset + h3_save_parser.HERO_ARMY_TYPES_FROM_NAME_OFFSET
     counts_offset = name_offset + h3_save_parser.HERO_ARMY_COUNTS_FROM_NAME_OFFSET
+    owner_offset = name_offset - h3_save_parser.HERO_STRUCT_NAME_OFFSET
+
+    if owner_offset >= 0 and owner_color_id is not None:
+        data[owner_offset:owner_offset + 1] = _xor_encode(bytes([int(owner_color_id)]))
 
     for slot, creature_id in enumerate(creature_ids):
         encoded = _xor_encode(int(creature_id).to_bytes(4, "little"))
@@ -70,6 +75,7 @@ def _build_xor_hero_fixture(
     counts=ISRA_COUNTS,
     name_offset=256,
     position=None,
+    owner_color_id=0,
 ):
     data = bytearray(name_offset + h3_save_parser.HERO_NAME_SIZE + 32)
     data[0:len(h3_save_parser.H3SVG_SIGNATURE)] = h3_save_parser.H3SVG_SIGNATURE
@@ -80,6 +86,7 @@ def _build_xor_hero_fixture(
         counts=counts,
         name_offset=name_offset,
         position=position,
+        owner_color_id=owner_color_id,
     )
     return bytes(data)
 
@@ -95,6 +102,7 @@ def _build_multi_hero_fixture(hero_specs):
             creature_ids=spec.get("creature_ids", ISRA_CREATURE_IDS),
             counts=spec.get("counts", ISRA_COUNTS),
             name_offset=spec["name_offset"],
+            owner_color_id=spec.get("owner_color_id", 0),
         )
     return bytes(data)
 

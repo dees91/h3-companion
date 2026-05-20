@@ -54,6 +54,16 @@ HIDDEN_NEUTRAL_TARGET_PATTERN = re.compile(r"^neutral:(?P<object_index>\d+)$")
 HERO_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9 '\-]{0,12}$")
 HERO_NAME_FIRST_CHARS = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 HERO_NAME_REST_CHARS = HERO_NAME_FIRST_CHARS + b"0123456789 '-"
+PLAYER_COLOR_NAMES = (
+    "red",
+    "blue",
+    "tan",
+    "green",
+    "orange",
+    "purple",
+    "teal",
+    "pink",
+)
 
 HERO_ARMY_SLOT_COUNT = 7
 HERO_ARMY_VALUE_SIZE = 4
@@ -80,6 +90,7 @@ REMOVED_NEUTRAL_COORD_LEVEL_MASK = (1 << REMOVED_NEUTRAL_COORD_LEVEL_SHIFT) - 1
 HERO_STRUCT_ARMY_TYPES_OFFSET = 113
 HERO_STRUCT_ARMY_COUNTS_OFFSET = 141
 HERO_STRUCT_NAME_OFFSET = 169
+HERO_OWNER_UNOWNED = 0xFF
 HERO_STRUCT_POSITION_FROM_NAME_OFFSET = -194
 HERO_POSITION_SIZE = 5
 MAX_HERO_POSITION_COORD = 255
@@ -310,6 +321,7 @@ class HeroArmy:
     stacks: tuple[HeroStack, ...]
     source_offset: int | None = None
     position: HeroPosition | None = None
+    owner_color_id: int | None = None
 
     @property
     def total_creatures(self) -> int:
@@ -325,6 +337,14 @@ class HeroArmy:
             f"{stack.count}x {stack.creature.name}"
             for stack in self.stacks
         )
+
+    @property
+    def owner_color_name(self) -> str | None:
+        if self.owner_color_id is None:
+            return None
+        if 0 <= self.owner_color_id < len(PLAYER_COLOR_NAMES):
+            return PLAYER_COLOR_NAMES[self.owner_color_id]
+        return None
 
     @property
     def x(self) -> int | None:
@@ -1140,6 +1160,25 @@ def decode_hero_position(
     return None
 
 
+def decode_hero_owner_color(
+    data: bytes,
+    name_offset: int,
+    key: int = HERO_ARMY_XOR_KEY,
+) -> int | None:
+    """Decode the optional owner color at the start of the hero record."""
+
+    owner_offset = name_offset - HERO_STRUCT_NAME_OFFSET
+    try:
+        decoded = xor_decode_bytes(data, owner_offset, 1, key)[0]
+    except ValueError:
+        return None
+    if 0 <= decoded < len(PLAYER_COLOR_NAMES):
+        return decoded
+    if decoded == HERO_OWNER_UNOWNED:
+        return None
+    return None
+
+
 def parse_hero_at(
     data: bytes,
     name_offset: int,
@@ -1181,11 +1220,13 @@ def parse_hero_at(
     if not stacks:
         return None
     position = decode_hero_position(data, name_offset, key)
+    owner_color_id = decode_hero_owner_color(data, name_offset, key)
     return HeroArmy(
         hero_name=hero_name,
         stacks=tuple(stacks),
         source_offset=name_offset,
         position=position,
+        owner_color_id=owner_color_id,
     )
 
 
@@ -1262,6 +1303,8 @@ def build_other_hero_targets(
     heroes,
     selected_hero: HeroArmy,
     same_level_z: int | None = None,
+    team_by_color: dict[int, int] | None = None,
+    include_allied: bool = False,
 ) -> tuple[HeroTarget, ...]:
     """Build army-only target records for positioned heroes other than selected."""
 
@@ -1274,6 +1317,17 @@ def build_other_hero_targets(
         if hero.position is None:
             continue
         if same_level_z is not None and hero.position.z != same_level_z:
+            continue
+        if (
+            team_by_color is not None
+            and selected_hero.owner_color_id is not None
+            and hero.owner_color_id is None
+        ):
+            continue
+        if (
+            not include_allied
+            and _is_same_owner_or_team(selected_hero, hero, team_by_color)
+        ):
             continue
         targets.append(
             HeroTarget(
@@ -1291,6 +1345,24 @@ def _is_selected_hero(hero: HeroArmy, selected_hero: HeroArmy) -> bool:
     if hero.source_offset is not None and selected_hero.source_offset is not None:
         return hero.source_offset == selected_hero.source_offset
     return hero == selected_hero
+
+
+def _is_same_owner_or_team(
+    selected_hero: HeroArmy,
+    candidate: HeroArmy,
+    team_by_color: dict[int, int] | None,
+) -> bool:
+    selected_color = selected_hero.owner_color_id
+    candidate_color = candidate.owner_color_id
+    if selected_color is None or candidate_color is None:
+        return False
+    if selected_color == candidate_color:
+        return True
+    if team_by_color is None:
+        return False
+    selected_team = team_by_color.get(selected_color)
+    candidate_team = team_by_color.get(candidate_color)
+    return selected_team is not None and selected_team == candidate_team
 
 
 def parse_game_folder_datetime(name: str) -> datetime | None:

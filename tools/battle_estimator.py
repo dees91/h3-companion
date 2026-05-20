@@ -1347,17 +1347,21 @@ def _run_nearby_scan(args: argparse.Namespace) -> None:
     map_file = _resolve_cli_map(args, context, required=True)
     loaded_save = h3_save_parser.load_save(context.save_file)
     detected_heroes = h3_save_parser.scan_xor01_hero_armies(loaded_save.data)
+    scan_heroes = _prefer_owned_heroes(detected_heroes)
     listed_heroes = h3_save_parser.filter_relevant_heroes(
-        detected_heroes,
+        scan_heroes,
         all_heroes=args.all_heroes,
     )
     selected_hero = h3_save_parser.select_hero(listed_heroes, args.hero.strip())
 
-    neutral_targets = h3_map_parser.load_h3m_neutral_monsters(map_file)
+    loaded_map = h3_map_parser.load_h3m(map_file, parse_objects=True)
+    neutral_targets = loaded_map.neutral_targets
+    team_by_color = _team_by_color(loaded_map.players)
     hero_targets = h3_save_parser.build_other_hero_targets(
-        detected_heroes,
+        scan_heroes,
         selected_hero,
         same_level_z=selected_hero.z,
+        team_by_color=team_by_color,
     )
     removed_records = ()
     if args.target_type in ("all", "neutral"):
@@ -1447,6 +1451,25 @@ def _print_nearby_scan_results(
             f"{_format_scan_win_pct(estimate):>7}  "
             f"{estimate.note}"
         )
+
+
+def _team_by_color(players):
+    return {
+        player.player_index: player.team_id
+        for player in players
+        if player.enabled and player.team_id is not None
+    }
+
+
+def _prefer_owned_heroes(heroes) -> tuple:
+    owned_heroes = tuple(
+        hero
+        for hero in heroes
+        if hero.owner_color_id is not None
+    )
+    if owned_heroes:
+        return owned_heroes
+    return tuple(heroes)
 
 
 def _format_scan_position(x: int, y: int, z: int) -> str:

@@ -247,6 +247,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "require manual Refresh until UX settles",
             "setInterval",
             "snapshotChanged",
+            "owner_color_id",
+            "owner_color_name",
+            "team_id",
+            "PLAYER_COLOR_STYLES",
             "FOLLOW_LATEST_MODE",
             "PINNED_MODE",
             "return Promise.resolve();",
@@ -291,6 +295,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".chip-button",
             ".hero-item",
             ".hero-item.selected",
+            ".item-title-row",
+            ".color-swatch",
             ".estimate-grid",
             ".result-box.error",
             ".scan-result",
@@ -324,8 +330,6 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "place-items: start center;",
         ):
             self.assertIn(expected, style_css)
-        self.assertNotIn("owner_id", app_js)
-        self.assertNotIn("team_id", app_js)
 
     def test_frontend_estimate_helpers_cover_click_and_stale_edges(self):
         node = shutil.which("node")
@@ -446,6 +450,9 @@ const markerSnapshot = {{
       id: "hero:0",
       name: "Isra",
       position: {{ x: 1, y: 2, z: 0 }},
+      owner_color_id: 0,
+      owner_color_name: "red",
+      team_id: 0,
       total_creatures: 12,
       ai_value: 500,
       army_summary: "12x Skeleton"
@@ -454,6 +461,9 @@ const markerSnapshot = {{
       id: "hero:1",
       name: "Fafner",
       position: {{ x: 2, y: 3, z: 1 }},
+      owner_color_id: 2,
+      owner_color_name: "tan",
+      team_id: 1,
       total_creatures: 292,
       ai_value: 1200,
       army_summary: "1x Devil, 72x Master Gremlin"
@@ -462,6 +472,9 @@ const markerSnapshot = {{
       id: "hero:2",
       name: "Dormant",
       position: null,
+      owner_color_id: 0,
+      owner_color_name: "red",
+      team_id: 0,
       total_creatures: 999,
       ai_value: 9000,
       army_summary: "999x Skeleton"
@@ -568,6 +581,7 @@ assert.deepStrictEqual(
 );
 const tooltip = helpers.markerTooltipText(level1Markers[0]);
 assert.ok(tooltip.includes("Fafner"));
+assert.ok(tooltip.includes("Tan team 1 enemy"));
 assert.ok(tooltip.includes("2,3,1"));
 assert.ok(!tooltip.includes("<"));
 assert.strictEqual(helpers.formatWinPct(null), "not available");
@@ -580,6 +594,10 @@ assert.deepStrictEqual(
 assert.deepStrictEqual(
   helpers.simulationClickDecision({{ type: "hero", id: "hero:256" }}, "hero:256"),
   {{ simulate: false, message: "Selected hero is not a simulation target." }}
+);
+assert.deepStrictEqual(
+  helpers.simulationClickDecision({{ type: "hero", id: "hero:512", relation: "ally" }}, "hero:256"),
+  {{ simulate: false, message: "Allied hero is not a simulation target." }}
 );
 assert.deepStrictEqual(
   helpers.simulationClickDecision({{ type: "neutral", id: "neutral:0" }}, "hero:256"),
@@ -1469,7 +1487,12 @@ assert.strictEqual(
                 "001.GM2",
                 (
                     {"hero_name": "Isra", "name_offset": 256, "position": (39, 69, 1)},
-                    {"hero_name": "Marius", "name_offset": 512, "position": (39, 71, 1)},
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 512,
+                        "position": (39, 71, 1),
+                        "owner_color_id": 2,
+                    },
                 ),
             )
             map_path = _write_h3m_map(temp_path / "map.h3m", position=(39, 70, 1))
@@ -1516,7 +1539,12 @@ assert.strictEqual(
                 "001.GM2",
                 (
                     {"hero_name": "Isra", "name_offset": 256, "position": (39, 69, 1)},
-                    {"hero_name": "Marius", "name_offset": 512, "position": (39, 71, 1)},
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 512,
+                        "position": (39, 71, 1),
+                        "owner_color_id": 2,
+                    },
                 ),
             )
             map_path = _write_h3m_map(temp_path / "map.h3m", position=(39, 70, 1))
@@ -1561,7 +1589,12 @@ assert.strictEqual(
                 "001.GM2",
                 (
                     {"hero_name": "Isra", "name_offset": 256, "position": (39, 69, 1)},
-                    {"hero_name": "Marius", "name_offset": 512, "position": (39, 71, 1)},
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 512,
+                        "position": (39, 71, 1),
+                        "owner_color_id": 2,
+                    },
                 ),
             )
             map_path = _write_h3m_map(temp_path / "map.h3m", position=(39, 70, 1))
@@ -1771,9 +1804,14 @@ class BattleEstimatorGuiSnapshotTests(unittest.TestCase):
             self.assertEqual(hero["id"], "hero:256")
             self.assertEqual(hero["name"], "Isra")
             self.assertEqual(hero["position"], {"x": 39, "y": 69, "z": 1})
+            self.assertEqual(hero["owner_color_id"], 0)
+            self.assertEqual(hero["owner_color_name"], "red")
+            self.assertIsNone(hero["team_id"])
             self.assertEqual(hero["army"][0]["creature_name"], "Skeleton Warrior")
             self.assertEqual(hero["army"][0]["count"], 731)
             self.assertGreater(hero["ai_value"], 0)
+            self.assertEqual(len(snapshot["players"]), 8)
+            self.assertEqual(snapshot["teams"], [])
 
             self.assertEqual(len(snapshot["neutral_targets"]), 1)
             neutral = snapshot["neutral_targets"][0]
@@ -1902,6 +1940,7 @@ def _write_multi_gui_save(game_dir: Path, name: str, hero_specs) -> Path:
             hero_name=spec["hero_name"],
             name_offset=spec["name_offset"],
             position=spec.get("position"),
+            owner_color_id=spec.get("owner_color_id", 0),
         )
     save_path = game_dir / name
     save_path.write_bytes(gzip.compress(bytes(data)))

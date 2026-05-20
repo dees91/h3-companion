@@ -105,6 +105,16 @@
   const AUTO_REFRESH_ENABLED = false;
   const FOLLOW_LATEST_MODE = "follow_latest";
   const PINNED_MODE = "pinned";
+  const PLAYER_COLOR_STYLES = {
+    red: { fill: "#e11d2e", stroke: "#8f1220" },
+    blue: { fill: "#2d6cdf", stroke: "#143a75" },
+    tan: { fill: "#b98543", stroke: "#6b451f" },
+    green: { fill: "#2f8f46", stroke: "#14532d" },
+    orange: { fill: "#e07826", stroke: "#8a3c0b" },
+    purple: { fill: "#7c3aed", stroke: "#4c1d95" },
+    teal: { fill: "#0f9f9a", stroke: "#115e59" },
+    pink: { fill: "#d85fa3", stroke: "#8f2a61" }
+  };
 
   function setHealth(text, className) {
     elements.health.textContent = text;
@@ -306,6 +316,81 @@
     return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}...`;
   }
 
+  function titleCase(value) {
+    const text = String(value || "").trim();
+    if (!text) {
+      return "";
+    }
+    return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+  }
+
+  function playerColorStyle(colorName) {
+    return PLAYER_COLOR_STYLES[String(colorName || "").toLowerCase()] || {
+      fill: "#64748b",
+      stroke: "#334155"
+    };
+  }
+
+  function heroOwnerText(hero) {
+    if (!hero || !hero.owner_color_name) {
+      return "No owner";
+    }
+    const team = typeof hero.team_id === "number" ? `team ${hero.team_id}` : "no team";
+    return `${titleCase(hero.owner_color_name)} ${team}`;
+  }
+
+  function heroRelation(hero, snapshot) {
+    if (!hero || !snapshot || !snapshot.selected_hero_id) {
+      return null;
+    }
+    const selected = heroById(snapshot, snapshot.selected_hero_id);
+    if (!selected) {
+      return null;
+    }
+    if (hero.id === selected.id) {
+      return "selected";
+    }
+    if (
+      typeof hero.owner_color_id !== "number"
+      || typeof selected.owner_color_id !== "number"
+    ) {
+      return "unknown";
+    }
+    if (hero.owner_color_id === selected.owner_color_id) {
+      return "ally";
+    }
+    if (
+      typeof hero.team_id === "number"
+      && typeof selected.team_id === "number"
+      && hero.team_id === selected.team_id
+    ) {
+      return "ally";
+    }
+    return "enemy";
+  }
+
+  function markerOwnerText(marker) {
+    if (!marker || marker.type !== "hero") {
+      return "";
+    }
+    const color = marker.ownerColorName ? titleCase(marker.ownerColorName) : "No owner";
+    const team = typeof marker.teamId === "number" ? `team ${marker.teamId}` : "no team";
+    const relation = marker.relation && marker.relation !== "selected"
+      ? marker.relation
+      : "";
+    return [color, team, relation].filter(Boolean).join(" ");
+  }
+
+  function appendColorSwatch(parent, colorName) {
+    const swatch = document.createElement("span");
+    const style = playerColorStyle(colorName);
+    swatch.className = "color-swatch";
+    swatch.style.backgroundColor = style.fill;
+    swatch.style.borderColor = style.stroke;
+    swatch.title = colorName ? titleCase(colorName) : "No owner";
+    parent.appendChild(swatch);
+  }
+
   function markerTooltipText(marker) {
     if (!marker) {
       return "";
@@ -313,6 +398,7 @@
     if (marker.type === "hero") {
       return [
         marker.label,
+        markerOwnerText(marker),
         positionText(marker.position),
         `${marker.creatureCount || 0} creatures`,
         truncateText(marker.summary, 90)
@@ -352,6 +438,10 @@
         id: hero.id,
         label: hero.name || hero.id,
         position: hero.position,
+        ownerColorId: hero.owner_color_id,
+        ownerColorName: hero.owner_color_name,
+        teamId: hero.team_id,
+        relation: heroRelation(hero, snapshot),
         world: {
           x: (hero.position.x + 0.5) * tileSize,
           y: (hero.position.y + 0.5) * tileSize
@@ -723,6 +813,7 @@
       const isActive = marker.id === mapView.activeMarkerId;
       const isHover = marker.id === mapView.hoveredMarkerId;
       const scanColors = scanColorsForMarker(marker);
+      const ownerColors = playerColorStyle(marker.ownerColorName);
 
       canvasContext.save();
       canvasContext.globalAlpha = marker.hidden ? 0.32 : (marker.removed ? 0.45 : 1);
@@ -731,10 +822,10 @@
         canvasContext.rotate(Math.PI / 4);
         canvasContext.fillStyle = marker.selected
           ? "#f5c542"
-          : (scanColors ? scanColors.fill : "#2d6cdf");
+          : (scanColors ? scanColors.fill : ownerColors.fill);
         canvasContext.strokeStyle = marker.selected
           ? "#7a4d00"
-          : (scanColors ? scanColors.stroke : "#143a75");
+          : (scanColors ? scanColors.stroke : ownerColors.stroke);
         canvasContext.lineWidth = marker.selected ? 3 : 2;
         canvasContext.fillRect(-radius, -radius, radius * 2, radius * 2);
         canvasContext.strokeRect(-radius, -radius, radius * 2, radius * 2);
@@ -751,10 +842,10 @@
         canvasContext.beginPath();
         canvasContext.fillStyle = scanColors
           ? scanColors.fill
-          : (marker.hidden ? "#64748b" : (marker.unsupported ? "#8b95a3" : "#c2413d"));
+          : (marker.hidden ? "#64748b" : (marker.unsupported ? "#8b95a3" : "#1f2937"));
         canvasContext.strokeStyle = scanColors
           ? scanColors.stroke
-          : (marker.hidden ? "#334155" : (marker.removed ? "#4b5563" : "#7a1f1c"));
+          : (marker.hidden ? "#334155" : (marker.removed ? "#4b5563" : "#facc15"));
         canvasContext.lineWidth = marker.unsupported || marker.removed || marker.hidden ? 3 : 2;
         canvasContext.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
         canvasContext.fill();
@@ -796,6 +887,12 @@
     }
     if (marker.unsupported) {
       flags.push("unsupported");
+    }
+    if (marker.type === "hero") {
+      const ownerText = markerOwnerText(marker);
+      if (ownerText) {
+        flags.push(ownerText);
+      }
     }
     const suffix = flags.length ? ` | ${flags.join(", ")}` : "";
     elements.targetState.textContent = `${marker.type} ${marker.id} | ${marker.label} | ${positionText(marker.position)}${suffix}`;
@@ -952,6 +1049,9 @@
     }
     if (marker.type === "hero" && marker.id === selectedHeroId) {
       return { simulate: false, message: "Selected hero is not a simulation target." };
+    }
+    if (marker.type === "hero" && marker.relation === "ally") {
+      return { simulate: false, message: "Allied hero is not a simulation target." };
     }
     return { simulate: true, message: "" };
   }
@@ -1666,21 +1766,27 @@
       row.dataset.heroId = hero.id;
       row.addEventListener("click", () => focusRankedHero(hero.id));
 
+      const titleRow = document.createElement("div");
+      titleRow.className = "item-title-row";
+      appendColorSwatch(titleRow, hero.owner_color_name);
+
       const title = document.createElement("div");
       title.className = "item-title ranking-title";
       title.textContent = `${index + 1}. ${hero.name || hero.id}`;
       title.title = title.textContent;
+      titleRow.appendChild(title);
 
       const meta = document.createElement("div");
       meta.className = "item-meta";
       meta.textContent = [
+        heroOwnerText(hero),
         `AI ${formatNumber(hero.ai_value)}`,
         positionText(hero.position),
         `${hero.total_creatures || 0} creatures`
       ].join(" | ");
       meta.title = hero.army_summary || meta.textContent;
 
-      row.appendChild(title);
+      row.appendChild(titleRow);
       row.appendChild(meta);
       elements.heroRankingList.appendChild(row);
     });
@@ -1803,17 +1909,26 @@
       row.disabled = Boolean(heroState.selectingHeroId);
       row.addEventListener("click", () => selectHero(hero.id));
 
+      const titleRow = document.createElement("div");
+      titleRow.className = "item-title-row";
+      appendColorSwatch(titleRow, hero.owner_color_name);
+
       const title = document.createElement("div");
       title.className = "item-title";
       title.textContent = hero.name || hero.id;
       title.title = title.textContent;
+      titleRow.appendChild(title);
 
       const meta = document.createElement("div");
       meta.className = "item-meta";
-      meta.textContent = `${positionText(hero.position)} | ${hero.total_creatures || 0} creatures`;
+      meta.textContent = [
+        heroOwnerText(hero),
+        positionText(hero.position),
+        `${hero.total_creatures || 0} creatures`
+      ].join(" | ");
       meta.title = hero.army_summary || meta.textContent;
 
-      row.appendChild(title);
+      row.appendChild(titleRow);
       row.appendChild(meta);
       elements.heroList.appendChild(row);
     });

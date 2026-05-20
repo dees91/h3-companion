@@ -17,6 +17,16 @@ H3M_HEADER_MIN_SIZE = 10
 H3M_FORMAT_ROE = 0x0E
 H3M_FORMAT_AB = 0x15
 H3M_FORMAT_SOD = 0x1C
+PLAYER_COLOR_NAMES = (
+    "red",
+    "blue",
+    "tan",
+    "green",
+    "orange",
+    "purple",
+    "teal",
+    "pink",
+)
 MAX_RANDOM_MAP_TIME_DELTA = timedelta(hours=2)
 RANDOM_MAP_DATE_PATTERN = re.compile(
     r"(?P<year>\d{4})\.(?P<month>\d{2})\.(?P<day>\d{2})"
@@ -240,6 +250,32 @@ class H3MapObject:
 
 
 @dataclass(frozen=True)
+class H3MapPlayer:
+    """One H3M player slot in Heroes III color order."""
+
+    player_index: int
+    color_name: str
+    can_human_play: bool
+    can_computer_play: bool
+    team_id: int | None = None
+    main_town_position: tuple[int, int, int] | None = None
+    random_hero: bool | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return self.can_human_play or self.can_computer_play
+
+
+@dataclass(frozen=True)
+class H3MapTeam:
+    """Resolved active color slots that belong to one H3M team."""
+
+    team_id: int
+    player_indices: tuple[int, ...]
+    color_names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class H3NeutralMonsterTarget:
     """Neutral monster target derived from an H3M object."""
 
@@ -264,6 +300,8 @@ class LoadedH3Map:
     data: bytes
     h3m_offset: int
     header: H3MapHeader
+    players: tuple[H3MapPlayer, ...] = field(default_factory=tuple)
+    teams: tuple[H3MapTeam, ...] = field(default_factory=tuple)
     templates: tuple[H3ObjectTemplate, ...] = field(default_factory=tuple)
     objects: tuple[H3MapObject, ...] = field(default_factory=tuple)
     neutral_targets: tuple[H3NeutralMonsterTarget, ...] = field(default_factory=tuple)
@@ -378,7 +416,14 @@ def load_h3m_bytes(
         )
 
     if parse_objects:
-        header, templates, objects, neutral_targets = _parse_h3m_structures(
+        (
+            header,
+            players,
+            teams,
+            templates,
+            objects,
+            neutral_targets,
+        ) = _parse_h3m_structures(
             data,
             h3m_offset,
             map_path,
@@ -388,6 +433,8 @@ def load_h3m_bytes(
             data=data,
             h3m_offset=h3m_offset,
             header=header,
+            players=players,
+            teams=teams,
             templates=templates,
             objects=objects,
             neutral_targets=neutral_targets,
@@ -589,7 +636,7 @@ def parse_h3m_neutral_monsters(
 ) -> tuple[H3NeutralMonsterTarget, ...]:
     """Parse neutral monster targets from decompressed H3M bytes."""
 
-    return _parse_h3m_structures(data, offset, Path(path))[3]
+    return _parse_h3m_structures(data, offset, Path(path))[5]
 
 
 def _removed_neutral_note(record) -> str:
@@ -688,15 +735,17 @@ def _parse_h3m_structures(
     path: Path,
 ) -> tuple[
     H3MapHeader,
+    tuple[H3MapPlayer, ...],
+    tuple[H3MapTeam, ...],
     tuple[H3ObjectTemplate, ...],
     tuple[H3MapObject, ...],
     tuple[H3NeutralMonsterTarget, ...],
 ]:
     reader = _H3MReader(data, path, offset)
     header, features = _read_full_header(reader)
-    _skip_player_info(reader, features)
+    players = _read_player_info(reader, features)
     _skip_victory_loss_conditions(reader, features)
-    _skip_team_info(reader)
+    players, teams = _read_team_info(reader, players)
     _skip_allowed_heroes(reader, features)
     _skip_disposed_heroes(reader, features)
     _skip_map_options(reader)
@@ -707,7 +756,7 @@ def _parse_h3m_structures(
     _skip_terrain(reader, header)
     templates = _read_object_templates(reader)
     objects, targets = _read_objects(reader, templates, features)
-    return header, templates, objects, targets
+    return header, players, teams, templates, objects, targets
 
 
 def _read_full_header(reader: _H3MReader) -> tuple[H3MapHeader, _H3MFeatures]:
@@ -745,7 +794,11 @@ def _read_full_header(reader: _H3MReader) -> tuple[H3MapHeader, _H3MFeatures]:
     )
 
 
-def _skip_player_info(reader: _H3MReader, features: _H3MFeatures) -> None:
+def _read_player_info(
+    reader: _H3MReader,
+    features: _H3MFeatures,
+) -> tuple[H3MapPlayer, ...]:
+    players = []
     for player_index in range(8):
         can_human_play = bool(reader.read_u8(f"player {player_index} human flag"))
         can_computer_play = bool(reader.read_u8(f"player {player_index} computer flag"))
@@ -757,6 +810,14 @@ def _skip_player_info(reader: _H3MReader, features: _H3MFeatures) -> None:
             if features.level_sod:
                 skip_size += 1
             reader.skip(skip_size, f"disabled player {player_index} data")
+            players.append(
+                H3MapPlayer(
+                    player_index=player_index,
+                    color_name=PLAYER_COLOR_NAMES[player_index],
+                    can_human_play=False,
+                    can_computer_play=False,
+                )
+            )
             continue
 
         reader.read_i8(f"player {player_index} AI tactic")
@@ -765,14 +826,20 @@ def _skip_player_info(reader: _H3MReader, features: _H3MFeatures) -> None:
         reader.skip(features.factions_bytes, f"player {player_index} factions bitmask")
         reader.read_u8(f"player {player_index} random faction flag")
 
+        main_town_position = None
         has_main_town = bool(reader.read_u8(f"player {player_index} main town flag"))
         if has_main_town:
             if features.level_ab:
                 reader.read_u8(f"player {player_index} generate hero at main town")
                 reader.skip(1, f"player {player_index} unused starting town type")
-            reader.skip(3, f"player {player_index} main town position")
+            raw_position = reader.read(3, f"player {player_index} main town position")
+            main_town_position = (
+                raw_position[0],
+                raw_position[1],
+                raw_position[2],
+            )
 
-        reader.read_u8(f"player {player_index} random hero flag")
+        random_hero = bool(reader.read_u8(f"player {player_index} random hero flag"))
         main_hero_id = _read_hero_id(reader, f"player {player_index} main hero")
         if main_hero_id != 0xFF:
             _read_hero_id(reader, f"player {player_index} main hero portrait")
@@ -789,6 +856,19 @@ def _skip_player_info(reader: _H3MReader, features: _H3MFeatures) -> None:
                 reader.read_base_string(
                     f"player {player_index} custom hero {hero_index} name",
                 )
+
+        players.append(
+            H3MapPlayer(
+                player_index=player_index,
+                color_name=PLAYER_COLOR_NAMES[player_index],
+                can_human_play=can_human_play,
+                can_computer_play=can_computer_play,
+                main_town_position=main_town_position,
+                random_hero=random_hero,
+            )
+        )
+
+    return tuple(players)
 
 
 def _skip_victory_loss_conditions(
@@ -837,10 +917,52 @@ def _skip_victory_loss_conditions(
         )
 
 
-def _skip_team_info(reader: _H3MReader) -> None:
+def _read_team_info(
+    reader: _H3MReader,
+    players: tuple[H3MapPlayer, ...],
+) -> tuple[tuple[H3MapPlayer, ...], tuple[H3MapTeam, ...]]:
     team_count = reader.read_u8("team count")
+    team_ids_by_player = {}
     if team_count > 0:
-        reader.skip(8, "team assignments")
+        assignments = tuple(
+            reader.read_u8(f"player {player_index} team assignment")
+            for player_index in range(8)
+        )
+        team_ids_by_player = {
+            player.player_index: assignments[player.player_index]
+            for player in players
+            if player.enabled
+        }
+    else:
+        next_team_id = 0
+        for player in players:
+            if not player.enabled:
+                continue
+            team_ids_by_player[player.player_index] = next_team_id
+            next_team_id += 1
+
+    players_with_teams = tuple(
+        replace(
+            player,
+            team_id=team_ids_by_player.get(player.player_index),
+        )
+        for player in players
+    )
+    teams_by_id = {}
+    for player in players_with_teams:
+        if player.team_id is None:
+            continue
+        teams_by_id.setdefault(player.team_id, []).append(player)
+
+    teams = tuple(
+        H3MapTeam(
+            team_id=team_id,
+            player_indices=tuple(player.player_index for player in team_players),
+            color_names=tuple(player.color_name for player in team_players),
+        )
+        for team_id, team_players in sorted(teams_by_id.items())
+    )
+    return players_with_teams, teams
 
 
 def _skip_allowed_heroes(reader: _H3MReader, features: _H3MFeatures) -> None:
