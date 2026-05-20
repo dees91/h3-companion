@@ -494,26 +494,45 @@ tests. Required GUI tests passed with 88 focused cases.
 
 ## Task 9: Add Skills Dialog UI
 
+**Status:** done
+
 **Description:** Add a `Skills` action for the currently selected hero that
 opens a scrollable dialog. The dialog should show hero metadata, the 8-slot
 skill editor, top recommendations, avoid entries, and a skill-vs-skill compare
 control.
 
 **Acceptance criteria:**
-- [ ] `Skills` action is disabled or clearly unavailable without a selected
+- [x] `Skills` action is disabled or clearly unavailable without a selected
       hero.
-- [ ] Dialog opens for the currently selected hero.
-- [ ] Current skill slots can be edited with skill and level selects.
-- [ ] Duplicate skills and more than 8 skills are prevented.
-- [ ] Reset restores VCMI starting skills.
-- [ ] Top recommendations and avoid entries refresh after edits.
-- [ ] Skill-vs-skill comparison accepts two concrete offers and shows a winner.
+- [x] Dialog opens for the currently selected hero.
+- [x] Current skill slots can be edited with skill and level selects.
+- [x] Duplicate skills and more than 8 skills are prevented.
+- [x] Reset restores VCMI starting skills.
+- [x] Top recommendations and avoid entries refresh after edits.
+- [x] Skill-vs-skill comparison accepts two concrete offers and shows a winner.
 
 **Verification:**
-- [ ] Add GUI tests for dialog open/close, slot editing, reset, recommendation
+- [x] Add GUI tests for dialog open/close, slot editing, reset, recommendation
       refresh, and offer comparison.
-- [ ] Manual GUI check on Isra and at least one non-Necropolis hero.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Manual GUI check on Isra and at least one non-Necropolis hero.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion notes:** Added a `Skills` toolbar action and a scrollable
+`Hero Skills` dialog with current-skill slot editing, hero metadata, top
+recommendations, avoid entries, reset/save actions, and two-offer comparison.
+The dialog uses the Task 8 API only: it loads current or starting skills,
+persists edited slot order, resets to VCMI starting skills, and renders
+server-provided recommendation and comparison results without client-side rule
+evaluation. The editor renders a fixed capped slot list from `max_skills`,
+prevents duplicate nonblank current skills, disables controls while save/reset
+or compare requests are in flight, and ignores stale responses after close or
+selected-hero changes. Plan and code were reviewed by subagents; code review
+found request-time editable controls and stale `Skills` button sync, both fixed
+with regression coverage. Frontend tests cover open/close, slot editing,
+duplicate prevention, save payload order, reset, recommendation refresh,
+comparison winner display, stale response handling, and API error display.
+Manual local GUI-server checks covered Isra and Marius. Required GUI tests passed
+with 88 focused cases.
 
 **Dependencies:** Task 8
 

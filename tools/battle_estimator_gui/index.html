@@ -95,6 +95,7 @@
               <input id="path-mode-toggle" type="checkbox" disabled>
               <span>Path Mode</span>
             </label>
+            <button id="hero-skills-button" class="secondary-button toolbar-button" type="button" disabled>Skills</button>
             <button id="hero-ranking-button" class="secondary-button toolbar-button" type="button" disabled>Hero Ranking</button>
             <span id="zoom-status">Zoom 100%</span>
             <span id="object-count">0 targets</span>
@@ -161,6 +162,44 @@
         </div>
         <div id="hero-ranking-list" class="ranking-list">
           <p class="empty-state">No heroes ranked.</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="hero-skills-dialog" class="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="hero-skills-title" hidden>
+      <div class="dialog-panel skills-dialog-panel">
+        <div class="dialog-heading">
+          <h2 id="hero-skills-title">Hero Skills</h2>
+          <button id="hero-skills-close-button" class="secondary-button icon-button" type="button" title="Close skills" aria-label="Close skills">X</button>
+        </div>
+        <div id="hero-skills-status" class="dialog-status empty-state" aria-live="polite">No hero selected.</div>
+        <div class="skills-dialog-body">
+          <section class="skills-section" aria-label="Hero skill metadata">
+            <h3>Hero</h3>
+            <div id="hero-skills-meta" class="skills-meta-grid"></div>
+          </section>
+          <section class="skills-section" aria-label="Current skill slots">
+            <h3>Current</h3>
+            <div id="hero-skill-slots" class="skill-slot-list"></div>
+          </section>
+          <section class="skills-section" aria-label="Top recommendations">
+            <h3>Top</h3>
+            <div id="hero-skill-recommendations" class="skill-entry-list"></div>
+          </section>
+          <section class="skills-section" aria-label="Avoid skills">
+            <h3>Avoid</h3>
+            <div id="hero-skill-avoid" class="skill-entry-list"></div>
+          </section>
+          <section class="skills-section" aria-label="Skill offer comparison">
+            <h3>Compare</h3>
+            <div id="hero-skill-compare-controls" class="skill-compare-controls"></div>
+            <div id="hero-skill-compare-result" class="skill-entry-list"></div>
+          </section>
+        </div>
+        <div class="dialog-actions skills-dialog-actions">
+          <button id="hero-skills-reset-button" class="secondary-button" type="button" disabled>Reset</button>
+          <button id="hero-skills-save-button" class="secondary-button" type="button" disabled>Save</button>
+          <button id="hero-skills-compare-button" class="secondary-button" type="button" disabled>Compare</button>
         </div>
       </div>
     </div>

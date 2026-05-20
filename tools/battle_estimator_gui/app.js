@@ -27,6 +27,7 @@
     showHiddenToggle: document.getElementById("show-hidden-toggle"),
     routeOverlayToggle: document.getElementById("show-route-overlay-toggle"),
     pathModeToggle: document.getElementById("path-mode-toggle"),
+    heroSkillsButton: document.getElementById("hero-skills-button"),
     heroRankingButton: document.getElementById("hero-ranking-button"),
     mapStage: document.getElementById("map-stage"),
     mapTooltip: document.getElementById("map-tooltip"),
@@ -48,7 +49,19 @@
     followCancelButton: document.getElementById("follow-cancel-button"),
     heroRankingDialog: document.getElementById("hero-ranking-dialog"),
     heroRankingCloseButton: document.getElementById("hero-ranking-close-button"),
-    heroRankingList: document.getElementById("hero-ranking-list")
+    heroRankingList: document.getElementById("hero-ranking-list"),
+    heroSkillsDialog: document.getElementById("hero-skills-dialog"),
+    heroSkillsCloseButton: document.getElementById("hero-skills-close-button"),
+    heroSkillsStatus: document.getElementById("hero-skills-status"),
+    heroSkillsMeta: document.getElementById("hero-skills-meta"),
+    heroSkillSlots: document.getElementById("hero-skill-slots"),
+    heroSkillRecommendations: document.getElementById("hero-skill-recommendations"),
+    heroSkillAvoid: document.getElementById("hero-skill-avoid"),
+    heroSkillCompareControls: document.getElementById("hero-skill-compare-controls"),
+    heroSkillCompareResult: document.getElementById("hero-skill-compare-result"),
+    heroSkillsResetButton: document.getElementById("hero-skills-reset-button"),
+    heroSkillsSaveButton: document.getElementById("hero-skills-save-button"),
+    heroSkillsCompareButton: document.getElementById("hero-skills-compare-button")
   };
   const canvasContext = elements.canvas.getContext("2d");
   const mapView = {
@@ -98,6 +111,20 @@
     running: false,
     result: null,
     target: null
+  };
+  const heroSkillsState = {
+    requestId: 0,
+    heroId: null,
+    payload: null,
+    slots: [],
+    compareOffers: [
+      { skill_id: "", level: "" },
+      { skill_id: "", level: "" }
+    ],
+    loading: false,
+    saving: false,
+    comparing: false,
+    dirty: false
   };
   const saveNavigation = {
     saves: []
@@ -2569,6 +2596,7 @@
     elements.refreshButton.disabled = busy;
     if (!current) {
       elements.savePicker.value = "";
+      syncHeroSkillControls();
       return;
     }
     if (mode === PINNED_MODE && current.save_file) {
@@ -2581,9 +2609,11 @@
         );
       }
       elements.savePicker.value = current.save_file;
+      syncHeroSkillControls();
       return;
     }
     elements.savePicker.value = "";
+    syncHeroSkillControls();
   }
 
   function syncHeroRankingControls() {
@@ -2929,6 +2959,650 @@
     drawMap();
   }
 
+  function heroSkillsBusy() {
+    return heroSkillsState.loading
+      || heroSkillsState.saving
+      || heroSkillsState.comparing;
+  }
+
+  function syncHeroSkillControls() {
+    elements.heroSkillsButton.disabled = (
+      !heroState.selectedHeroId
+      || controlsBusy()
+    );
+  }
+
+  function resetHeroSkillCompareOffers() {
+    heroSkillsState.compareOffers = [
+      { skill_id: "", level: "" },
+      { skill_id: "", level: "" }
+    ];
+  }
+
+  function invalidateHeroSkillsRequests() {
+    heroSkillsState.requestId += 1;
+    heroSkillsState.loading = false;
+    heroSkillsState.saving = false;
+    heroSkillsState.comparing = false;
+    return heroSkillsState.requestId;
+  }
+
+  function heroSkillsRequestMatches(requestId, heroId, payload) {
+    return (
+      !elements.heroSkillsDialog.hidden
+      && requestId === heroSkillsState.requestId
+      && heroSkillsState.heroId === heroId
+      && heroState.selectedHeroId === heroId
+      && (!payload || payload.hero_id === heroId)
+    );
+  }
+
+  function setHeroSkillsStatus(text, className) {
+    elements.heroSkillsStatus.className = `dialog-status ${className || "empty-state"}`.trim();
+    elements.heroSkillsStatus.textContent = text || "";
+    elements.heroSkillsStatus.title = text || "";
+  }
+
+  function heroSkillLevelOptions(payload) {
+    const levels = payload && Array.isArray(payload.skill_levels)
+      ? payload.skill_levels
+      : ["basic", "advanced", "expert"];
+    return levels.length ? levels : ["basic", "advanced", "expert"];
+  }
+
+  function heroSkillMaxSlots(payload) {
+    const maxSkills = payload && Number.isInteger(payload.max_skills)
+      ? payload.max_skills
+      : 8;
+    return clamp(maxSkills, 1, 8);
+  }
+
+  function heroSkillSlotsFromPayload(payload) {
+    const levels = heroSkillLevelOptions(payload);
+    const slots = ((payload && payload.current_skills) || []).map((skill) => ({
+      skill_id: skill.skill_id || skill.skill || "",
+      level: skill.level || levels[0]
+    }));
+    while (slots.length < heroSkillMaxSlots(payload)) {
+      slots.push({ skill_id: "", level: "" });
+    }
+    return slots.slice(0, heroSkillMaxSlots(payload));
+  }
+
+  function skillDisplayName(skillId, payload) {
+    const match = ((payload && payload.skills) || []).find((skill) => (
+      skill.skill_id === skillId || skill.skill === skillId
+    ));
+    return match ? (match.display_name || skillId) : skillId;
+  }
+
+  function skillLevelLabel(level) {
+    return titleCase(String(level || "").replace(/_/g, " "));
+  }
+
+  function currentSkillText(skill, payload) {
+    if (!skill || !skill.skill_id) {
+      return "";
+    }
+    return `${skillDisplayName(skill.skill_id, payload)} ${skillLevelLabel(skill.level)}`;
+  }
+
+  function currentSkillListText(skills, payload) {
+    const parts = (skills || [])
+      .map((skill) => currentSkillText(skill, payload))
+      .filter(Boolean);
+    return parts.length ? parts.join(", ") : "None";
+  }
+
+  function appendSkillsMetaItem(parent, label, value, longValue) {
+    const item = document.createElement("div");
+    item.className = "skills-meta-item";
+
+    const labelNode = document.createElement("div");
+    labelNode.className = "skills-meta-label";
+    labelNode.textContent = label;
+
+    const valueNode = document.createElement("div");
+    valueNode.className = `skills-meta-value ${longValue ? "long-value" : ""}`.trim();
+    valueNode.textContent = value || "None";
+    valueNode.title = value || "None";
+
+    item.appendChild(labelNode);
+    item.appendChild(valueNode);
+    parent.appendChild(item);
+  }
+
+  function renderHeroSkillsMeta(payload) {
+    clearNode(elements.heroSkillsMeta);
+    if (!payload || !payload.hero) {
+      appendEmpty(elements.heroSkillsMeta, "No hero loaded.");
+      return;
+    }
+    const hero = payload.hero;
+    appendSkillsMetaItem(elements.heroSkillsMeta, "Name", hero.display_name || hero.save_name || payload.hero_id);
+    appendSkillsMetaItem(elements.heroSkillsMeta, "Class", hero.class_id || "Unknown");
+    appendSkillsMetaItem(elements.heroSkillsMeta, "Faction", hero.faction || "Unknown");
+    appendSkillsMetaItem(elements.heroSkillsMeta, "Source", payload.current_skills_source || "Unknown");
+    appendSkillsMetaItem(
+      elements.heroSkillsMeta,
+      "Starting",
+      currentSkillListText(hero.starting_skills || [], payload),
+      true
+    );
+    appendSkillsMetaItem(
+      elements.heroSkillsMeta,
+      "Specialty",
+      hero.specialty_summary || "None",
+      true
+    );
+  }
+
+  function selectedSkillIdsExcept(index) {
+    return new Set(heroSkillsState.slots
+      .map((slot, slotIndex) => (slotIndex === index ? "" : slot.skill_id))
+      .filter(Boolean));
+  }
+
+  function createSkillSelect(value, disabledSkillIds, onChange) {
+    const select = document.createElement("select");
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "Empty";
+    select.appendChild(blank);
+    ((heroSkillsState.payload && heroSkillsState.payload.skills) || []).forEach((skill) => {
+      const option = document.createElement("option");
+      option.value = skill.skill_id || skill.skill || "";
+      option.textContent = skill.display_name || option.value;
+      option.disabled = disabledSkillIds.has(option.value) && option.value !== value;
+      select.appendChild(option);
+    });
+    select.value = value || "";
+    select.disabled = heroSkillsBusy() || !heroSkillsState.payload;
+    select.addEventListener("change", onChange);
+    return select;
+  }
+
+  function createLevelSelect(value, disabled, onChange) {
+    const select = document.createElement("select");
+    heroSkillLevelOptions(heroSkillsState.payload).forEach((level) => {
+      const option = document.createElement("option");
+      option.value = level;
+      option.textContent = skillLevelLabel(level);
+      select.appendChild(option);
+    });
+    select.value = value || heroSkillLevelOptions(heroSkillsState.payload)[0];
+    select.disabled = disabled || heroSkillsBusy() || !heroSkillsState.payload;
+    select.addEventListener("change", onChange);
+    return select;
+  }
+
+  function markHeroSkillsDirty() {
+    heroSkillsState.dirty = true;
+    if (heroSkillsState.payload) {
+      heroSkillsState.payload.offer_comparison = null;
+    }
+    setHeroSkillsStatus("Unsaved edits. Save to refresh recommendations.");
+  }
+
+  function updateHeroSkillSlot(index, key, value) {
+    const slot = heroSkillsState.slots[index];
+    if (!slot) {
+      return;
+    }
+    if (key === "skill_id") {
+      slot.skill_id = value || "";
+      slot.level = slot.skill_id
+        ? (slot.level || heroSkillLevelOptions(heroSkillsState.payload)[0])
+        : "";
+    } else if (key === "level") {
+      slot.level = value || "";
+    }
+    markHeroSkillsDirty();
+    renderHeroSkillsDialog();
+  }
+
+  function renderHeroSkillSlots() {
+    clearNode(elements.heroSkillSlots);
+    if (!heroSkillsState.payload) {
+      appendEmpty(elements.heroSkillSlots, "No skill slots loaded.");
+      return;
+    }
+    heroSkillsState.slots.forEach((slot, index) => {
+      const row = document.createElement("div");
+      row.className = "skill-slot-row";
+      row.dataset.slotIndex = String(index);
+
+      const label = document.createElement("div");
+      label.className = "skill-slot-index";
+      label.textContent = String(index + 1);
+
+      const skillSelect = createSkillSelect(
+        slot.skill_id,
+        selectedSkillIdsExcept(index),
+        (event) => updateHeroSkillSlot(index, "skill_id", event.target.value)
+      );
+      skillSelect.setAttribute("aria-label", `Skill slot ${index + 1}`);
+
+      const levelSelect = createLevelSelect(
+        slot.level,
+        !slot.skill_id,
+        (event) => updateHeroSkillSlot(index, "level", event.target.value)
+      );
+      levelSelect.setAttribute("aria-label", `Skill slot ${index + 1} level`);
+
+      row.appendChild(label);
+      row.appendChild(skillSelect);
+      row.appendChild(levelSelect);
+      elements.heroSkillSlots.appendChild(row);
+    });
+  }
+
+  function nonblankHeroSkillSlots() {
+    return heroSkillsState.slots.filter((slot) => slot.skill_id);
+  }
+
+  function duplicateSkillIds(slots) {
+    const seen = new Set();
+    const duplicates = new Set();
+    (slots || []).forEach((slot) => {
+      if (!slot.skill_id) {
+        return;
+      }
+      if (seen.has(slot.skill_id)) {
+        duplicates.add(slot.skill_id);
+      }
+      seen.add(slot.skill_id);
+    });
+    return duplicates;
+  }
+
+  function heroSkillSaveValidationMessage() {
+    const slots = nonblankHeroSkillSlots();
+    const duplicates = duplicateSkillIds(slots);
+    if (duplicates.size > 0) {
+      return "Duplicate current skills are not allowed.";
+    }
+    if (slots.some((slot) => !slot.level)) {
+      return "Each selected skill needs a level.";
+    }
+    return "";
+  }
+
+  function heroSkillOfferValidationMessage() {
+    if (heroSkillsState.dirty) {
+      return "Save before comparing offers.";
+    }
+    const offers = heroSkillsState.compareOffers || [];
+    if (offers.some((offer) => !offer.skill_id || !offer.level)) {
+      return "Choose two complete offers.";
+    }
+    if (new Set(offers.map((offer) => offer.skill_id)).size !== offers.length) {
+      return "Choose two different offer skills.";
+    }
+    if (new Set(offers.map((offer) => `${offer.skill_id}:${offer.level}`)).size !== offers.length) {
+      return "Choose two different offers.";
+    }
+    return "";
+  }
+
+  function heroSkillEntryTitle(entry) {
+    const level = entry.target_level ? ` -> ${skillLevelLabel(entry.target_level)}` : "";
+    return `${entry.display_name || entry.skill_id}${level}`;
+  }
+
+  function appendHeroSkillEntry(parent, entry, options) {
+    const item = document.createElement("div");
+    const isWinner = options && options.winnerKey
+      && `${entry.skill_id}:${entry.target_level}` === options.winnerKey;
+    item.className = `skill-entry ${entry.availability === "unavailable" ? "unavailable" : ""} ${isWinner ? "winner" : ""}`.trim();
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "skill-entry-title";
+
+    const name = document.createElement("div");
+    name.className = "skill-entry-name";
+    name.textContent = heroSkillEntryTitle(entry);
+    name.title = name.textContent;
+
+    const tier = document.createElement("div");
+    tier.className = "skill-entry-tier";
+    tier.textContent = entry.tier || "?";
+
+    const meta = document.createElement("div");
+    meta.className = "skill-entry-meta";
+    meta.textContent = [
+      typeof entry.score === "number" ? `score ${entry.score.toFixed(1)}` : "",
+      entry.availability || ""
+    ].filter(Boolean).join(" | ");
+    meta.title = meta.textContent;
+
+    const reasons = document.createElement("div");
+    reasons.className = "skill-entry-reasons";
+    reasons.textContent = (entry.reason_codes || []).join(", ") || "No reasons";
+    reasons.title = reasons.textContent;
+
+    titleRow.appendChild(name);
+    titleRow.appendChild(tier);
+    item.appendChild(titleRow);
+    item.appendChild(meta);
+    item.appendChild(reasons);
+    parent.appendChild(item);
+  }
+
+  function renderHeroSkillEntryList(node, entries, emptyText) {
+    clearNode(node);
+    if (!entries || entries.length === 0) {
+      appendEmpty(node, emptyText);
+      return;
+    }
+    entries.forEach((entry) => appendHeroSkillEntry(node, entry));
+  }
+
+  function updateHeroSkillCompareOffer(index, key, value) {
+    const offer = heroSkillsState.compareOffers[index];
+    if (!offer) {
+      return;
+    }
+    if (key === "skill_id") {
+      offer.skill_id = value || "";
+      offer.level = offer.skill_id
+        ? (offer.level || heroSkillLevelOptions(heroSkillsState.payload)[0])
+        : "";
+    } else if (key === "level") {
+      offer.level = value || "";
+    }
+    renderHeroSkillsDialog();
+  }
+
+  function renderHeroSkillCompareControls() {
+    clearNode(elements.heroSkillCompareControls);
+    if (!heroSkillsState.payload) {
+      appendEmpty(elements.heroSkillCompareControls, "No offers loaded.");
+      return;
+    }
+    heroSkillsState.compareOffers.forEach((offer, index) => {
+      const row = document.createElement("div");
+      row.className = "skill-compare-row";
+      row.dataset.offerIndex = String(index);
+
+      const label = document.createElement("div");
+      label.className = "skill-compare-label";
+      label.textContent = index === 0 ? "A" : "B";
+
+      const otherSkillIds = new Set(heroSkillsState.compareOffers
+        .map((candidate, candidateIndex) => (
+          candidateIndex === index ? "" : candidate.skill_id
+        ))
+        .filter(Boolean));
+      const skillSelect = createSkillSelect(
+        offer.skill_id,
+        otherSkillIds,
+        (event) => updateHeroSkillCompareOffer(index, "skill_id", event.target.value)
+      );
+      skillSelect.setAttribute("aria-label", `Offer ${index + 1} skill`);
+
+      const levelSelect = createLevelSelect(
+        offer.level,
+        !offer.skill_id,
+        (event) => updateHeroSkillCompareOffer(index, "level", event.target.value)
+      );
+      levelSelect.setAttribute("aria-label", `Offer ${index + 1} level`);
+
+      row.appendChild(label);
+      row.appendChild(skillSelect);
+      row.appendChild(levelSelect);
+      elements.heroSkillCompareControls.appendChild(row);
+    });
+  }
+
+  function renderHeroSkillCompareResult(comparison) {
+    clearNode(elements.heroSkillCompareResult);
+    if (!comparison) {
+      appendEmpty(elements.heroSkillCompareResult, "No comparison.");
+      return;
+    }
+    const winner = document.createElement("div");
+    winner.className = "skill-entry winner";
+
+    const winnerName = document.createElement("div");
+    winnerName.className = "skill-entry-name";
+    winnerName.textContent = comparison.winner
+      ? `Winner: ${comparison.winner}`
+      : "Winner: none";
+
+    const reasons = document.createElement("div");
+    reasons.className = "skill-entry-reasons";
+    reasons.textContent = (comparison.reason_codes || []).join(", ") || "No reasons";
+
+    winner.appendChild(winnerName);
+    winner.appendChild(reasons);
+    elements.heroSkillCompareResult.appendChild(winner);
+    (comparison.offers || []).forEach((entry) => (
+      appendHeroSkillEntry(
+        elements.heroSkillCompareResult,
+        entry,
+        { winnerKey: comparison.winner }
+      )
+    ));
+  }
+
+  function renderHeroSkillsActions() {
+    const saveError = heroSkillSaveValidationMessage();
+    const compareError = heroSkillOfferValidationMessage();
+    const busy = heroSkillsBusy();
+    elements.heroSkillsSaveButton.disabled = (
+      busy
+      || !heroSkillsState.payload
+      || !heroSkillsState.dirty
+      || Boolean(saveError)
+    );
+    elements.heroSkillsResetButton.disabled = (
+      busy
+      || !heroSkillsState.payload
+      || heroSkillsState.payload.current_skills_source !== "manual"
+    );
+    elements.heroSkillsCompareButton.disabled = (
+      busy
+      || !heroSkillsState.payload
+      || Boolean(compareError)
+    );
+    if (
+      !busy
+      && heroSkillsState.dirty
+      && !String(elements.heroSkillsStatus.className || "").includes("error-text")
+    ) {
+      setHeroSkillsStatus(saveError || "Unsaved edits. Save to refresh recommendations.", saveError ? "error-text" : "");
+    }
+  }
+
+  function renderHeroSkillsDialog() {
+    const payload = heroSkillsState.payload;
+    if (!payload) {
+      renderHeroSkillsMeta(null);
+      renderHeroSkillSlots();
+      renderHeroSkillEntryList(elements.heroSkillRecommendations, [], "No recommendations.");
+      renderHeroSkillEntryList(elements.heroSkillAvoid, [], "No avoid entries.");
+      renderHeroSkillCompareControls();
+      renderHeroSkillCompareResult(null);
+      renderHeroSkillsActions();
+      return;
+    }
+    renderHeroSkillsMeta(payload);
+    renderHeroSkillSlots();
+    renderHeroSkillEntryList(elements.heroSkillRecommendations, payload.top_next || [], "No recommendations.");
+    renderHeroSkillEntryList(elements.heroSkillAvoid, payload.avoid || [], "No avoid entries.");
+    renderHeroSkillCompareControls();
+    renderHeroSkillCompareResult(payload.offer_comparison);
+    renderHeroSkillsActions();
+  }
+
+  function applyHeroSkillsPayload(payload, statusText) {
+    heroSkillsState.payload = payload;
+    heroSkillsState.slots = heroSkillSlotsFromPayload(payload);
+    heroSkillsState.dirty = false;
+    heroSkillsState.loading = false;
+    heroSkillsState.saving = false;
+    heroSkillsState.comparing = false;
+    setHeroSkillsStatus(statusText || "Loaded");
+    renderHeroSkillsDialog();
+  }
+
+  function showHeroSkillsDialog() {
+    const heroId = heroState.selectedHeroId;
+    if (!heroId) {
+      return Promise.resolve();
+    }
+    heroSkillsState.heroId = heroId;
+    heroSkillsState.payload = null;
+    heroSkillsState.slots = [];
+    heroSkillsState.dirty = false;
+    resetHeroSkillCompareOffers();
+    elements.heroSkillsDialog.hidden = false;
+    const requestId = invalidateHeroSkillsRequests();
+    heroSkillsState.requestId = requestId;
+    heroSkillsState.loading = true;
+    setHeroSkillsStatus("Loading skills...");
+    renderHeroSkillsDialog();
+    return postJson(
+      "/api/hero-skills",
+      { hero_id: heroId },
+      "hero skills request failed"
+    )
+      .then((payload) => {
+        if (!heroSkillsRequestMatches(requestId, heroId, payload)) {
+          return;
+        }
+        applyHeroSkillsPayload(payload, "Loaded");
+      })
+      .catch((error) => {
+        if (!heroSkillsRequestMatches(requestId, heroId)) {
+          return;
+        }
+        heroSkillsState.loading = false;
+        setHeroSkillsStatus(`Skills error: ${error.message}`, "error-text");
+        renderHeroSkillsDialog();
+      });
+  }
+
+  function hideHeroSkillsDialog() {
+    elements.heroSkillsDialog.hidden = true;
+    invalidateHeroSkillsRequests();
+    setHeroSkillsStatus("No hero selected.");
+  }
+
+  function saveHeroSkills() {
+    const heroId = heroSkillsState.heroId;
+    const validationMessage = heroSkillSaveValidationMessage();
+    if (!heroId || validationMessage || !heroSkillsState.payload) {
+      if (validationMessage) {
+        setHeroSkillsStatus(validationMessage, "error-text");
+      }
+      return Promise.resolve();
+    }
+    const skills = nonblankHeroSkillSlots().map((slot) => ({
+      skill: slot.skill_id,
+      level: slot.level
+    }));
+    const requestId = heroSkillsState.requestId + 1;
+    heroSkillsState.requestId = requestId;
+    heroSkillsState.saving = true;
+    setHeroSkillsStatus("Saving skills...");
+    renderHeroSkillsDialog();
+    return postJson(
+      "/api/hero-skills/save",
+      { hero_id: heroId, skills },
+      "hero skills save failed"
+    )
+      .then((payload) => {
+        if (!heroSkillsRequestMatches(requestId, heroId, payload)) {
+          return;
+        }
+        applyHeroSkillsPayload(payload, "Saved");
+      })
+      .catch((error) => {
+        if (!heroSkillsRequestMatches(requestId, heroId)) {
+          return;
+        }
+        heroSkillsState.saving = false;
+        setHeroSkillsStatus(`Save error: ${error.message}`, "error-text");
+        renderHeroSkillsActions();
+      });
+  }
+
+  function resetHeroSkills() {
+    const heroId = heroSkillsState.heroId;
+    if (!heroId || !heroSkillsState.payload) {
+      return Promise.resolve();
+    }
+    const requestId = heroSkillsState.requestId + 1;
+    heroSkillsState.requestId = requestId;
+    heroSkillsState.saving = true;
+    setHeroSkillsStatus("Resetting skills...");
+    renderHeroSkillsDialog();
+    return postJson(
+      "/api/hero-skills/reset",
+      { hero_id: heroId },
+      "hero skills reset failed"
+    )
+      .then((payload) => {
+        if (!heroSkillsRequestMatches(requestId, heroId, payload)) {
+          return;
+        }
+        applyHeroSkillsPayload(payload, "Reset");
+      })
+      .catch((error) => {
+        if (!heroSkillsRequestMatches(requestId, heroId)) {
+          return;
+        }
+        heroSkillsState.saving = false;
+        setHeroSkillsStatus(`Reset error: ${error.message}`, "error-text");
+        renderHeroSkillsActions();
+      });
+  }
+
+  function compareHeroSkillOffers() {
+    const heroId = heroSkillsState.heroId;
+    const validationMessage = heroSkillOfferValidationMessage();
+    if (!heroId || validationMessage || !heroSkillsState.payload) {
+      if (validationMessage) {
+        setHeroSkillsStatus(validationMessage, "error-text");
+      }
+      return Promise.resolve();
+    }
+    const offers = heroSkillsState.compareOffers.map((offer) => ({
+      skill: offer.skill_id,
+      level: offer.level
+    }));
+    const requestId = heroSkillsState.requestId + 1;
+    heroSkillsState.requestId = requestId;
+    heroSkillsState.comparing = true;
+    setHeroSkillsStatus("Comparing offers...");
+    renderHeroSkillsDialog();
+    return postJson(
+      "/api/hero-skills/compare",
+      { hero_id: heroId, offers },
+      "hero skill comparison failed"
+    )
+      .then((payload) => {
+        if (!heroSkillsRequestMatches(requestId, heroId, payload)) {
+          return;
+        }
+        heroSkillsState.payload = payload;
+        heroSkillsState.slots = heroSkillSlotsFromPayload(payload);
+        heroSkillsState.comparing = false;
+        setHeroSkillsStatus("Compared");
+        renderHeroSkillsDialog();
+      })
+      .catch((error) => {
+        if (!heroSkillsRequestMatches(requestId, heroId)) {
+          return;
+        }
+        heroSkillsState.comparing = false;
+        setHeroSkillsStatus(`Compare error: ${error.message}`, "error-text");
+        renderHeroSkillsActions();
+      });
+  }
+
   function matchRecentHeroName(heroes, name) {
     const normalized = normalizeName(name);
     if (!normalized) {
@@ -3090,6 +3764,9 @@
     );
     invalidateEstimateRequests();
     clearPathResult("No path requested.");
+    if (heroId !== previousSelectedHeroId) {
+      hideHeroSkillsDialog();
+    }
     heroState.selectedHeroId = heroId || null;
     heroState.recentHeroes = recentHeroes || heroState.recentHeroes;
     if (mapView.snapshot) {
@@ -3110,6 +3787,7 @@
     updateMapMetrics(mapView.snapshot);
     renderRecentHeroes(heroState.recentHeroes);
     renderHeroes();
+    syncHeroSkillControls();
     if (!centerOnHero(heroState.selectedHeroId)) {
       drawMap();
     }
@@ -3164,6 +3842,9 @@
     const heroes = snapshot.heroes || [];
     const selectedHeroId = nextViewState.selectedHeroId;
     snapshot.selected_hero_id = selectedHeroId;
+    if (!elements.heroSkillsDialog.hidden) {
+      hideHeroSkillsDialog();
+    }
 
     setText(elements.mode, modeLabel(snapshot.mode));
     setText(elements.save, fileName(snapshot.save_file));
@@ -3252,6 +3933,7 @@
     syncSaveControls(null);
     syncGameFolderControls();
     syncHeroRankingControls();
+    hideHeroSkillsDialog();
     hideHeroRankingDialog();
     drawMap();
   }
@@ -3368,6 +4050,32 @@
 
   elements.heroRankingButton.addEventListener("click", () => {
     showHeroRankingDialog();
+  });
+
+  elements.heroSkillsButton.addEventListener("click", () => {
+    showHeroSkillsDialog();
+  });
+
+  elements.heroSkillsCloseButton.addEventListener("click", () => {
+    hideHeroSkillsDialog();
+  });
+
+  elements.heroSkillsDialog.addEventListener("click", (event) => {
+    if (event.target === elements.heroSkillsDialog) {
+      hideHeroSkillsDialog();
+    }
+  });
+
+  elements.heroSkillsSaveButton.addEventListener("click", () => {
+    saveHeroSkills();
+  });
+
+  elements.heroSkillsResetButton.addEventListener("click", () => {
+    resetHeroSkills();
+  });
+
+  elements.heroSkillsCompareButton.addEventListener("click", () => {
+    compareHeroSkillOffers();
   });
 
   elements.heroRankingCloseButton.addEventListener("click", () => {
@@ -3577,8 +4285,13 @@
     centerOnWorldPoint,
     currentMapViewForTest,
     currentPathStateForTest,
+    compareHeroSkillOffers,
     focusPathSegment,
     focusPortalDestination,
+    heroSkillOfferValidationMessage,
+    heroSkillSaveValidationMessage,
+    heroSkillSlotsFromPayload,
+    hideHeroSkillsDialog,
     isFreshEstimatePayload,
     isFreshPathPayload,
     isFreshScanPayload,
@@ -3592,7 +4305,10 @@
     portalDestinationText,
     portalMarkerLabel,
     portalTypeLabel,
+    resetHeroSkills,
+    saveHeroSkills,
     setPathMode,
+    showHeroSkillsDialog,
     simulationClickDecision,
     tilePositionForCanvasPoint,
     verdictForWinPct,
@@ -3608,6 +4324,7 @@
   renderTargetFilterControl();
   renderScanSortControl();
   syncHeroRankingControls();
+  syncHeroSkillControls();
   elements.targetContextMenu.addEventListener("click", (event) => {
     event.stopPropagation();
   });
@@ -3617,6 +4334,7 @@
       hideTargetContextMenu();
       hideFollowLatestDialog();
       hideHeroRankingDialog();
+      hideHeroSkillsDialog();
     }
   });
   startAutoRefresh();

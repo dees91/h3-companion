@@ -165,7 +165,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
         ]
         simulate_target_body = app_js[
             app_js.index("function simulateTarget("):
-            app_js.index("function matchRecentHeroName(")
+            app_js.index("function setHiddenTarget(")
         ]
         scan_result_body = app_js[
             app_js.index("function selectScanResult("):
@@ -236,9 +236,24 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             '"/api/save-mode"',
             '"/api/game-folders"',
             '"/api/game-folder"',
+            '"/api/hero-skills"',
+            '"/api/hero-skills/save"',
+            '"/api/hero-skills/reset"',
+            '"/api/hero-skills/compare"',
             "previousSaveButton",
             "nextSaveButton",
             "navigateSave",
+            "heroSkillsButton",
+            "heroSkillsDialog",
+            "heroSkillSlots",
+            "showHeroSkillsDialog",
+            "hideHeroSkillsDialog",
+            "saveHeroSkills",
+            "resetHeroSkills",
+            "compareHeroSkillOffers",
+            "heroSkillOfferValidationMessage",
+            "heroSkillSaveValidationMessage",
+            "current_skills_source",
             "heroRankingButton",
             "heroRankingDialog",
             "renderHeroRanking",
@@ -323,6 +338,17 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="follow-current-folder-button"',
             'id="follow-latest-folder-button"',
             'id="follow-cancel-button"',
+            'id="hero-skills-button"',
+            'id="hero-skills-dialog"',
+            'id="hero-skills-status"',
+            'id="hero-skill-slots"',
+            'id="hero-skill-recommendations"',
+            'id="hero-skill-avoid"',
+            'id="hero-skill-compare-controls"',
+            'id="hero-skill-compare-result"',
+            'id="hero-skills-save-button"',
+            'id="hero-skills-reset-button"',
+            'id="hero-skills-compare-button"',
             'id="hero-ranking-button"',
             'id="hero-ranking-dialog"',
             'id="hero-ranking-list"',
@@ -362,6 +388,11 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".dialog-backdrop",
             ".dialog-panel",
             ".dialog-actions",
+            ".skills-dialog-panel",
+            ".skills-dialog-body",
+            ".skill-slot-row",
+            ".skill-entry",
+            ".skill-compare-row",
             ".ranking-dialog-panel",
             ".ranking-list",
             ".ranking-item",
@@ -569,6 +600,86 @@ let deferNextPathResponse = false;
 let nextPathPayload = null;
 let nextPathError = null;
 const pendingPathResponses = [];
+let deferNextHeroSkillsResponse = false;
+let nextHeroSkillsError = null;
+const pendingHeroSkillsResponses = [];
+let heroSkillPayload = null;
+function buildHeroSkillPayload(overrides = {{}}) {{
+  const base = {{
+    hero_id: "hero:0",
+    map_key: "map-key",
+    role: "main",
+    hero: {{
+      key: "isra",
+      display_name: "Isra",
+      save_name: "Isra",
+      class_id: "deathKnight",
+      faction: "necropolis",
+      affinity: "might",
+      specialty_summary: "Necromancy",
+      starting_skills: [
+        {{
+          skill: "necromancy",
+          skill_id: "necromancy",
+          display_name: "Necromancy",
+          level: "advanced"
+        }}
+      ]
+    }},
+    max_skills: 8,
+    skill_levels: ["basic", "advanced", "expert"],
+    skills: [
+      {{ skill: "necromancy", skill_id: "necromancy", display_name: "Necromancy", index: 8, specialty_tags: [] }},
+      {{ skill: "earthMagic", skill_id: "earthMagic", display_name: "Earth Magic", index: 17, specialty_tags: [] }},
+      {{ skill: "logistics", skill_id: "logistics", display_name: "Logistics", index: 2, specialty_tags: [] }}
+    ],
+    current_skills: [
+      {{
+        skill: "necromancy",
+        skill_id: "necromancy",
+        display_name: "Necromancy",
+        level: "advanced"
+      }}
+    ],
+    current_skills_source: "starting",
+    top_next: [
+      {{
+        skill: "necromancy",
+        skill_id: "necromancy",
+        display_name: "Necromancy",
+        target_level: "expert",
+        score: 99,
+        tier: "S",
+        availability: "available",
+        reason_codes: ["hero_specialty"]
+      }},
+      {{
+        skill: "earthMagic",
+        skill_id: "earthMagic",
+        display_name: "Earth Magic",
+        target_level: "basic",
+        score: 96,
+        tier: "S",
+        availability: "available",
+        reason_codes: ["mass_slow"]
+      }}
+    ],
+    avoid: [
+      {{
+        skill: "scouting",
+        skill_id: "scouting",
+        display_name: "Scouting",
+        target_level: "basic",
+        score: 28,
+        tier: "D",
+        availability: "available",
+        reason_codes: ["low_combat_value"]
+      }}
+    ],
+    offer_comparison: null
+  }};
+  return Object.assign(base, overrides);
+}}
 function heroNameForId(heroId) {{
   const snapshots = [markerSnapshot, hiddenHeroSnapshot].filter(Boolean);
   for (const source of snapshots) {{
@@ -686,6 +797,88 @@ global.fetch = (path, options = {{}}) => {{
       }};
       nextPathPayload = null;
     }}
+  }} else if (path === "/api/hero-skills") {{
+    const requestPayload = JSON.parse(options.body || "{{}}");
+    deferResponse = deferNextHeroSkillsResponse;
+    deferredResponses = pendingHeroSkillsResponses;
+    deferNextHeroSkillsResponse = false;
+    if (nextHeroSkillsError) {{
+      responseOk = false;
+      responseStatus = nextHeroSkillsError.status || 400;
+      payload = {{ error: nextHeroSkillsError.error || "skills failed" }};
+      nextHeroSkillsError = null;
+    }} else {{
+      heroSkillPayload = buildHeroSkillPayload({{
+        ...(heroSkillPayload || {{}}),
+        hero_id: requestPayload.hero_id
+      }});
+      payload = heroSkillPayload;
+    }}
+  }} else if (path === "/api/hero-skills/save") {{
+    const requestPayload = JSON.parse(options.body || "{{}}");
+    const savedSkills = (requestPayload.skills || []).map((skill) => ({{
+      skill: skill.skill,
+      skill_id: skill.skill,
+      display_name: skill.skill === "earthMagic" ? "Earth Magic" : skill.skill,
+      level: skill.level
+    }}));
+    heroSkillPayload = buildHeroSkillPayload({{
+      hero_id: requestPayload.hero_id,
+      current_skills: savedSkills,
+      current_skills_source: savedSkills.length ? "manual" : "starting",
+      top_next: [
+        {{
+          skill: "logistics",
+          skill_id: "logistics",
+          display_name: "Logistics",
+          target_level: "basic",
+          score: 92,
+          tier: "S",
+          availability: "available",
+          reason_codes: ["map_tempo"]
+        }}
+      ],
+      offer_comparison: null
+    }});
+    payload = heroSkillPayload;
+  }} else if (path === "/api/hero-skills/reset") {{
+    const requestPayload = JSON.parse(options.body || "{{}}");
+    heroSkillPayload = buildHeroSkillPayload({{ hero_id: requestPayload.hero_id }});
+    payload = heroSkillPayload;
+  }} else if (path === "/api/hero-skills/compare") {{
+    const requestPayload = JSON.parse(options.body || "{{}}");
+    const comparison = {{
+      winner: "necromancy:expert",
+      reason_codes: ["higher_score"],
+      offers: [
+        {{
+          skill: "earthMagic",
+          skill_id: "earthMagic",
+          display_name: "Earth Magic",
+          target_level: "basic",
+          score: 96,
+          tier: "S",
+          availability: "available",
+          reason_codes: ["mass_slow"]
+        }},
+        {{
+          skill: "necromancy",
+          skill_id: "necromancy",
+          display_name: "Necromancy",
+          target_level: "expert",
+          score: 99,
+          tier: "S",
+          availability: "available",
+          reason_codes: ["hero_specialty"]
+        }}
+      ]
+    }};
+    heroSkillPayload = buildHeroSkillPayload({{
+      ...(heroSkillPayload || {{}}),
+      hero_id: requestPayload.hero_id,
+      offer_comparison: comparison
+    }});
+    payload = heroSkillPayload;
   }}
   const response = {{
     ok: responseOk,
@@ -1275,6 +1468,7 @@ assert.strictEqual(
   false
 );
 const fetchCallsBeforeRender = fetchCalls;
+assert.strictEqual(elements["hero-skills-button"].disabled, true);
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 const overlayFillsAfterRender = drawOperations.filter((operation) => (
   operation.op === "fillRect" && routeFillStyles.has(operation.fillStyle)
@@ -1341,9 +1535,139 @@ function nodesWithClass(node, className) {{
 function pathSegmentButtons() {{
   return nodesWithClass(elements["path-state"], "path-segment");
 }}
+function skillSlotRows() {{
+  return elements["hero-skill-slots"].children
+    .filter((child) => child.dataset && child.dataset.slotIndex);
+}}
+function compareRows() {{
+  return elements["hero-skill-compare-controls"].children
+    .filter((child) => child.dataset && child.dataset.offerIndex);
+}}
+function heroSkillRequestsSince(startIndex, path) {{
+  return fetchRequests
+    .slice(startIndex)
+    .filter((request) => request.path === path);
+}}
 function mapTileScreenPoint(x, y, view) {{
   return helpers.worldToScreen({{ x: (x + 0.5) * 28, y: (y + 0.5) * 28 }}, view);
 }}
+const noSelectedSkillsSnapshot = {{
+  ...markerSnapshot,
+  selected_hero_id: null,
+  heroes: [
+    {{ ...markerSnapshot.heroes[1], id: "hero:new" }}
+  ]
+}};
+helpers.renderSnapshot(noSelectedSkillsSnapshot, {{ preserveView: false }});
+assert.strictEqual(elements["hero-skills-button"].disabled, true);
+await Promise.all(heroRows().find((row) => row.dataset.heroId === "hero:new").dispatch("click", {{}}));
+await flushPromises();
+assert.strictEqual(elements["hero-skills-button"].disabled, false);
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+assert.strictEqual(elements["hero-skills-button"].disabled, false);
+const heroSkillsOpenStart = fetchRequests.length;
+elements["hero-skills-button"].dispatch("click", {{}});
+await flushPromises();
+let heroSkillLoadRequests = heroSkillRequestsSince(heroSkillsOpenStart, "/api/hero-skills");
+assert.strictEqual(heroSkillLoadRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(heroSkillLoadRequests[0].options.body), {{ hero_id: "hero:0" }});
+assert.strictEqual(elements["hero-skills-dialog"].hidden, false);
+assert.ok(treeText(elements["hero-skills-meta"]).includes("Isra"));
+assert.ok(treeText(elements["hero-skills-meta"]).includes("starting"));
+assert.strictEqual(skillSlotRows().length, 8);
+assert.strictEqual(skillSlotRows()[0].children[1].value, "necromancy");
+assert.strictEqual(skillSlotRows()[0].children[2].value, "advanced");
+assert.ok(treeText(elements["hero-skill-recommendations"]).includes("Necromancy"));
+assert.ok(treeText(elements["hero-skill-avoid"]).includes("Scouting"));
+assert.strictEqual(elements["hero-skills-save-button"].disabled, true);
+assert.strictEqual(elements["hero-skills-reset-button"].disabled, true);
+let slotRows = skillSlotRows();
+slotRows[1].children[1].value = "earthMagic";
+slotRows[1].children[1].dispatch("change", {{}});
+assert.ok(elements["hero-skills-status"].textContent.includes("Unsaved edits"));
+assert.strictEqual(elements["hero-skills-save-button"].disabled, false);
+slotRows = skillSlotRows();
+slotRows[2].children[1].value = "earthMagic";
+slotRows[2].children[1].dispatch("change", {{}});
+assert.strictEqual(elements["hero-skills-save-button"].disabled, true);
+assert.ok(elements["hero-skills-status"].textContent.includes("Duplicate"));
+slotRows = skillSlotRows();
+slotRows[2].children[1].value = "logistics";
+slotRows[2].children[1].dispatch("change", {{}});
+assert.strictEqual(elements["hero-skills-save-button"].disabled, false);
+const heroSkillsSaveStart = fetchRequests.length;
+elements["hero-skills-save-button"].dispatch("click", {{}});
+assert.ok(skillSlotRows().every((row) => row.children[1].disabled && row.children[2].disabled));
+await flushPromises();
+const heroSkillSaveRequests = heroSkillRequestsSince(heroSkillsSaveStart, "/api/hero-skills/save");
+assert.strictEqual(heroSkillSaveRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(heroSkillSaveRequests[0].options.body), {{
+  hero_id: "hero:0",
+  skills: [
+    {{ skill: "necromancy", level: "advanced" }},
+    {{ skill: "earthMagic", level: "basic" }},
+    {{ skill: "logistics", level: "basic" }}
+  ]
+}});
+assert.ok(elements["hero-skills-status"].textContent.includes("Saved"));
+assert.ok(treeText(elements["hero-skills-meta"]).includes("manual"));
+assert.ok(treeText(elements["hero-skill-recommendations"]).includes("Logistics"));
+assert.strictEqual(elements["hero-skills-reset-button"].disabled, false);
+const heroSkillsResetStart = fetchRequests.length;
+elements["hero-skills-reset-button"].dispatch("click", {{}});
+assert.ok(skillSlotRows().every((row) => row.children[1].disabled && row.children[2].disabled));
+await flushPromises();
+const heroSkillResetRequests = heroSkillRequestsSince(heroSkillsResetStart, "/api/hero-skills/reset");
+assert.strictEqual(heroSkillResetRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(heroSkillResetRequests[0].options.body), {{ hero_id: "hero:0" }});
+assert.ok(treeText(elements["hero-skills-meta"]).includes("starting"));
+assert.strictEqual(skillSlotRows()[0].children[1].value, "necromancy");
+let offerRows = compareRows();
+offerRows[0].children[1].value = "earthMagic";
+offerRows[0].children[1].dispatch("change", {{}});
+offerRows = compareRows();
+offerRows[1].children[1].value = "earthMagic";
+offerRows[1].children[1].dispatch("change", {{}});
+assert.strictEqual(elements["hero-skills-compare-button"].disabled, true);
+assert.strictEqual(helpers.heroSkillOfferValidationMessage(), "Choose two different offer skills.");
+offerRows = compareRows();
+offerRows[1].children[1].value = "necromancy";
+offerRows[1].children[1].dispatch("change", {{}});
+offerRows = compareRows();
+offerRows[1].children[2].value = "expert";
+offerRows[1].children[2].dispatch("change", {{}});
+assert.strictEqual(elements["hero-skills-compare-button"].disabled, false);
+const heroSkillsCompareStart = fetchRequests.length;
+elements["hero-skills-compare-button"].dispatch("click", {{}});
+assert.ok(compareRows().every((row) => row.children[1].disabled && row.children[2].disabled));
+await flushPromises();
+const heroSkillCompareRequests = heroSkillRequestsSince(heroSkillsCompareStart, "/api/hero-skills/compare");
+assert.strictEqual(heroSkillCompareRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(heroSkillCompareRequests[0].options.body), {{
+  hero_id: "hero:0",
+  offers: [
+    {{ skill: "earthMagic", level: "basic" }},
+    {{ skill: "necromancy", level: "expert" }}
+  ]
+}});
+assert.ok(treeText(elements["hero-skill-compare-result"]).includes("Winner: necromancy:expert"));
+elements["hero-skills-close-button"].dispatch("click", {{}});
+assert.strictEqual(elements["hero-skills-dialog"].hidden, true);
+deferNextHeroSkillsResponse = true;
+const staleHeroSkillsStart = fetchRequests.length;
+elements["hero-skills-button"].dispatch("click", {{}});
+assert.strictEqual(heroSkillRequestsSince(staleHeroSkillsStart, "/api/hero-skills").length, 1);
+assert.strictEqual(pendingHeroSkillsResponses.length, 1);
+elements["hero-skills-close-button"].dispatch("click", {{}});
+pendingHeroSkillsResponses.shift()();
+await flushPromises();
+assert.strictEqual(elements["hero-skills-dialog"].hidden, true);
+nextHeroSkillsError = {{ status: 400, error: "unknown standard hero" }};
+elements["hero-skills-button"].dispatch("click", {{}});
+await flushPromises();
+assert.strictEqual(elements["hero-skills-dialog"].hidden, false);
+assert.ok(elements["hero-skills-status"].textContent.includes("unknown standard hero"));
+elements["hero-skills-close-button"].dispatch("click", {{}});
 assert.deepStrictEqual(
   targetFilterButtons().map((button) => button.textContent),
   ["Both", "Heroes", "Monsters"]
