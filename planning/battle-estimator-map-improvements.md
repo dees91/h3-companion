@@ -44,7 +44,8 @@ across the map:
 - show water that can be sailed through,
 - show towns as unique markers,
 - show portals and subterranean gates as unique markers,
-- show portal/gate destination information.
+- show portal/gate destination information,
+- make target visibility and scan controls easier to use during play.
 
 This is not a full Heroes III pathfinder. It is a pragmatic static route
 visualization layer built from the `.h3m` map, combined with the existing save
@@ -68,6 +69,20 @@ data for heroes and neutral-monster removal where already available.
   connected.
 - Water is not a hard barrier. It is shown as a separate route state so sailing
   routes can be visually distinguished from land routes.
+- The map target filter and the scan target filter are one control:
+  - `both`: show heroes and neutral monsters; scan both,
+  - `heroes`: show heroes; scan heroes,
+  - `monsters`: show neutral monsters; scan neutrals.
+- The scan sort defaults to distance, with an alternate "easiest target" mode.
+- Hidden heroes behave like hidden neutral monsters: hidden by default, skipped
+  by scan by default, visible only when the global hidden-target toggle is on.
+- Right-clicking a hero marker can select that hero as the player's active
+  hero. This action is only available from hero markers, not from scan results.
+- Scan result hover highlights a marker without moving the map. Clicking a scan
+  result may center and activate the target, but should not rerun an individual
+  simulation because the scan already contains the estimate.
+- Scan result difficulty colors should be drawn as marker borders/rings, not as
+  marker fills, so owner/team colors remain visible.
 - Roads, movement points, terrain movement cost, fog of war, Fly, Water Walk,
   boats, current town ownership, and exact pathfinding rules are out of scope
   for this iteration.
@@ -171,6 +186,33 @@ Rules:
 Whirlpools (`111`) are known as a related water teleport object, but they are
 not required in this iteration unless encountered during implementation and
 cheap to expose with the same portal model.
+
+### Target Visibility And Scan Workflow
+
+Extend the existing hidden-neutral model rather than creating a separate UX for
+heroes:
+
+- keep target IDs stable and type-prefixed: `neutral:<object_index>` and
+  `hero:<stable-hero-id>`,
+- persist hidden heroes per map key, like hidden neutral targets,
+- keep one visible "show hidden" toggle for all hidden target types,
+- omit hidden targets from scan unless "show hidden" is enabled.
+
+The current scan target type control should be replaced by the map target
+filter. The backend may still translate the selected filter into the existing
+`target_type` values internally, but the user should not need to manage two
+separate filters.
+
+Scan sorting should be represented as an explicit control independent from the
+map target filter. Recommended values:
+
+```text
+distance = lowest tile distance first, then stable target ID
+easiest = highest win percentage first, then lower distance, then stable target ID
+```
+
+If future estimates expose better loss/risk data, `easiest` can be refined, but
+the first implementation should use fields already present in scan results.
 
 ## Task 1: Parse Terrain Tiles From H3M
 
@@ -409,6 +451,226 @@ and existing hero/neutral markers on real generated maps.
 
 **Estimated scope:** Small
 
+## Task 10: Add Hidden Hero Target State
+
+**Description:** Extend hidden-target persistence and snapshot handling so hero
+targets can be hidden using the same semantics as neutral monster targets.
+
+**Acceptance criteria:**
+- [ ] Hidden hero IDs are persisted per map key.
+- [ ] Hidden heroes are omitted from map markers by default.
+- [ ] Hidden heroes are omitted from scan results by default.
+- [ ] The existing "show hidden" behavior includes both hidden neutrals and
+      hidden heroes.
+- [ ] Hidden neutral behavior remains backward compatible.
+
+**Verification:**
+- [ ] Add or update config and GUI snapshot tests.
+- [ ] Run `python3 -m unittest tests.test_h3_save_parser tests.test_battle_estimator_gui`.
+
+**Dependencies:** None
+
+**Files likely touched:**
+- `tools/h3_save_parser.py`
+- `tools/battle_estimator_gui.py`
+- `tests/test_h3_save_parser.py`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 11: Add Hero Marker Context Actions
+
+**Description:** Extend the map marker context menu for hero markers. Right
+clicking a hero marker should allow selecting that hero as the active player
+hero and hiding/restoring that hero.
+
+**Acceptance criteria:**
+- [ ] Right-clicking a hero marker opens a context menu.
+- [ ] The menu includes "Select as my hero" for hero markers.
+- [ ] The menu includes hide/restore actions for hero markers.
+- [ ] Selecting a hero from the context menu updates recent heroes and the
+      selected hero state.
+- [ ] Context actions for neutral monsters still work.
+
+**Verification:**
+- [ ] Add or update GUI tests where practical.
+- [ ] Manual GUI check: right-click a hero marker, select it, hide it, and
+      restore it with show-hidden enabled.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 10
+
+**Files likely touched:**
+- `tools/battle_estimator_gui.py`
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 12: Merge Map Filter And Scan Target Type
+
+**Description:** Replace the separate scan target type control with one map
+target filter that controls both visible target markers and scan target type.
+
+**Acceptance criteria:**
+- [ ] The default filter is `both`.
+- [ ] `both` shows heroes and neutral monsters and scans both target types.
+- [ ] `heroes` shows heroes and scans only hero targets.
+- [ ] `monsters` shows neutral monsters and scans only neutral targets.
+- [ ] The old scan target type UI is removed or hidden.
+- [ ] Hidden targets are still excluded unless show-hidden is enabled.
+
+**Verification:**
+- [ ] Add or update GUI state and scan request tests.
+- [ ] Manual GUI check all three filter modes.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui tests.test_nearby_scan`.
+
+**Dependencies:** None
+
+**Files likely touched:**
+- `tools/battle_estimator_gui.py`
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+- `tests/test_nearby_scan.py`
+
+**Estimated scope:** Medium
+
+## Task 13: Add Scan Sort Modes
+
+**Description:** Add a scan sort control with `distance` and `easiest` modes.
+Distance remains the default. Easiest should sort by highest `win_pct`, then
+lower distance, then stable target ID.
+
+**Acceptance criteria:**
+- [ ] Scan results default to distance sorting.
+- [ ] The user can switch to easiest-target sorting.
+- [ ] Sort mode is preserved when scan results refresh in the current session.
+- [ ] Ties are stable and deterministic.
+
+**Verification:**
+- [ ] Add JavaScript/unit-style tests if the existing test structure supports
+      it, or backend serialization tests if sorting is backend-owned.
+- [ ] Manual GUI check with a scan containing multiple targets.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** None
+
+**Files likely touched:**
+- `tools/battle_estimator_gui.py`
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Small
+
+## Task 14: Improve Scan Result Hover And Click Behavior
+
+**Description:** Make scan-result hover highlight targets without moving the
+map, while scan-result click intentionally activates and centers the target
+using the existing scan estimate rather than rerunning a single simulation.
+
+**Acceptance criteria:**
+- [ ] Hovering a scan result highlights the corresponding map marker.
+- [ ] Hovering does not pan, zoom, or center the map.
+- [ ] Clicking a scan result centers and activates the target.
+- [ ] Clicking a scan result displays the existing scan estimate.
+- [ ] Clicking a scan result does not make a redundant `/api/simulate-target`
+      request.
+
+**Verification:**
+- [ ] Manual GUI check with scan results and visible markers.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** None
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Small
+
+## Task 15: Auto-Refresh Scan After Hero Selection
+
+**Description:** When the user is already working in scan mode, selecting a new
+active hero should automatically rerun scan with the current radius, map
+filter, and sort mode. Initial hero selection should not start scan unless a
+scan has already been run in the current session.
+
+**Acceptance criteria:**
+- [ ] Selecting a hero before any scan has run does not trigger scan.
+- [ ] Selecting a hero after a scan has run reruns scan automatically.
+- [ ] The rerun uses the current radius.
+- [ ] The rerun uses the current map filter.
+- [ ] The rerun preserves the current scan sort mode.
+- [ ] In-flight scan requests are invalidated safely when the selected hero
+      changes.
+
+**Verification:**
+- [ ] Manual GUI check: run scan, select another hero, confirm results refresh.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Tasks 12, 13
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/app.js`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Small
+
+## Task 16: Render Scan Difficulty As Marker Rings
+
+**Description:** Change scan-result coloring so target identity remains visible.
+Owner/team colors and neutral monster colors should stay as marker fill, while
+scan difficulty is shown with an outer border or ring.
+
+**Acceptance criteria:**
+- [ ] Hero marker fill continues to show owner/team color.
+- [ ] Neutral marker fill continues to show the neutral monster color.
+- [ ] Scan verdict is rendered as a ring or border.
+- [ ] Hover and active marker states remain visible alongside scan rings.
+- [ ] Selected hero styling remains distinct.
+
+**Verification:**
+- [ ] Manual GUI check after scan with hero and neutral targets.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** None
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+
+**Estimated scope:** Small
+
+## Task 17: End-To-End Workflow Verification
+
+**Description:** Verify the combined target visibility, map filter, scan
+sorting, scan hover/click behavior, auto scan refresh, and scan-ring rendering
+in the local GUI.
+
+**Acceptance criteria:**
+- [ ] Hidden heroes and hidden neutrals behave consistently.
+- [ ] The single map filter controls both markers and scan target type.
+- [ ] Distance and easiest sort modes both work.
+- [ ] Scan hover does not move the map.
+- [ ] Scan click intentionally centers and activates the target.
+- [ ] Auto scan refresh runs only after scan mode has been used.
+- [ ] Scan rings preserve team and neutral marker identity colors.
+
+**Verification:**
+- [ ] Run `python3 -m unittest`.
+- [ ] Start the GUI and manually verify the workflow on a current save.
+
+**Dependencies:** Tasks 10, 11, 12, 13, 14, 15, 16
+
+**Files likely touched:**
+- No production files expected unless verification finds issues.
+
+**Estimated scope:** Small
+
 ## Checkpoints
 
 ### Checkpoint: Route Foundation
@@ -429,15 +691,28 @@ After Tasks 5-8:
       interactions.
 - [ ] Portal destinations are inspectable in the GUI.
 
+### Checkpoint: Target And Scan UX
+
+After Tasks 10-17:
+
+- [ ] Hidden heroes follow the same semantics as hidden neutral monsters.
+- [ ] The old separate scan target type is gone from the UI.
+- [ ] Scan results can be sorted by distance or easiest target.
+- [ ] Scan result hover highlights without moving the map.
+- [ ] Scan target difficulty is shown as rings/borders without replacing team
+      colors.
+
 ### Checkpoint: Complete
 
-After Task 9:
+After Tasks 9 and 17:
 
 - [ ] `python3 -m unittest` passes.
 - [ ] Route overlay, water, towns, portals, heroes, and neutrals are all
       visually distinguishable.
 - [ ] Manual inspection confirms the tool helps understand route corridors
       across levels.
+- [ ] Target hiding, map filtering, scan sorting, scan hover, scan click, auto
+      refresh, and scan rings work together in the GUI.
 
 ## Risks And Mitigations
 
@@ -449,6 +724,10 @@ After Task 9:
 | Town owner from `.h3m` becomes misleading after captures. | Medium | Name it `initial_owner_*` and avoid current-owner claims until save parsing supports it. |
 | Portal with multiple exits is displayed as one deterministic target. | Medium | Model edges as one-to-many and show every possible destination. |
 | Water visualization suggests current hero can sail without a boat. | Low | Label it as water/sailing route, not current hero reachability. |
+| Hidden hero IDs drift across saves. | Medium | Use the same stable hero IDs already used by the GUI snapshot and filter unknown hidden IDs out when loading config. |
+| Merging map and scan filters removes useful flexibility. | Low | Product decision is intentional for simpler play workflow; the backend can still keep internal target-type mapping. |
+| Auto scan refresh causes unexpected work. | Medium | Only trigger after the user has already run scan in the current session, and cancel stale in-flight requests. |
+| Scan rings make markers visually noisy. | Low | Keep fills as identity colors and use restrained outer rings with hover/active priority. |
 
 ## Parallelization Opportunities
 
@@ -457,7 +736,14 @@ After Task 9:
 - Task 4 can run after Task 3 while Tasks 5 and 7 are still in progress.
 - Tasks 6 and 8 can run in parallel if the frontend marker changes use
   disjoint sections or coordinate carefully.
-- Task 9 must be last because it validates the combined experience.
+- Tasks 10, 12, 13, 14, and 16 are mostly independent GUI workflow
+  improvements and can be worked in parallel with the map-static tasks.
+- Task 11 should wait for Task 10 because hide/restore hero actions need the
+  hidden hero state.
+- Task 15 should wait for Tasks 12 and 13 so it can use the final filter and
+  sort controls.
+- Tasks 9 and 17 are verification tasks and should run after their respective
+  feature groups are complete.
 
 ## Summary Table
 
@@ -472,3 +758,11 @@ After Task 9:
 | 7 | Parse Portal Targets And Edges | blocked | 1 |
 | 8 | Show Portal Markers And Destinations In The GUI | blocked | 7 |
 | 9 | End-To-End Map Verification | blocked | 4, 6, 8 |
+| 10 | Add Hidden Hero Target State | todo | - |
+| 11 | Add Hero Marker Context Actions | blocked | 10 |
+| 12 | Merge Map Filter And Scan Target Type | todo | - |
+| 13 | Add Scan Sort Modes | todo | - |
+| 14 | Improve Scan Result Hover And Click Behavior | todo | - |
+| 15 | Auto-Refresh Scan After Hero Selection | blocked | 12, 13 |
+| 16 | Render Scan Difficulty As Marker Rings | todo | - |
+| 17 | End-To-End Workflow Verification | blocked | 10, 11, 12, 13, 14, 15, 16 |
