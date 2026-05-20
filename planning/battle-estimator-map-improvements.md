@@ -229,6 +229,17 @@ road, road direction, and ext flags for every `(x, y, z)` tile.
 - [ ] Add or update parser tests in `tests/test_h3_map_parser.py`.
 - [ ] Run `python3 -m unittest tests.test_h3_map_parser`.
 
+**Completion Notes (2026-05-20):**
+- Added `H3TerrainTile` records and `LoadedH3Map.terrain_tiles` for
+  `parse_objects=True`.
+- Replaced the terrain byte skip with VCMI-order `[z][y][x]` terrain parsing
+  for terrain type, terrain view, river, river direction, road, road direction,
+  and ext flags.
+- Kept neutral-monster parsing behavior covered through the existing sequential
+  object tests and direct `parse_h3m_neutral_monsters` coverage.
+- Verification: `python3 -m unittest tests.test_h3_map_parser` and
+  `python3 -m unittest`.
+
 **Dependencies:** None
 
 **Files likely touched:**
@@ -749,13 +760,13 @@ After Tasks 9 and 17:
 
 | Task | Title | Status | Blocked By |
 | --- | --- | --- | --- |
-| 1 | Parse Terrain Tiles From H3M | todo | - |
-| 2 | Build The Static Route Layer | blocked | 1 |
+| 1 | Parse Terrain Tiles From H3M | done | - |
+| 2 | Build The Static Route Layer | todo | 1 |
 | 3 | Expose Route Layers In The GUI Snapshot | blocked | 2 |
 | 4 | Render The Route Overlay | blocked | 3 |
-| 5 | Parse Town Targets | blocked | 1 |
+| 5 | Parse Town Targets | todo | 1 |
 | 6 | Show Town Markers In The GUI | blocked | 5 |
-| 7 | Parse Portal Targets And Edges | blocked | 1 |
+| 7 | Parse Portal Targets And Edges | todo | 1 |
 | 8 | Show Portal Markers And Destinations In The GUI | blocked | 7 |
 | 9 | End-To-End Map Verification | blocked | 4, 6, 8 |
 | 10 | Add Hidden Hero Target State | todo | - |

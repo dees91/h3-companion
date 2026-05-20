@@ -224,6 +224,22 @@ class H3MapHeader:
 
 
 @dataclass(frozen=True)
+class H3TerrainTile:
+    """One H3M terrain tile in map coordinates."""
+
+    x: int
+    y: int
+    z: int
+    terrain_type: int
+    terrain_view: int
+    river_type: int
+    river_direction: int
+    road_type: int
+    road_direction: int
+    ext_flags: int
+
+
+@dataclass(frozen=True)
 class H3ObjectTemplate:
     """One H3M object template entry."""
 
@@ -302,6 +318,7 @@ class LoadedH3Map:
     header: H3MapHeader
     players: tuple[H3MapPlayer, ...] = field(default_factory=tuple)
     teams: tuple[H3MapTeam, ...] = field(default_factory=tuple)
+    terrain_tiles: tuple[H3TerrainTile, ...] = field(default_factory=tuple)
     templates: tuple[H3ObjectTemplate, ...] = field(default_factory=tuple)
     objects: tuple[H3MapObject, ...] = field(default_factory=tuple)
     neutral_targets: tuple[H3NeutralMonsterTarget, ...] = field(default_factory=tuple)
@@ -321,6 +338,17 @@ class _H3MFeatures:
     heroes_count: int
     artifact_slots_count: int
     buildings_bytes: int
+
+
+@dataclass(frozen=True)
+class _ParsedH3MStructures:
+    header: H3MapHeader
+    players: tuple[H3MapPlayer, ...]
+    teams: tuple[H3MapTeam, ...]
+    terrain_tiles: tuple[H3TerrainTile, ...]
+    templates: tuple[H3ObjectTemplate, ...]
+    objects: tuple[H3MapObject, ...]
+    neutral_targets: tuple[H3NeutralMonsterTarget, ...]
 
 
 class H3MapLoadError(ValueError):
@@ -416,14 +444,7 @@ def load_h3m_bytes(
         )
 
     if parse_objects:
-        (
-            header,
-            players,
-            teams,
-            templates,
-            objects,
-            neutral_targets,
-        ) = _parse_h3m_structures(
+        parsed = _parse_h3m_structures(
             data,
             h3m_offset,
             map_path,
@@ -432,12 +453,13 @@ def load_h3m_bytes(
             path=map_path,
             data=data,
             h3m_offset=h3m_offset,
-            header=header,
-            players=players,
-            teams=teams,
-            templates=templates,
-            objects=objects,
-            neutral_targets=neutral_targets,
+            header=parsed.header,
+            players=parsed.players,
+            teams=parsed.teams,
+            terrain_tiles=parsed.terrain_tiles,
+            templates=parsed.templates,
+            objects=parsed.objects,
+            neutral_targets=parsed.neutral_targets,
         )
 
     header = parse_h3m_header(data, h3m_offset, map_path)
@@ -636,7 +658,7 @@ def parse_h3m_neutral_monsters(
 ) -> tuple[H3NeutralMonsterTarget, ...]:
     """Parse neutral monster targets from decompressed H3M bytes."""
 
-    return _parse_h3m_structures(data, offset, Path(path))[5]
+    return _parse_h3m_structures(data, offset, Path(path)).neutral_targets
 
 
 def _removed_neutral_note(record) -> str:
@@ -733,14 +755,7 @@ def _parse_h3m_structures(
     data: bytes,
     offset: int,
     path: Path,
-) -> tuple[
-    H3MapHeader,
-    tuple[H3MapPlayer, ...],
-    tuple[H3MapTeam, ...],
-    tuple[H3ObjectTemplate, ...],
-    tuple[H3MapObject, ...],
-    tuple[H3NeutralMonsterTarget, ...],
-]:
+) -> _ParsedH3MStructures:
     reader = _H3MReader(data, path, offset)
     header, features = _read_full_header(reader)
     players = _read_player_info(reader, features)
@@ -753,10 +768,18 @@ def _parse_h3m_structures(
     _skip_allowed_spells_abilities(reader, features)
     _skip_rumors(reader)
     _skip_predefined_heroes(reader, features)
-    _skip_terrain(reader, header)
+    terrain_tiles = _read_terrain(reader, header)
     templates = _read_object_templates(reader)
     objects, targets = _read_objects(reader, templates, features)
-    return header, players, teams, templates, objects, targets
+    return _ParsedH3MStructures(
+        header=header,
+        players=players,
+        teams=teams,
+        terrain_tiles=terrain_tiles,
+        templates=templates,
+        objects=objects,
+        neutral_targets=targets,
+    )
 
 
 def _read_full_header(reader: _H3MReader) -> tuple[H3MapHeader, _H3MFeatures]:
@@ -1038,9 +1061,27 @@ def _skip_predefined_heroes(reader: _H3MReader, features: _H3MFeatures) -> None:
             reader.skip(4, f"predefined hero {hero_id} primary skills")
 
 
-def _skip_terrain(reader: _H3MReader, header: H3MapHeader) -> None:
-    tile_count = header.map_size * header.map_size * header.levels
-    reader.skip(tile_count * 7, "terrain tiles")
+def _read_terrain(reader: _H3MReader, header: H3MapHeader) -> tuple[H3TerrainTile, ...]:
+    tiles = []
+    for z in range(header.levels):
+        for y in range(header.map_size):
+            for x in range(header.map_size):
+                raw = reader.read(7, f"terrain tile {x},{y},{z}")
+                tiles.append(
+                    H3TerrainTile(
+                        x=x,
+                        y=y,
+                        z=z,
+                        terrain_type=raw[0],
+                        terrain_view=raw[1],
+                        river_type=raw[2],
+                        river_direction=raw[3],
+                        road_type=raw[4],
+                        road_direction=raw[5],
+                        ext_flags=raw[6],
+                    )
+                )
+    return tuple(tiles)
 
 
 def _read_object_templates(reader: _H3MReader) -> tuple[H3ObjectTemplate, ...]:

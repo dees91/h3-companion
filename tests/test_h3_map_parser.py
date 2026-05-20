@@ -128,6 +128,35 @@ def _build_minimal_sod_h3m_with_monster(
     ))
 
 
+def _build_minimal_sod_h3m_with_terrain(terrain_tiles, map_size=2, levels=2):
+    header = b"".join((
+        _build_minimal_h3m_header(map_size=map_size, levels=levels),
+        _base_string("Synthetic Terrain"),
+        _base_string(""),
+        b"\x00",  # difficulty
+        b"\x00",  # level limit
+    ))
+    return b"".join((
+        header,
+        (b"\x00\x00" + (b"\x00" * 13)) * 8,  # disabled players
+        b"\xff",  # standard victory
+        b"\xff",  # standard loss
+        b"\x00",  # no teams
+        b"\x00" * 20,  # allowed heroes
+        (0).to_bytes(4, "little"),  # placeholder heroes
+        b"\x00",  # disposed heroes
+        b"\x00" * 31,  # map options
+        b"\x00" * 18,  # allowed artifacts
+        b"\x00" * 9,  # allowed spells
+        b"\x00" * 4,  # allowed skills
+        (0).to_bytes(4, "little"),  # rumors
+        b"\x00" * 156,  # predefined heroes
+        b"".join(bytes(tile) for tile in terrain_tiles),
+        (0).to_bytes(4, "little"),  # templates
+        (0).to_bytes(4, "little"),  # objects
+    ))
+
+
 def _enabled_sod_player(position, human=True, computer=True):
     return b"".join((
         bytes([1 if human else 0]),
@@ -251,6 +280,18 @@ class H3MapParserContractTests(unittest.TestCase):
             creature_name="Gnoll",
             estimator_creature_id=98,
         )
+        terrain_tile = h3_map_parser.H3TerrainTile(
+            x=1,
+            y=2,
+            z=0,
+            terrain_type=8,
+            terrain_view=9,
+            river_type=1,
+            river_direction=2,
+            road_type=3,
+            road_direction=4,
+            ext_flags=5,
+        )
 
         self.assertEqual(template.animation_file, "AVWgnll0.def")
         self.assertEqual(placed_object.template_index, 3)
@@ -258,6 +299,8 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(target.count, 37)
         self.assertFalse(target.removed)
         self.assertIsNone(target.removal_note)
+        self.assertEqual(terrain_tile.terrain_type, 8)
+        self.assertEqual(terrain_tile.road_direction, 4)
 
     def test_load_h3m_reads_player_colors_and_teams(self):
         payload = _build_minimal_sod_h3m_with_teams()
@@ -316,6 +359,59 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(loaded.templates, ())
         self.assertEqual(loaded.objects, ())
         self.assertEqual(loaded.neutral_targets, ())
+        self.assertEqual(loaded.terrain_tiles, ())
+
+    def test_load_h3m_parse_objects_reads_terrain_tiles_in_vcmi_order(self):
+        terrain_records = (
+            (0, 11, 1, 21, 0, 31, 41),
+            (8, 12, 2, 22, 1, 32, 42),
+            (9, 13, 3, 23, 2, 33, 43),
+            (3, 14, 4, 24, 3, 34, 44),
+            (4, 15, 0, 25, 0, 35, 45),
+            (5, 16, 1, 26, 1, 36, 46),
+            (6, 17, 2, 27, 2, 37, 47),
+            (7, 18, 3, 28, 3, 38, 48),
+        )
+        payload = _build_minimal_sod_h3m_with_terrain(terrain_records)
+
+        loaded = h3_map_parser.load_h3m_bytes(
+            gzip.compress(payload),
+            "/tmp/terrain.h3m",
+            parse_objects=True,
+        )
+
+        self.assertEqual(
+            len(loaded.terrain_tiles),
+            loaded.header.map_size * loaded.header.map_size * loaded.header.levels,
+        )
+        self.assertEqual(
+            [(tile.x, tile.y, tile.z) for tile in loaded.terrain_tiles],
+            [
+                (0, 0, 0),
+                (1, 0, 0),
+                (0, 1, 0),
+                (1, 1, 0),
+                (0, 0, 1),
+                (1, 0, 1),
+                (0, 1, 1),
+                (1, 1, 1),
+            ],
+        )
+        self.assertEqual(
+            [
+                (
+                    tile.terrain_type,
+                    tile.terrain_view,
+                    tile.river_type,
+                    tile.river_direction,
+                    tile.road_type,
+                    tile.road_direction,
+                    tile.ext_flags,
+                )
+                for tile in loaded.terrain_tiles
+            ],
+            list(terrain_records),
+        )
 
     def test_load_h3m_reads_gzip_with_prefixed_format_id(self):
         payload = (b"x" * 43) + _build_minimal_h3m_header(
@@ -514,6 +610,25 @@ class H3MapParserContractTests(unittest.TestCase):
         self.assertEqual(len(loaded.templates), 1)
         self.assertEqual(len(loaded.objects), 1)
         self.assertEqual(len(loaded.neutral_targets), 1)
+        self.assertEqual(
+            len(loaded.terrain_tiles),
+            loaded.header.map_size * loaded.header.map_size * loaded.header.levels,
+        )
+        self.assertEqual(
+            loaded.terrain_tiles[0],
+            h3_map_parser.H3TerrainTile(
+                x=0,
+                y=0,
+                z=0,
+                terrain_type=0,
+                terrain_view=0,
+                river_type=0,
+                river_direction=0,
+                road_type=0,
+                road_direction=0,
+                ext_flags=0,
+            ),
+        )
 
         target = loaded.neutral_targets[0]
         self.assertEqual(target.object_index, 0)
