@@ -976,15 +976,32 @@ Owner/team colors and neutral monster colors should stay as marker fill, while
 scan difficulty is shown with an outer border or ring.
 
 **Acceptance criteria:**
-- [ ] Hero marker fill continues to show owner/team color.
-- [ ] Neutral marker fill continues to show the neutral monster color.
-- [ ] Scan verdict is rendered as a ring or border.
-- [ ] Hover and active marker states remain visible alongside scan rings.
-- [ ] Selected hero styling remains distinct.
+- [x] Hero marker fill continues to show owner/team color.
+- [x] Neutral marker fill continues to show the neutral monster color.
+- [x] Scan verdict is rendered as a ring or border.
+- [x] Hover and active marker states remain visible alongside scan rings.
+- [x] Selected hero styling remains distinct.
 
 **Verification:**
-- [ ] Manual GUI check after scan with hero and neutral targets.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Manual GUI check after scan with hero and neutral targets.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion Notes (2026-05-20):**
+- Changed scan difficulty rendering from marker body colors to outer marker
+  rings. Hero bodies keep selected/owner colors, and neutral bodies keep their
+  existing neutral/hidden/unsupported/removed identity colors.
+- Scan rings draw after marker bodies with the scan verdict stroke color, while
+  hover and active rings draw outside scan rings so both states remain visible.
+  Selected hero markers still skip scan coloring.
+- Moved z-level labels farther out when a scan ring exists to avoid ring
+  overlap.
+- Manual GUI check: started a local GUI on port 8771, used headless Chrome/CDP
+  with controlled state and scan responses, wrapped the real canvas context, and
+  confirmed hero owner fill, neutral fill, absence of scan fill in marker
+  bodies, strong/risky scan rings, and separate hover/active rings.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent plan and code reviews
+  completed with no blocking findings.
 
 **Dependencies:** None
 
@@ -1354,7 +1371,7 @@ After Tasks 9, 17, and 25:
 | 13 | Add Scan Sort Modes | done | - |
 | 14 | Improve Scan Result Hover And Click Behavior | done | - |
 | 15 | Auto-Refresh Scan After Hero Selection | done | 12, 13 |
-| 16 | Render Scan Difficulty As Marker Rings | todo | - |
+| 16 | Render Scan Difficulty As Marker Rings | done | - |
 | 17 | End-To-End Workflow Verification | blocked | 10, 11, 12, 13, 14, 15, 16 |
 | 18 | Add Pathfinding Service Contract | todo | 3, 8 |
 | 19 | Implement Land-Only Shortest Path Search | blocked | 18 |

@@ -390,6 +390,22 @@ const context = new Proxy({{
   clearRect(x, y, width, height) {{
     drawOperations.push({{ op: "clearRect", x, y, width, height }});
   }},
+  beginPath() {{
+    this.lastArc = null;
+    drawOperations.push({{ op: "beginPath" }});
+  }},
+  arc(x, y, radius, startAngle, endAngle) {{
+    this.lastArc = {{ x, y, radius, startAngle, endAngle }};
+    drawOperations.push({{ op: "arc", x, y, radius, startAngle, endAngle }});
+  }},
+  fill() {{
+    drawOperations.push({{
+      op: "fill",
+      fillStyle: this.fillStyle,
+      globalAlpha: this.globalAlpha,
+      arc: this.lastArc
+    }});
+  }},
   fillRect(x, y, width, height) {{
     drawOperations.push({{
       op: "fillRect",
@@ -399,6 +415,15 @@ const context = new Proxy({{
       y,
       width,
       height
+    }});
+  }},
+  stroke() {{
+    drawOperations.push({{
+      op: "stroke",
+      strokeStyle: this.strokeStyle,
+      lineWidth: this.lineWidth,
+      globalAlpha: this.globalAlpha,
+      arc: this.lastArc
     }});
   }}
 }}, {{
@@ -1243,6 +1268,45 @@ await Promise.all(heroRows().find((row) => row.dataset.heroId === "hero:0").disp
 await flushPromises();
 assert.strictEqual(scanRequestsSince(heroSelectBeforeAnyScanStart).length, 0);
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+const heroScanRingStart = drawOperations.length;
+const ringHeroSnapshot = {{
+  ...markerSnapshot,
+  heroes: markerSnapshot.heroes.map((hero) => (
+    hero.id === "hero:1" ? {{ ...hero, position: {{ x: 3, y: 2, z: 0 }} }} : hero
+  ))
+}};
+helpers.renderSnapshot(ringHeroSnapshot, {{ preserveView: false }});
+targetFilterButtons()[1].dispatch("click", {{}});
+elements["scan-radius"].value = "3";
+nextScanResults = [
+  {{
+    target_id: "hero:1",
+    target_type: "hero",
+    distance: 1,
+    win_pct: 95,
+    enemy_ai_value: 100,
+    note: "hero ring",
+    target: {{ name: "Fafner" }}
+  }}
+];
+elements["scan-button"].dispatch("click", {{}});
+await flushPromises();
+assert.deepStrictEqual(scanResultIds(), ["hero:1"]);
+const heroScanRingOps = drawOperations.slice(heroScanRingStart);
+assert.ok(heroScanRingOps.some((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#b98543"
+)), "scanned hero should keep tan owner fill");
+assert.ok(!heroScanRingOps.some((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#2f9e44"
+)), "scanned hero body should not use strong scan fill");
+assert.ok(heroScanRingOps.some((operation) => (
+  operation.op === "stroke"
+  && operation.strokeStyle === "#14532d"
+  && operation.lineWidth === 4
+  && operation.arc
+)), "scanned hero should draw strong scan ring stroke");
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+targetFilterButtons()[0].dispatch("click", {{}});
 const filterNeutral = renderedView.markers.find((marker) => marker.id === "neutral:0");
 const filterNeutralScreen = helpers.worldToScreen(filterNeutral.world, renderedView);
 elements["battle-map"].dispatch("contextmenu", {{
@@ -1326,10 +1390,24 @@ nextScanResults = [
   }}
 ];
 scanRequestStart = fetchRequests.length;
+const neutralScanRingStart = drawOperations.length;
 elements["scan-button"].dispatch("click", {{}});
 await flushPromises();
 scanRequests = scanRequestsSince(scanRequestStart);
 assert.strictEqual(scanRequests.length, 1);
+const neutralScanRingOps = drawOperations.slice(neutralScanRingStart);
+assert.ok(neutralScanRingOps.some((operation) => (
+  operation.op === "fill" && operation.fillStyle === "#1f2937" && operation.arc
+)));
+assert.ok(!neutralScanRingOps.some((operation) => (
+  operation.op === "fill" && operation.fillStyle === "#d99a21"
+)));
+assert.ok(neutralScanRingOps.some((operation) => (
+  operation.op === "stroke"
+  && operation.strokeStyle === "#7c4a03"
+  && operation.lineWidth === 4
+  && operation.arc
+)));
 const visibleScanRow = scanResultRows().find((row) => row.dataset.targetId === "neutral:0");
 const missingScanRow = scanResultRows().find((row) => row.dataset.targetId === "neutral:not-visible");
 assert.ok(visibleScanRow);
@@ -1337,7 +1415,21 @@ assert.ok(missingScanRow);
 const beforeHoverView = helpers.currentMapViewForTest();
 const beforeHoverFetchCalls = fetchCalls;
 const beforeHoverTargetText = elements["target-state"].textContent;
+const neutralHoverRingStart = drawOperations.length;
 visibleScanRow.dispatch("pointerenter", {{}});
+const neutralHoverRingOps = drawOperations.slice(neutralHoverRingStart);
+assert.ok(neutralHoverRingOps.some((operation) => (
+  operation.op === "stroke"
+  && operation.strokeStyle === "#7c4a03"
+  && operation.lineWidth === 4
+  && operation.arc
+)));
+assert.ok(neutralHoverRingOps.some((operation) => (
+  operation.op === "stroke"
+  && operation.strokeStyle === "#4b5563"
+  && operation.lineWidth === 2
+  && operation.arc
+)));
 let hoverView = helpers.currentMapViewForTest();
 assert.strictEqual(hoverView.hoveredMarkerId, "neutral:0");
 assert.strictEqual(hoverView.activeMarkerId, beforeHoverView.activeMarkerId);
@@ -1362,7 +1454,21 @@ assert.strictEqual(helpers.currentMapViewForTest().hoveredMarkerId, "neutral:0")
 visibleScanRow.dispatch("blur", {{}});
 assert.strictEqual(helpers.currentMapViewForTest().hoveredMarkerId, null);
 const beforeScanClickFetchCalls = fetchCalls;
+const neutralActiveRingStart = drawOperations.length;
 visibleScanRow.dispatch("click", {{}});
+const neutralActiveRingOps = drawOperations.slice(neutralActiveRingStart);
+assert.ok(neutralActiveRingOps.some((operation) => (
+  operation.op === "stroke"
+  && operation.strokeStyle === "#7c4a03"
+  && operation.lineWidth === 4
+  && operation.arc
+)));
+assert.ok(neutralActiveRingOps.some((operation) => (
+  operation.op === "stroke"
+  && operation.strokeStyle === "#111827"
+  && operation.lineWidth === 2
+  && operation.arc
+)));
 const clickedScanView = helpers.currentMapViewForTest();
 assert.strictEqual(fetchCalls, beforeScanClickFetchCalls);
 assert.strictEqual(clickedScanView.activeMarkerId, "neutral:0");

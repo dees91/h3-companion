@@ -1296,6 +1296,14 @@
     canvasContext.restore();
   }
 
+  function drawMarkerRing(screen, radius, strokeStyle, lineWidth) {
+    canvasContext.beginPath();
+    canvasContext.strokeStyle = strokeStyle;
+    canvasContext.lineWidth = lineWidth;
+    canvasContext.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+    canvasContext.stroke();
+  }
+
   function drawMarkers() {
     mapView.markers.forEach((marker) => {
       const screen = worldToScreen(marker.world, mapView);
@@ -1312,21 +1320,17 @@
         canvasContext.rotate(Math.PI / 4);
         canvasContext.fillStyle = marker.selected
           ? "#f5c542"
-          : (scanColors ? scanColors.fill : ownerColors.fill);
+          : ownerColors.fill;
         canvasContext.strokeStyle = marker.selected
           ? "#7a4d00"
-          : (scanColors ? scanColors.stroke : ownerColors.stroke);
+          : ownerColors.stroke;
         canvasContext.lineWidth = marker.selected ? 3 : 2;
         canvasContext.fillRect(-radius, -radius, radius * 2, radius * 2);
         canvasContext.strokeRect(-radius, -radius, radius * 2, radius * 2);
         canvasContext.rotate(-Math.PI / 4);
         canvasContext.translate(-screen.x, -screen.y);
         if (marker.selected) {
-          canvasContext.beginPath();
-          canvasContext.strokeStyle = "#7a4d00";
-          canvasContext.lineWidth = 2;
-          canvasContext.arc(screen.x, screen.y, radius + 7, 0, Math.PI * 2);
-          canvasContext.stroke();
+          drawMarkerRing(screen, radius + 7, "#7a4d00", 2);
         }
       } else if (marker.type === "town") {
         const townOwnerColors = playerColorStyle(marker.initialOwnerColorName);
@@ -1388,30 +1392,39 @@
         );
       } else {
         canvasContext.beginPath();
-        canvasContext.fillStyle = scanColors
-          ? scanColors.fill
-          : (marker.hidden ? "#64748b" : (marker.unsupported ? "#8b95a3" : "#1f2937"));
-        canvasContext.strokeStyle = scanColors
-          ? scanColors.stroke
-          : (marker.hidden ? "#334155" : (marker.removed ? "#4b5563" : "#facc15"));
+        canvasContext.fillStyle = marker.hidden
+          ? "#64748b"
+          : (marker.unsupported ? "#8b95a3" : "#1f2937");
+        canvasContext.strokeStyle = marker.hidden
+          ? "#334155"
+          : (marker.removed ? "#4b5563" : "#facc15");
         canvasContext.lineWidth = marker.unsupported || marker.removed || marker.hidden ? 3 : 2;
         canvasContext.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
         canvasContext.fill();
         canvasContext.stroke();
       }
 
+      if (scanColors) {
+        drawMarkerRing(screen, radius + 6, scanColors.stroke, 4);
+      }
+
       if (isHover || isActive) {
-        canvasContext.beginPath();
-        canvasContext.strokeStyle = isActive ? "#111827" : "#4b5563";
-        canvasContext.lineWidth = 2;
-        canvasContext.arc(screen.x, screen.y, radius + 5, 0, Math.PI * 2);
-        canvasContext.stroke();
+        drawMarkerRing(
+          screen,
+          radius + (scanColors ? 12 : 5),
+          isActive ? "#111827" : "#4b5563",
+          2
+        );
       }
 
       if (marker.position && marker.position.z) {
         canvasContext.fillStyle = "#111827";
         canvasContext.font = "11px Arial, Helvetica, sans-serif";
-        canvasContext.fillText(`z${marker.position.z}`, screen.x + radius + 4, screen.y - radius);
+        canvasContext.fillText(
+          `z${marker.position.z}`,
+          screen.x + radius + (scanColors ? 12 : 4),
+          screen.y - radius
+        );
       }
       canvasContext.restore();
     });
