@@ -753,16 +753,35 @@ Distance remains the default. Easiest should sort by highest `win_pct`, then
 lower distance, then stable target ID.
 
 **Acceptance criteria:**
-- [ ] Scan results default to distance sorting.
-- [ ] The user can switch to easiest-target sorting.
-- [ ] Sort mode is preserved when scan results refresh in the current session.
-- [ ] Ties are stable and deterministic.
+- [x] Scan results default to distance sorting.
+- [x] The user can switch to easiest-target sorting.
+- [x] Sort mode is preserved when scan results refresh in the current session.
+- [x] Ties are stable and deterministic.
 
 **Verification:**
-- [ ] Add JavaScript/unit-style tests if the existing test structure supports
+- [x] Add JavaScript/unit-style tests if the existing test structure supports
       it, or backend serialization tests if sorting is backend-owned.
-- [ ] Manual GUI check with a scan containing multiple targets.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Manual GUI check with a scan containing multiple targets.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion Notes (2026-05-20):**
+- Added a scan sort segmented control with `Distance` and `Easiest` modes.
+  Distance remains the default; easiest sorts by finite `win_pct` descending,
+  then distance ascending, then target ID.
+- Scan payloads are stored as `rawResults` and rendered through the current
+  sort mode, so changing sort mode reorders existing rows without making a new
+  `/api/scan-radius` request.
+- `clearScanResults()` and new scan starts preserve the selected sort mode while
+  clearing stale result rows and lookup state. The in-flight scan path now clears
+  old rows before showing `Running scan...`, preventing stale results from
+  reappearing if sort mode changes while a newer request is pending.
+- Manual GUI check: started a local fixture GUI on port 8771, used headless
+  Chrome/CDP with controlled multi-result scan responses, confirmed Distance and
+  Easiest row order, no extra request on sort toggle, preservation after filter
+  clear/new scan, and no stale-row redraw during a deferred in-flight scan.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent plan review and code
+  review completed, with the stale in-flight-row finding fixed and re-reviewed.
 
 **Dependencies:** None
 
@@ -970,8 +989,8 @@ After Tasks 9 and 17:
 | 10 | Add Hidden Hero Target State | done | - |
 | 11 | Add Hero Marker Context Actions | done | 10 |
 | 12 | Merge Map Filter And Scan Target Type | done | - |
-| 13 | Add Scan Sort Modes | todo | - |
+| 13 | Add Scan Sort Modes | done | - |
 | 14 | Improve Scan Result Hover And Click Behavior | todo | - |
-| 15 | Auto-Refresh Scan After Hero Selection | blocked | 12, 13 |
+| 15 | Auto-Refresh Scan After Hero Selection | todo | 12, 13 |
 | 16 | Render Scan Difficulty As Marker Rings | todo | - |
 | 17 | End-To-End Workflow Verification | blocked | 10, 11, 12, 13, 14, 15, 16 |

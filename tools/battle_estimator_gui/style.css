@@ -671,6 +671,14 @@ select:disabled {
   margin-top: 4px;
 }
 
+.scan-sort-control {
+  width: 100%;
+}
+
+.scan-sort-control button {
+  flex: 1 1 0;
+}
+
 .scan-controls .secondary-button {
   grid-column: 1 / -1;
   width: 100%;

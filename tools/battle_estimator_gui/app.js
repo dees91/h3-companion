@@ -35,6 +35,7 @@
     targetState: document.getElementById("target-state"),
     estimateState: document.getElementById("estimate-state"),
     scanRadius: document.getElementById("scan-radius"),
+    scanSortControl: document.getElementById("scan-sort-control"),
     scanButton: document.getElementById("scan-button"),
     scanState: document.getElementById("scan-state"),
     canvas: document.getElementById("battle-map"),
@@ -82,6 +83,8 @@
     heroId: null,
     radius: null,
     targetType: "all",
+    sortMode: "distance",
+    rawResults: [],
     results: [],
     resultByTargetId: new Map()
   };
@@ -115,6 +118,13 @@
   ];
   const TARGET_FILTER_BY_ID = new Map(
     TARGET_FILTERS.map((filter) => [filter.id, filter])
+  );
+  const SCAN_SORT_MODES = [
+    { id: "distance", label: "Distance" },
+    { id: "easiest", label: "Easiest" }
+  ];
+  const SCAN_SORT_MODE_BY_ID = new Map(
+    SCAN_SORT_MODES.map((mode) => [mode.id, mode])
   );
   const PLAYER_COLOR_STYLES = {
     red: { fill: "#e11d2e", stroke: "#8f1220" },
@@ -315,6 +325,10 @@
 
   function scanTargetTypeForFilter(filter) {
     return TARGET_FILTER_BY_ID.get(normalizeTargetFilter(filter)).scanTargetType;
+  }
+
+  function normalizeScanSortMode(mode) {
+    return SCAN_SORT_MODE_BY_ID.has(mode) ? mode : "distance";
   }
 
   function heroById(snapshot, heroId) {
@@ -944,6 +958,32 @@
       button.addEventListener("click", () => setTargetFilter(filter.id));
       elements.targetFilterControl.appendChild(button);
     });
+  }
+
+  function renderScanSortControl() {
+    clearNode(elements.scanSortControl);
+    SCAN_SORT_MODES.forEach((mode) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = mode.label;
+      button.className = mode.id === scanState.sortMode ? "active" : "";
+      button.disabled = !mapView.snapshot;
+      button.setAttribute("aria-pressed", mode.id === scanState.sortMode ? "true" : "false");
+      button.addEventListener("click", () => setScanSortMode(mode.id));
+      elements.scanSortControl.appendChild(button);
+    });
+  }
+
+  function setScanSortMode(mode) {
+    const normalized = normalizeScanSortMode(mode);
+    if (normalized === scanState.sortMode) {
+      return;
+    }
+    scanState.sortMode = normalized;
+    renderScanSortControl();
+    if (scanState.rawResults.length > 0) {
+      renderScanResultRows();
+    }
   }
 
   function setTargetFilter(filter) {
@@ -1746,14 +1786,52 @@
     return value;
   }
 
-  function sortedScanResults(results) {
+  function numericDistance(result) {
+    return typeof result.distance === "number" && Number.isFinite(result.distance)
+      ? result.distance
+      : Number.MAX_SAFE_INTEGER;
+  }
+
+  function numericWinPct(result) {
+    return typeof result.win_pct === "number" && Number.isFinite(result.win_pct)
+      ? result.win_pct
+      : null;
+  }
+
+  function compareTargetIds(left, right) {
+    const leftId = String(left.target_id || "");
+    const rightId = String(right.target_id || "");
+    if (leftId < rightId) {
+      return -1;
+    }
+    if (leftId > rightId) {
+      return 1;
+    }
+    return 0;
+  }
+
+  function sortedScanResults(results, sortMode) {
+    const normalizedSortMode = normalizeScanSortMode(sortMode);
     return (results || []).slice().sort((left, right) => {
-      const leftDistance = typeof left.distance === "number" ? left.distance : Number.MAX_SAFE_INTEGER;
-      const rightDistance = typeof right.distance === "number" ? right.distance : Number.MAX_SAFE_INTEGER;
+      const leftDistance = numericDistance(left);
+      const rightDistance = numericDistance(right);
+      if (normalizedSortMode === "easiest") {
+        const leftWinPct = numericWinPct(left);
+        const rightWinPct = numericWinPct(right);
+        if (leftWinPct !== rightWinPct) {
+          if (leftWinPct === null) {
+            return 1;
+          }
+          if (rightWinPct === null) {
+            return -1;
+          }
+          return rightWinPct - leftWinPct;
+        }
+      }
       if (leftDistance !== rightDistance) {
         return leftDistance - rightDistance;
       }
-      return String(left.target_id || "").localeCompare(String(right.target_id || ""));
+      return compareTargetIds(left, right);
     });
   }
 
@@ -1784,6 +1862,7 @@
     elements.scanRadius.disabled = !hasSnapshot || scanState.running;
     elements.scanButton.disabled = !canRun;
     renderTargetFilterControl();
+    renderScanSortControl();
   }
 
   function clearScanResults(message) {
@@ -1792,6 +1871,7 @@
     scanState.heroId = null;
     scanState.radius = null;
     scanState.targetType = scanTargetTypeForFilter(mapView.targetFilter);
+    scanState.rawResults = [];
     scanState.results = [];
     scanState.resultByTargetId = new Map();
     appendEmpty(elements.scanState, message || "No scan results.");
@@ -1807,12 +1887,8 @@
     elements.scanState.appendChild(item);
   }
 
-  function renderScanResults(payload) {
-    const results = sortedScanResults(payload.results || []);
-    scanState.running = false;
-    scanState.heroId = payload.hero_id;
-    scanState.radius = payload.radius;
-    scanState.targetType = payload.target_type;
+  function renderScanResultRows() {
+    const results = sortedScanResults(scanState.rawResults, scanState.sortMode);
     scanState.results = results;
     scanState.resultByTargetId = scanResultLookup(results);
     clearNode(elements.scanState);
@@ -1856,6 +1932,15 @@
     drawMap();
   }
 
+  function renderScanResults(payload) {
+    scanState.running = false;
+    scanState.heroId = payload.hero_id;
+    scanState.radius = payload.radius;
+    scanState.targetType = payload.target_type;
+    scanState.rawResults = payload.results || [];
+    renderScanResultRows();
+  }
+
   function selectScanResult(result) {
     const marker = centerOnMarkerId(result.target_id);
     mapView.activeMarkerId = result.target_id || null;
@@ -1893,8 +1978,15 @@
     };
     scanState.requestId = request.requestId;
     scanState.running = true;
+    scanState.heroId = request.heroId;
+    scanState.radius = request.radius;
+    scanState.targetType = request.targetType;
+    scanState.rawResults = [];
+    scanState.results = [];
+    scanState.resultByTargetId = new Map();
     updateScanControls();
     setScanMessage("Running scan...", "empty-state");
+    drawMap();
 
     postJson(
       "/api/scan-radius",
@@ -2979,6 +3071,7 @@
   elements.showHiddenToggle.disabled = true;
   elements.routeOverlayToggle.checked = mapView.showRouteOverlay;
   renderTargetFilterControl();
+  renderScanSortControl();
   syncHeroRankingControls();
   elements.targetContextMenu.addEventListener("click", (event) => {
     event.stopPropagation();

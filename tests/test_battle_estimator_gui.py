@@ -249,6 +249,9 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "targetFilterControl",
             "targetFilter",
             "scanTargetTypeForFilter",
+            "scanSortControl",
+            "sortMode",
+            "normalizeScanSortMode",
             "targetContextMenu",
             "hiddenTargetInFlight",
             "hidden_hero_target_ids",
@@ -319,6 +322,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="map-tooltip"',
             'id="target-context-menu"',
             'id="scan-radius"',
+            'id="scan-sort-control"',
             'id="scan-button"',
         ):
             self.assertIn(expected, index_html)
@@ -511,6 +515,8 @@ const snapshot = {{
 }};
 let fetchCalls = 0;
 const fetchRequests = [];
+let deferNextScanResponse = false;
+const pendingScanResponses = [];
 function heroNameForId(heroId) {{
   const snapshots = [markerSnapshot, hiddenHeroSnapshot].filter(Boolean);
   for (const source of snapshots) {{
@@ -525,6 +531,7 @@ global.fetch = (path, options = {{}}) => {{
   fetchCalls += 1;
   fetchRequests.push({{ path, options }});
   let payload = snapshot;
+  let deferResponse = false;
   if (path === "/api/health") {{
     payload = {{ ok: true }};
   }} else if (path === "/api/select-hero") {{
@@ -543,19 +550,56 @@ global.fetch = (path, options = {{}}) => {{
     }};
   }} else if (path === "/api/scan-radius") {{
     const requestPayload = JSON.parse(options.body || "{{}}");
+    const resultType = requestPayload.target_type === "hero" ? "hero" : "neutral";
+    deferResponse = deferNextScanResponse;
+    deferNextScanResponse = false;
     payload = {{
       hero_id: requestPayload.hero_id,
       radius: requestPayload.radius,
       target_type: requestPayload.target_type,
       include_removed: false,
       simulations: 1000,
-      results: []
+      results: [
+        {{
+          target_id: "target:near",
+          target_type: resultType,
+          distance: 1,
+          win_pct: 20,
+          enemy_ai_value: 200,
+          note: "near",
+          target: {{ name: "Near", creature_name: "Near" }}
+        }},
+        {{
+          target_id: "target:easy",
+          target_type: resultType,
+          distance: 4,
+          win_pct: 95,
+          enemy_ai_value: 50,
+          note: "easy",
+          target: {{ name: "Easy", creature_name: "Easy" }}
+        }},
+        {{
+          target_id: "target:missing",
+          target_type: resultType,
+          distance: 2,
+          win_pct: null,
+          enemy_ai_value: 999,
+          note: "unknown",
+          target: {{ name: "Unknown", creature_name: "Unknown" }}
+        }}
+      ]
     }};
   }}
-  return Promise.resolve({{
+  const response = {{
     ok: true,
     json: () => Promise.resolve(payload)
-  }});
+  }};
+  if (deferResponse) {{
+    return new Promise((resolve) => {{
+      pendingScanResponses.push(() => resolve(response));
+    }});
+  }}
+  return Promise.resolve(response);
 }};
 require({json.dumps(app_js_path)});
 const helpers = window.__battleEstimatorGuiTest;
@@ -1091,6 +1135,20 @@ assert.deepStrictEqual(sorted.map((item) => item.target_id), [
   "neutral:1",
   "neutral:2"
 ]);
+const easiestSorted = helpers.sortedScanResults([
+  {{ target_id: "neutral:slow", distance: 1, win_pct: 20 }},
+  {{ target_id: "neutral:tie-b", distance: 3, win_pct: 75 }},
+  {{ target_id: "neutral:unknown", distance: 2, win_pct: null }},
+  {{ target_id: "neutral:tie-a", distance: 2, win_pct: 75 }},
+  {{ target_id: "neutral:best", distance: 5, win_pct: 95 }}
+], "easiest");
+assert.deepStrictEqual(easiestSorted.map((item) => item.target_id), [
+  "neutral:best",
+  "neutral:tie-a",
+  "neutral:tie-b",
+  "neutral:slow",
+  "neutral:unknown"
+]);
 const lookup = helpers.scanResultLookup(sorted);
 assert.strictEqual(lookup.get("neutral:2").distance, 4);
 const scanRequest = {{ requestId: 5, heroId: "hero:256", radius: 10, targetType: "all" }};
@@ -1141,11 +1199,27 @@ function scanRequestsSince(startIndex) {{
     .slice(startIndex)
     .filter((request) => request.path === "/api/scan-radius");
 }}
+function scanSortButtons() {{
+  return elements["scan-sort-control"].children;
+}}
+function scanResultIds() {{
+  return elements["scan-state"].children
+    .filter((child) => child.dataset && child.dataset.targetId)
+    .map((child) => child.dataset.targetId);
+}}
+function scanStateTextIncludes(text) {{
+  return elements["scan-state"].children.some((child) => child.textContent.includes(text));
+}}
 assert.deepStrictEqual(
   targetFilterButtons().map((button) => button.textContent),
   ["Both", "Heroes", "Monsters"]
 );
+assert.deepStrictEqual(
+  scanSortButtons().map((button) => button.textContent),
+  ["Distance", "Easiest"]
+);
 assert.strictEqual(targetFilterButtons()[0].className, "active");
+assert.strictEqual(scanSortButtons()[0].className, "active");
 const filterNeutral = renderedView.markers.find((marker) => marker.id === "neutral:0");
 const filterNeutralScreen = helpers.worldToScreen(filterNeutral.world, renderedView);
 elements["battle-map"].dispatch("contextmenu", {{
@@ -1169,26 +1243,57 @@ let scanRequests = scanRequestsSince(scanRequestStart);
 assert.strictEqual(scanRequests.length, 1);
 assert.strictEqual(JSON.parse(scanRequests[0].options.body).target_type, "hero");
 assert.ok(targetFilterButtons().every((button) => !button.disabled));
+assert.deepStrictEqual(scanResultIds(), ["target:near", "target:missing", "target:easy"]);
+const scanRequestsBeforeSortChange = fetchRequests.length;
+scanSortButtons()[1].dispatch("click", {{}});
+assert.strictEqual(fetchRequests.length, scanRequestsBeforeSortChange);
+assert.strictEqual(scanSortButtons()[1].className, "active");
+assert.deepStrictEqual(scanResultIds(), ["target:easy", "target:near", "target:missing"]);
+deferNextScanResponse = true;
+scanRequestStart = fetchRequests.length;
+elements["scan-button"].dispatch("click", {{}});
+scanRequests = scanRequestsSince(scanRequestStart);
+assert.strictEqual(scanRequests.length, 1);
+assert.strictEqual(pendingScanResponses.length, 1);
+assert.ok(scanSortButtons().every((button) => !button.disabled));
+assert.ok(scanStateTextIncludes("Running scan"));
+assert.deepStrictEqual(scanResultIds(), []);
+scanSortButtons()[0].dispatch("click", {{}});
+assert.strictEqual(fetchRequests.length, scanRequestStart + 1);
+assert.strictEqual(scanSortButtons()[0].className, "active");
+assert.ok(scanStateTextIncludes("Running scan"));
+assert.deepStrictEqual(scanResultIds(), []);
+pendingScanResponses.shift()();
+await flushPromises();
+assert.deepStrictEqual(scanResultIds(), ["target:near", "target:missing", "target:easy"]);
+scanSortButtons()[1].dispatch("click", {{}});
+assert.strictEqual(scanSortButtons()[1].className, "active");
+assert.deepStrictEqual(scanResultIds(), ["target:easy", "target:near", "target:missing"]);
 targetFilterButtons()[2].dispatch("click", {{}});
 const monstersFilterView = helpers.currentMapViewForTest();
 assert.ok(monstersFilterView.markers.some((marker) => marker.type === "neutral"));
 assert.ok(!monstersFilterView.markers.some((marker) => marker.type === "hero"));
+assert.strictEqual(scanSortButtons()[1].className, "active");
+assert.ok(elements["scan-state"].children.some((child) => child.textContent.includes("No scan results")));
 scanRequestStart = fetchRequests.length;
 elements["scan-button"].dispatch("click", {{}});
 await flushPromises();
 scanRequests = scanRequestsSince(scanRequestStart);
 assert.strictEqual(scanRequests.length, 1);
 assert.strictEqual(JSON.parse(scanRequests[0].options.body).target_type, "neutral");
+assert.deepStrictEqual(scanResultIds(), ["target:easy", "target:near", "target:missing"]);
 targetFilterButtons()[0].dispatch("click", {{}});
 const bothFilterView = helpers.currentMapViewForTest();
 assert.ok(bothFilterView.markers.some((marker) => marker.type === "neutral"));
 assert.ok(bothFilterView.markers.some((marker) => marker.type === "hero"));
+assert.strictEqual(scanSortButtons()[1].className, "active");
 scanRequestStart = fetchRequests.length;
 elements["scan-button"].dispatch("click", {{}});
 await flushPromises();
 scanRequests = scanRequestsSince(scanRequestStart);
 assert.strictEqual(scanRequests.length, 1);
 assert.strictEqual(JSON.parse(scanRequests[0].options.body).target_type, "all");
+assert.deepStrictEqual(scanResultIds(), ["target:easy", "target:near", "target:missing"]);
 const renderedTown = renderedView.markers.find((marker) => marker.id === "town:0");
 const renderedTownScreen = helpers.worldToScreen(renderedTown.world, renderedView);
 const fetchCallsBeforeTownClick = fetchCalls;
