@@ -264,6 +264,84 @@ def recommend_hero_skills(
     )
 
 
+def compare_skill_offers(
+    hero_key: str,
+    current_skills: Sequence[Any],
+    offers: Sequence[Any],
+    role: Optional[str] = None,
+    metadata: Optional["VcmiHeroSkillMetadata"] = None,
+    rules: Optional["RecommendationRules"] = None,
+) -> "OfferComparisonOutput":
+    """Compare concrete level-up offers using the recommendation rules."""
+    metadata = metadata or load_vcmi_hero_skill_metadata()
+    rules = rules or load_recommendation_rules(metadata=metadata)
+    role = _normalize_non_empty_string(role or rules.default_role, "role")
+    comparison_input = OfferComparisonInput(
+        hero_key=hero_key,
+        role=role,
+        current_skills=current_skills,
+        offers=offers,
+    )
+    if comparison_input.hero_key not in metadata.heroes:
+        raise HeroSkillRecommendationError(
+            f"unknown hero key: {comparison_input.hero_key}"
+        )
+    _validate_known_current_skills(comparison_input.current_skills, metadata)
+    _validate_known_offer_skills(comparison_input.offers, metadata)
+    _validate_distinct_offer_keys(comparison_input.offers)
+
+    hero = metadata.heroes[comparison_input.hero_key]
+    skill_rules = _effective_skill_rules_for_hero(rules, hero, role)
+    current_by_skill = {
+        skill.skill_id: skill
+        for skill in comparison_input.current_skills
+    }
+    has_open_slot = len(current_by_skill) < MAX_SECONDARY_SKILLS
+
+    candidates = []
+    output_entries = []
+    for offer in comparison_input.offers:
+        skill_rule = skill_rules.get(offer.skill_id)
+        entry = _entry_for_skill_offer(
+            offer,
+            skill_rule,
+            current_by_skill.get(offer.skill_id),
+            has_open_slot,
+            metadata,
+        )
+        output_entries.append(entry)
+        candidates.append((
+            entry,
+            skill_rule.upgrade_priority if skill_rule is not None else 0.0,
+        ))
+
+    available_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate[0].availability == AVAILABILITY_AVAILABLE
+    ]
+    if available_candidates:
+        winner_entry, winner_priority = sorted(
+            available_candidates,
+            key=_candidate_sort_key,
+        )[0]
+        winner = _recommendation_entry_offer_key(winner_entry)
+        reason_codes = _comparison_reason_codes(
+            winner_entry,
+            winner_priority,
+            available_candidates,
+        )
+    else:
+        winner = None
+        reason_codes = ("no_available_offers",)
+
+    return OfferComparisonOutput(
+        winner=winner,
+        offers=tuple(output_entries),
+        reason_codes=reason_codes,
+    )
+
+
 def validate_current_skills(values: Iterable[Any]) -> Tuple["CurrentSkill", ...]:
     """Normalize current skill slots and enforce distinct skill IDs."""
     skills = tuple(_current_skill_from_input(value) for value in values)
@@ -921,6 +999,31 @@ def _validate_known_current_skills(
             )
 
 
+def _validate_known_offer_skills(
+    offers: Sequence[SkillOffer],
+    metadata: VcmiHeroSkillMetadata,
+) -> None:
+    for offer in offers:
+        if offer.skill_id not in metadata.skills:
+            raise HeroSkillRecommendationError(
+                f"unknown offer skill ID: {offer.skill_id}"
+            )
+
+
+def _validate_distinct_offer_keys(offers: Sequence[SkillOffer]) -> None:
+    seen = set()
+    duplicates = []
+    for offer in offers:
+        if offer.key in seen:
+            duplicates.append(offer.key)
+        seen.add(offer.key)
+    if duplicates:
+        duplicate_list = ", ".join(sorted(set(duplicates)))
+        raise HeroSkillRecommendationError(
+            f"duplicate offer keys: {duplicate_list}"
+        )
+
+
 def _effective_skill_rules_for_hero(
     rules: RecommendationRules,
     hero: HeroMetadata,
@@ -936,6 +1039,66 @@ def _effective_skill_rules_for_hero(
     ):
         effective.update(layer.get(role, {}))
     return effective
+
+
+def _entry_for_skill_offer(
+    offer: SkillOffer,
+    skill_rule: Optional[SkillRule],
+    current_skill: Optional[CurrentSkill],
+    has_open_slot: bool,
+    metadata: VcmiHeroSkillMetadata,
+) -> RecommendationEntry:
+    availability_reasons = _offer_availability_reasons(
+        offer,
+        current_skill,
+        has_open_slot,
+    )
+    if skill_rule is None:
+        score = 0.0
+        tier = "D"
+        rule_reason_codes = ("no_recommendation_rule",)
+    else:
+        score = skill_rule.score
+        tier = skill_rule.tier
+        rule_reason_codes = skill_rule.reason_codes
+
+    reason_codes = _dedupe_reason_codes(
+        (*rule_reason_codes, *availability_reasons)
+    )
+    availability = (
+        AVAILABILITY_AVAILABLE
+        if not availability_reasons and skill_rule is not None
+        else AVAILABILITY_UNAVAILABLE
+    )
+    skill_metadata = metadata.skills[offer.skill_id]
+    return RecommendationEntry(
+        skill_id=offer.skill_id,
+        score=score,
+        tier=tier,
+        availability=availability,
+        reason_codes=reason_codes,
+        display_name=skill_metadata.display_name,
+        target_level=offer.target_level,
+    )
+
+
+def _offer_availability_reasons(
+    offer: SkillOffer,
+    current_skill: Optional[CurrentSkill],
+    has_open_slot: bool,
+) -> Tuple[str, ...]:
+    if current_skill is not None:
+        expected_level = _next_skill_level(current_skill.level)
+        if expected_level is None or offer.target_level != expected_level:
+            return ("illegal_upgrade_level",)
+        return ()
+
+    reasons = []
+    if offer.target_level != "basic":
+        reasons.append("illegal_new_skill_level")
+    if not has_open_slot:
+        reasons.append("no_open_skill_slot")
+    return tuple(reasons)
 
 
 def _entry_for_skill_rule(
@@ -1001,6 +1164,38 @@ def _apply_limit(
     if limit is None:
         return entries
     return entries[:limit]
+
+
+def _comparison_reason_codes(
+    winner: RecommendationEntry,
+    winner_priority: float,
+    candidates: Sequence[Tuple[RecommendationEntry, float]],
+) -> Tuple[str, ...]:
+    if len(candidates) == 1:
+        return ("only_available_offer",)
+    ordered = sorted(candidates, key=_candidate_sort_key)
+    if ordered[0][0] != winner:
+        raise HeroSkillRecommendationError("winner does not match sorted offers")
+    runner_up, runner_up_priority = ordered[1]
+    if winner.score > runner_up.score:
+        return ("higher_score",)
+    winner_tier_index = VALID_TIERS.index(winner.tier)
+    runner_tier_index = VALID_TIERS.index(runner_up.tier)
+    if winner_tier_index < runner_tier_index:
+        return ("higher_tier",)
+    if winner_priority > runner_up_priority:
+        return ("higher_upgrade_priority",)
+    return ("deterministic_tiebreak",)
+
+
+def _dedupe_reason_codes(values: Iterable[str]) -> Tuple[str, ...]:
+    deduped = []
+    seen = set()
+    for value in values:
+        if value not in seen:
+            deduped.append(value)
+            seen.add(value)
+    return tuple(deduped)
 
 
 def _normalize_optional_limit(

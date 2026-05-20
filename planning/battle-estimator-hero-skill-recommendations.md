@@ -318,21 +318,34 @@ upgrade-priority ordering. Required tests passed with 42 focused cases.
 
 ## Task 5: Implement Skill-Vs-Skill Comparison
 
+**Status:** done
+
 **Description:** Add a comparison function that evaluates concrete level-up
 offers using the same scoring engine as top-next recommendations.
 
 **Acceptance criteria:**
-- [ ] Comparison accepts two or more concrete offers.
-- [ ] Offers include target levels, such as `basic` or `expert`.
-- [ ] Illegal offers are marked with availability reasons.
-- [ ] Winner selection is deterministic.
-- [ ] The result includes a short explanation for why the winner wins.
+- [x] Comparison accepts two or more concrete offers.
+- [x] Offers include target levels, such as `basic` or `expert`.
+- [x] Illegal offers are marked with availability reasons.
+- [x] Winner selection is deterministic.
+- [x] The result includes a short explanation for why the winner wins.
 
 **Verification:**
-- [ ] Add tests for upgrade vs new skill.
-- [ ] Add tests for two legal new skills.
-- [ ] Add tests for illegal new skill when slots are full.
-- [ ] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+- [x] Add tests for upgrade vs new skill.
+- [x] Add tests for two legal new skills.
+- [x] Add tests for illegal new skill when slots are full.
+- [x] Run `python3 -m unittest tests.test_hero_skill_recommender`.
+
+**Completion notes:** Added `compare_skill_offers`, which evaluates concrete
+level-up offers through the same layered rule scores and deterministic sort
+used by top-next recommendations. The comparison preserves each offered target
+level, rejects duplicate exact offer keys, marks illegal upgrades/new skills
+with availability reason codes, keeps output offers in input order, and chooses
+the winner only from available offers. Winner explanations now distinguish
+higher score, higher tier, higher upgrade priority, deterministic tie-breaks,
+single available offer, and no available offers. Plan and code were reviewed by
+subagents; after review, a deterministic tie-break regression test was added.
+Required tests passed with 49 focused cases.
 
 **Dependencies:** Task 4
 

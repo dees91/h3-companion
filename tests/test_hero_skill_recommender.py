@@ -717,5 +717,174 @@ class HeroSkillRecommendationScoringTests(unittest.TestCase):
             )
 
 
+class HeroSkillOfferComparisonTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.metadata = recommender.load_vcmi_hero_skill_metadata()
+        cls.rules = recommender.load_recommendation_rules(metadata=cls.metadata)
+
+    def test_compare_upgrade_vs_new_skill_picks_higher_scored_upgrade(self):
+        comparison = recommender.compare_skill_offers(
+            "isra",
+            current_skills=({"skill": "necromancy", "level": "advanced"},),
+            offers=(
+                {"skill": "necromancy", "level": "expert"},
+                {"skill": "earthMagic", "level": "basic"},
+            ),
+            metadata=self.metadata,
+            rules=self.rules,
+        )
+
+        self.assertEqual(comparison.winner, "necromancy:expert")
+        self.assertEqual(comparison.reason_codes, ("higher_score",))
+        self.assertEqual(
+            [entry.skill_id for entry in comparison.offers],
+            ["necromancy", "earthMagic"],
+        )
+        self.assertTrue(all(
+            entry.availability == recommender.AVAILABILITY_AVAILABLE
+            for entry in comparison.offers
+        ))
+
+    def test_compare_two_legal_new_skills_is_deterministic(self):
+        comparison = recommender.compare_skill_offers(
+            "isra",
+            current_skills=({"skill": "necromancy", "level": "advanced"},),
+            offers=(
+                {"skill": "earthMagic", "level": "basic"},
+                {"skill": "logistics", "level": "basic"},
+            ),
+            metadata=self.metadata,
+            rules=self.rules,
+        )
+
+        self.assertEqual(comparison.winner, "earthMagic:basic")
+        self.assertEqual(comparison.reason_codes, ("higher_score",))
+        self.assertEqual(
+            [entry.target_level for entry in comparison.offers],
+            ["basic", "basic"],
+        )
+
+    def test_compare_tied_legal_offers_reports_deterministic_tiebreak(self):
+        raw_rules = json.loads(
+            recommender.DEFAULT_RULES_PATH.read_text(encoding="utf-8")
+        )
+        for skill_id in ("airMagic", "earthMagic"):
+            raw_rules["global"]["main"]["skills"][skill_id]["score"] = 80
+            raw_rules["global"]["main"]["skills"][skill_id][
+                "upgrade_priority"
+            ] = 5
+        rules = recommender.validate_recommendation_rules(
+            raw_rules,
+            metadata=self.metadata,
+        )
+
+        comparison = recommender.compare_skill_offers(
+            "isra",
+            current_skills=({"skill": "necromancy", "level": "advanced"},),
+            offers=(
+                {"skill": "earthMagic", "level": "basic"},
+                {"skill": "airMagic", "level": "basic"},
+            ),
+            metadata=self.metadata,
+            rules=rules,
+        )
+
+        self.assertEqual(comparison.winner, "airMagic:basic")
+        self.assertEqual(comparison.reason_codes, ("deterministic_tiebreak",))
+
+    def test_compare_marks_illegal_new_skill_when_slots_are_full(self):
+        comparison = recommender.compare_skill_offers(
+            "isra",
+            current_skills=(
+                {"skill": "necromancy", "level": "advanced"},
+                {"skill": "logistics", "level": "basic"},
+                {"skill": "offence", "level": "basic"},
+                {"skill": "armorer", "level": "basic"},
+                {"skill": "airMagic", "level": "basic"},
+                {"skill": "wisdom", "level": "basic"},
+                {"skill": "tactics", "level": "basic"},
+                {"skill": "intelligence", "level": "basic"},
+            ),
+            offers=(
+                {"skill": "earthMagic", "level": "basic"},
+                {"skill": "necromancy", "level": "expert"},
+            ),
+            metadata=self.metadata,
+            rules=self.rules,
+        )
+
+        earth_magic, necromancy = comparison.offers
+
+        self.assertEqual(comparison.winner, "necromancy:expert")
+        self.assertEqual(comparison.reason_codes, ("only_available_offer",))
+        self.assertEqual(
+            earth_magic.availability,
+            recommender.AVAILABILITY_UNAVAILABLE,
+        )
+        self.assertEqual(earth_magic.target_level, "basic")
+        self.assertIn("no_open_skill_slot", earth_magic.reason_codes)
+        self.assertEqual(
+            necromancy.availability,
+            recommender.AVAILABILITY_AVAILABLE,
+        )
+
+    def test_compare_marks_skipped_upgrade_level_unavailable(self):
+        comparison = recommender.compare_skill_offers(
+            "isra",
+            current_skills=({"skill": "necromancy", "level": "basic"},),
+            offers=(
+                {"skill": "necromancy", "level": "expert"},
+                {"skill": "earthMagic", "level": "basic"},
+            ),
+            metadata=self.metadata,
+            rules=self.rules,
+        )
+        necromancy = comparison.offers[0]
+
+        self.assertEqual(necromancy.target_level, "expert")
+        self.assertEqual(
+            necromancy.availability,
+            recommender.AVAILABILITY_UNAVAILABLE,
+        )
+        self.assertIn("illegal_upgrade_level", necromancy.reason_codes)
+        self.assertEqual(comparison.winner, "earthMagic:basic")
+
+    def test_compare_marks_existing_skill_without_rule_unavailable(self):
+        comparison = recommender.compare_skill_offers(
+            "isra",
+            current_skills=({"skill": "necromancy", "level": "advanced"},),
+            offers=(
+                {"skill": "archery", "level": "basic"},
+                {"skill": "earthMagic", "level": "basic"},
+            ),
+            metadata=self.metadata,
+            rules=self.rules,
+        )
+        archery = comparison.offers[0]
+
+        self.assertEqual(comparison.winner, "earthMagic:basic")
+        self.assertEqual(archery.score, 0.0)
+        self.assertEqual(archery.tier, "D")
+        self.assertEqual(
+            archery.availability,
+            recommender.AVAILABILITY_UNAVAILABLE,
+        )
+        self.assertIn("no_recommendation_rule", archery.reason_codes)
+
+    def test_compare_rejects_duplicate_offer_keys(self):
+        with self.assertRaises(recommender.HeroSkillRecommendationError):
+            recommender.compare_skill_offers(
+                "isra",
+                current_skills=({"skill": "necromancy", "level": "advanced"},),
+                offers=(
+                    {"skill": "earthMagic", "level": "basic"},
+                    {"skill_id": "earthMagic", "target_level": "basic"},
+                ),
+                metadata=self.metadata,
+                rules=self.rules,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
