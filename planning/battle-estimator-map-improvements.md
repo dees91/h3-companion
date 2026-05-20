@@ -882,16 +882,36 @@ map, while scan-result click intentionally activates and centers the target
 using the existing scan estimate rather than rerunning a single simulation.
 
 **Acceptance criteria:**
-- [ ] Hovering a scan result highlights the corresponding map marker.
-- [ ] Hovering does not pan, zoom, or center the map.
-- [ ] Clicking a scan result centers and activates the target.
-- [ ] Clicking a scan result displays the existing scan estimate.
-- [ ] Clicking a scan result does not make a redundant `/api/simulate-target`
+- [x] Hovering a scan result highlights the corresponding map marker.
+- [x] Hovering does not pan, zoom, or center the map.
+- [x] Clicking a scan result centers and activates the target.
+- [x] Clicking a scan result displays the existing scan estimate.
+- [x] Clicking a scan result does not make a redundant `/api/simulate-target`
       request.
 
 **Verification:**
-- [ ] Manual GUI check with scan results and visible markers.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Manual GUI check with scan results and visible markers.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion Notes (2026-05-20):**
+- Added scan result row hover/focus behavior that highlights a currently visible
+  target marker via `hoveredMarkerId` without changing map level, zoom, pan,
+  active marker, target details, or API state.
+- Hover state is cleared when rows are replaced, scan messages are shown, scans
+  start, scan results are cleared, map level changes, or the hovered/focused row
+  is left/blurred. Focusing a result without a visible marker clears any prior
+  scan-row hover.
+- Kept scan result click as the intentional activation path: it centers and
+  activates the target, then renders the estimate already present in the scan
+  result without making a `/api/simulate-target` request.
+- Manual GUI check: started a local fixture GUI on port 8771, used headless
+  Chrome/CDP with a controlled scan response containing visible `neutral:0`,
+  confirmed hover highlight/no movement/no API side effects, non-visible focus
+  cleanup, leave cleanup, click activation, and estimate rendering from scan
+  data with zero simulate-target requests.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`; subagent plan and code reviews
+  completed with no blocking findings after lifecycle cleanup adjustments.
 
 **Dependencies:** None
 
@@ -1313,7 +1333,7 @@ After Tasks 9, 17, and 25:
 | 11 | Add Hero Marker Context Actions | done | 10 |
 | 12 | Merge Map Filter And Scan Target Type | done | - |
 | 13 | Add Scan Sort Modes | done | - |
-| 14 | Improve Scan Result Hover And Click Behavior | in-progress | - |
+| 14 | Improve Scan Result Hover And Click Behavior | done | - |
 | 15 | Auto-Refresh Scan After Hero Selection | todo | 12, 13 |
 | 16 | Render Scan Difficulty As Marker Rings | todo | - |
 | 17 | End-To-End Workflow Verification | blocked | 10, 11, 12, 13, 14, 15, 16 |

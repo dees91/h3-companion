@@ -516,6 +516,7 @@ const snapshot = {{
 let fetchCalls = 0;
 const fetchRequests = [];
 let deferNextScanResponse = false;
+let nextScanResults = null;
 const pendingScanResponses = [];
 function heroNameForId(heroId) {{
   const snapshots = [markerSnapshot, hiddenHeroSnapshot].filter(Boolean);
@@ -553,42 +554,44 @@ global.fetch = (path, options = {{}}) => {{
     const resultType = requestPayload.target_type === "hero" ? "hero" : "neutral";
     deferResponse = deferNextScanResponse;
     deferNextScanResponse = false;
+    const defaultResults = [
+      {{
+        target_id: "target:near",
+        target_type: resultType,
+        distance: 1,
+        win_pct: 20,
+        enemy_ai_value: 200,
+        note: "near",
+        target: {{ name: "Near", creature_name: "Near" }}
+      }},
+      {{
+        target_id: "target:easy",
+        target_type: resultType,
+        distance: 4,
+        win_pct: 95,
+        enemy_ai_value: 50,
+        note: "easy",
+        target: {{ name: "Easy", creature_name: "Easy" }}
+      }},
+      {{
+        target_id: "target:missing",
+        target_type: resultType,
+        distance: 2,
+        win_pct: null,
+        enemy_ai_value: 999,
+        note: "unknown",
+        target: {{ name: "Unknown", creature_name: "Unknown" }}
+      }}
+    ];
     payload = {{
       hero_id: requestPayload.hero_id,
       radius: requestPayload.radius,
       target_type: requestPayload.target_type,
       include_removed: false,
       simulations: 1000,
-      results: [
-        {{
-          target_id: "target:near",
-          target_type: resultType,
-          distance: 1,
-          win_pct: 20,
-          enemy_ai_value: 200,
-          note: "near",
-          target: {{ name: "Near", creature_name: "Near" }}
-        }},
-        {{
-          target_id: "target:easy",
-          target_type: resultType,
-          distance: 4,
-          win_pct: 95,
-          enemy_ai_value: 50,
-          note: "easy",
-          target: {{ name: "Easy", creature_name: "Easy" }}
-        }},
-        {{
-          target_id: "target:missing",
-          target_type: resultType,
-          distance: 2,
-          win_pct: null,
-          enemy_ai_value: 999,
-          note: "unknown",
-          target: {{ name: "Unknown", creature_name: "Unknown" }}
-        }}
-      ]
+      results: nextScanResults || defaultResults
     }};
+    nextScanResults = null;
   }}
   const response = {{
     ok: true,
@@ -1202,13 +1205,21 @@ function scanRequestsSince(startIndex) {{
 function scanSortButtons() {{
   return elements["scan-sort-control"].children;
 }}
-function scanResultIds() {{
+function scanResultRows() {{
   return elements["scan-state"].children
-    .filter((child) => child.dataset && child.dataset.targetId)
-    .map((child) => child.dataset.targetId);
+    .filter((child) => child.dataset && child.dataset.targetId);
+}}
+function scanResultIds() {{
+  return scanResultRows().map((child) => child.dataset.targetId);
 }}
 function scanStateTextIncludes(text) {{
   return elements["scan-state"].children.some((child) => child.textContent.includes(text));
+}}
+function treeText(node) {{
+  if (!node) {{
+    return "";
+  }}
+  return [node.textContent || "", ...node.children.map((child) => treeText(child))].join(" ");
 }}
 assert.deepStrictEqual(
   targetFilterButtons().map((button) => button.textContent),
@@ -1282,6 +1293,71 @@ scanRequests = scanRequestsSince(scanRequestStart);
 assert.strictEqual(scanRequests.length, 1);
 assert.strictEqual(JSON.parse(scanRequests[0].options.body).target_type, "neutral");
 assert.deepStrictEqual(scanResultIds(), ["target:easy", "target:near", "target:missing"]);
+nextScanResults = [
+  {{
+    target_id: "neutral:0",
+    target_type: "neutral",
+    distance: 1,
+    win_pct: 68,
+    enemy_ai_value: 120,
+    note: "scan visible",
+    target: {{ name: "Visible Gnoll", creature_name: "Gnoll", count: 8 }}
+  }},
+  {{
+    target_id: "neutral:not-visible",
+    target_type: "neutral",
+    distance: 2,
+    win_pct: 20,
+    enemy_ai_value: 80,
+    note: "scan hidden",
+    target: {{ name: "Filtered Target", creature_name: "Filtered Target" }}
+  }}
+];
+scanRequestStart = fetchRequests.length;
+elements["scan-button"].dispatch("click", {{}});
+await flushPromises();
+scanRequests = scanRequestsSince(scanRequestStart);
+assert.strictEqual(scanRequests.length, 1);
+const visibleScanRow = scanResultRows().find((row) => row.dataset.targetId === "neutral:0");
+const missingScanRow = scanResultRows().find((row) => row.dataset.targetId === "neutral:not-visible");
+assert.ok(visibleScanRow);
+assert.ok(missingScanRow);
+const beforeHoverView = helpers.currentMapViewForTest();
+const beforeHoverFetchCalls = fetchCalls;
+const beforeHoverTargetText = elements["target-state"].textContent;
+visibleScanRow.dispatch("pointerenter", {{}});
+let hoverView = helpers.currentMapViewForTest();
+assert.strictEqual(hoverView.hoveredMarkerId, "neutral:0");
+assert.strictEqual(hoverView.activeMarkerId, beforeHoverView.activeMarkerId);
+assert.strictEqual(hoverView.level, beforeHoverView.level);
+assert.strictEqual(hoverView.zoom, beforeHoverView.zoom);
+assert.deepStrictEqual(hoverView.pan, beforeHoverView.pan);
+assert.strictEqual(elements["target-state"].textContent, beforeHoverTargetText);
+assert.strictEqual(fetchCalls, beforeHoverFetchCalls);
+missingScanRow.dispatch("focus", {{}});
+hoverView = helpers.currentMapViewForTest();
+assert.strictEqual(hoverView.hoveredMarkerId, null);
+assert.strictEqual(hoverView.activeMarkerId, beforeHoverView.activeMarkerId);
+assert.strictEqual(hoverView.level, beforeHoverView.level);
+assert.strictEqual(hoverView.zoom, beforeHoverView.zoom);
+assert.deepStrictEqual(hoverView.pan, beforeHoverView.pan);
+assert.strictEqual(fetchCalls, beforeHoverFetchCalls);
+visibleScanRow.dispatch("pointerenter", {{}});
+visibleScanRow.dispatch("pointerleave", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().hoveredMarkerId, null);
+visibleScanRow.dispatch("focus", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().hoveredMarkerId, "neutral:0");
+visibleScanRow.dispatch("blur", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().hoveredMarkerId, null);
+const beforeScanClickFetchCalls = fetchCalls;
+visibleScanRow.dispatch("click", {{}});
+const clickedScanView = helpers.currentMapViewForTest();
+assert.strictEqual(fetchCalls, beforeScanClickFetchCalls);
+assert.strictEqual(clickedScanView.activeMarkerId, "neutral:0");
+assert.ok(elements["target-state"].textContent.includes("neutral neutral:0"));
+assert.ok(treeText(elements["estimate-state"]).includes("8x Gnoll"));
+assert.ok(treeText(elements["estimate-state"]).includes("scan visible"));
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 targetFilterButtons()[0].dispatch("click", {{}});
 const bothFilterView = helpers.currentMapViewForTest();
 assert.ok(bothFilterView.markers.some((marker) => marker.type === "neutral"));

@@ -85,6 +85,7 @@
     targetType: "all",
     sortMode: "distance",
     rawResults: [],
+    hoveredResultTargetId: null,
     results: [],
     resultByTargetId: new Map()
   };
@@ -1009,6 +1010,7 @@
   function setMapLevel(level) {
     mapView.level = normalizeLevelForSnapshot(level, mapView.snapshot);
     mapView.hoveredMarkerId = null;
+    scanState.hoveredResultTargetId = null;
     elements.canvas.classList.remove("has-marker-hover");
     hideMapTooltip();
     rebuildMarkerCache(mapView.snapshot);
@@ -1618,6 +1620,7 @@
       pan: { x: mapView.pan.x, y: mapView.pan.y },
       level: mapView.level,
       activeMarkerId: mapView.activeMarkerId,
+      hoveredMarkerId: mapView.hoveredMarkerId,
       markers: mapView.markers
     };
   }
@@ -1872,6 +1875,7 @@
     scanState.radius = null;
     scanState.targetType = scanTargetTypeForFilter(mapView.targetFilter);
     scanState.rawResults = [];
+    clearScanResultHover();
     scanState.results = [];
     scanState.resultByTargetId = new Map();
     appendEmpty(elements.scanState, message || "No scan results.");
@@ -1880,6 +1884,7 @@
   }
 
   function setScanMessage(message, className) {
+    clearScanResultHover();
     clearNode(elements.scanState);
     const item = document.createElement("p");
     item.className = className || "empty-state";
@@ -1887,10 +1892,40 @@
     elements.scanState.appendChild(item);
   }
 
+  function clearScanResultHover() {
+    const targetId = scanState.hoveredResultTargetId;
+    scanState.hoveredResultTargetId = null;
+    if (targetId && mapView.hoveredMarkerId === targetId) {
+      mapView.hoveredMarkerId = null;
+      elements.canvas.classList.remove("has-marker-hover");
+      drawMap();
+    }
+  }
+
+  function setScanResultHover(result, hovered) {
+    const targetId = result && result.target_id ? result.target_id : null;
+    if (!hovered) {
+      if (targetId && scanState.hoveredResultTargetId === targetId) {
+        clearScanResultHover();
+      }
+      return;
+    }
+
+    clearScanResultHover();
+    if (!targetId || !mapView.markers.some((marker) => marker.id === targetId)) {
+      return;
+    }
+    scanState.hoveredResultTargetId = targetId;
+    mapView.hoveredMarkerId = targetId;
+    elements.canvas.classList.add("has-marker-hover");
+    drawMap();
+  }
+
   function renderScanResultRows() {
     const results = sortedScanResults(scanState.rawResults, scanState.sortMode);
     scanState.results = results;
     scanState.resultByTargetId = scanResultLookup(results);
+    clearScanResultHover();
     clearNode(elements.scanState);
 
     if (results.length === 0) {
@@ -1906,6 +1941,10 @@
       row.type = "button";
       row.className = `list-item scan-result ${scanClass}`.trim();
       row.dataset.targetId = result.target_id || "";
+      row.addEventListener("pointerenter", () => setScanResultHover(result, true));
+      row.addEventListener("pointerleave", () => setScanResultHover(result, false));
+      row.addEventListener("focus", () => setScanResultHover(result, true));
+      row.addEventListener("blur", () => setScanResultHover(result, false));
       row.addEventListener("click", () => selectScanResult(result));
 
       const title = document.createElement("div");
@@ -1982,6 +2021,7 @@
     scanState.radius = request.radius;
     scanState.targetType = request.targetType;
     scanState.rawResults = [];
+    clearScanResultHover();
     scanState.results = [];
     scanState.resultByTargetId = new Map();
     updateScanControls();
