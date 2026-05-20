@@ -22,6 +22,7 @@
     mapSummary: document.getElementById("map-summary"),
     objectCount: document.getElementById("object-count"),
     mapLevelControl: document.getElementById("map-level-control"),
+    targetFilterControl: document.getElementById("target-filter-control"),
     showRemovedToggle: document.getElementById("show-removed-toggle"),
     showHiddenToggle: document.getElementById("show-hidden-toggle"),
     routeOverlayToggle: document.getElementById("show-route-overlay-toggle"),
@@ -34,7 +35,6 @@
     targetState: document.getElementById("target-state"),
     estimateState: document.getElementById("estimate-state"),
     scanRadius: document.getElementById("scan-radius"),
-    scanTargetType: document.getElementById("scan-target-type"),
     scanButton: document.getElementById("scan-button"),
     scanState: document.getElementById("scan-state"),
     canvas: document.getElementById("battle-map"),
@@ -58,6 +58,7 @@
     showRemovedNeutrals: false,
     showHiddenNeutrals: false,
     showRouteOverlay: true,
+    targetFilter: "both",
     markers: [],
     hoveredMarkerId: null,
     activeMarkerId: null,
@@ -107,6 +108,14 @@
   const AUTO_REFRESH_ENABLED = false;
   const FOLLOW_LATEST_MODE = "follow_latest";
   const PINNED_MODE = "pinned";
+  const TARGET_FILTERS = [
+    { id: "both", label: "Both", scanTargetType: "all" },
+    { id: "heroes", label: "Heroes", scanTargetType: "hero" },
+    { id: "monsters", label: "Monsters", scanTargetType: "neutral" }
+  ];
+  const TARGET_FILTER_BY_ID = new Map(
+    TARGET_FILTERS.map((filter) => [filter.id, filter])
+  );
   const PLAYER_COLOR_STYLES = {
     red: { fill: "#e11d2e", stroke: "#8f1220" },
     blue: { fill: "#2d6cdf", stroke: "#143a75" },
@@ -298,6 +307,14 @@
     const numeric = Number(level);
     const requested = Number.isInteger(numeric) ? numeric : 0;
     return clamp(requested, 0, mapLevelCount(snapshot) - 1);
+  }
+
+  function normalizeTargetFilter(filter) {
+    return TARGET_FILTER_BY_ID.has(filter) ? filter : "both";
+  }
+
+  function scanTargetTypeForFilter(filter) {
+    return TARGET_FILTER_BY_ID.get(normalizeTargetFilter(filter)).scanTargetType;
   }
 
   function heroById(snapshot, heroId) {
@@ -623,7 +640,8 @@
     tileSize,
     level,
     showRemovedNeutrals,
-    showHiddenTargets
+    showHiddenTargets,
+    targetFilter
   ) {
     if (!snapshot) {
       return [];
@@ -631,35 +649,40 @@
 
     const selectedHeroId = snapshot.selected_hero_id;
     const activeLevel = normalizeLevelForSnapshot(level, snapshot);
+    const normalizedTargetFilter = normalizeTargetFilter(targetFilter);
+    const includeHeroes = normalizedTargetFilter !== "monsters";
+    const includeNeutrals = normalizedTargetFilter !== "heroes";
     const includeHiddenTargets = typeof showHiddenTargets === "boolean"
       ? showHiddenTargets
       : Boolean(snapshot.show_hidden);
     const portalTargetLookup = portalTargetsById(snapshot);
-    const heroMarkers = (snapshot.heroes || [])
-      .filter((hero) => hero.position)
-      .filter((hero) => positionLevel(hero.position) === activeLevel)
-      .filter((hero) => includeHiddenTargets || !hero.hidden)
-      .map((hero) => ({
-        type: "hero",
-        id: hero.id,
-        label: hero.name || hero.id,
-        position: hero.position,
-        ownerColorId: hero.owner_color_id,
-        ownerColorName: hero.owner_color_name,
-        teamId: hero.team_id,
-        relation: heroRelation(hero, snapshot),
-        world: {
-          x: (hero.position.x + 0.5) * tileSize,
-          y: (hero.position.y + 0.5) * tileSize
-        },
-        radius: 8,
-        selected: hero.id === selectedHeroId,
-        removed: false,
-        hidden: Boolean(hero.hidden),
-        unsupported: false,
-        creatureCount: hero.total_creatures || 0,
-        summary: hero.army_summary || ""
-      }));
+    const heroMarkers = includeHeroes
+      ? (snapshot.heroes || [])
+        .filter((hero) => hero.position)
+        .filter((hero) => positionLevel(hero.position) === activeLevel)
+        .filter((hero) => includeHiddenTargets || !hero.hidden)
+        .map((hero) => ({
+          type: "hero",
+          id: hero.id,
+          label: hero.name || hero.id,
+          position: hero.position,
+          ownerColorId: hero.owner_color_id,
+          ownerColorName: hero.owner_color_name,
+          teamId: hero.team_id,
+          relation: heroRelation(hero, snapshot),
+          world: {
+            x: (hero.position.x + 0.5) * tileSize,
+            y: (hero.position.y + 0.5) * tileSize
+          },
+          radius: 8,
+          selected: hero.id === selectedHeroId,
+          removed: false,
+          hidden: Boolean(hero.hidden),
+          unsupported: false,
+          creatureCount: hero.total_creatures || 0,
+          summary: hero.army_summary || ""
+        }))
+      : [];
 
     const townMarkers = (snapshot.town_targets || [])
       .filter((town) => town.position)
@@ -723,27 +746,29 @@
         return marker;
       });
 
-    const neutralMarkers = (snapshot.neutral_targets || [])
-      .filter((target) => target.position)
-      .filter((target) => positionLevel(target.position) === activeLevel)
-      .filter((target) => showRemovedNeutrals || !target.removed)
-      .filter((target) => includeHiddenTargets || !target.hidden)
-      .map((target) => ({
-        type: "neutral",
-        id: target.id,
-        label: `${target.count || 0}x ${target.creature_name || "Unknown"}`,
-        position: target.position,
-        world: {
-          x: (target.position.x + 0.5) * tileSize,
-          y: (target.position.y + 0.5) * tileSize
-        },
-        radius: 7,
-        selected: false,
-        removed: Boolean(target.removed),
-        hidden: Boolean(target.hidden),
-        unsupported: target.estimator_creature_id === null,
-        summary: target.removal_note || `subid ${target.h3m_subid}`
-      }));
+    const neutralMarkers = includeNeutrals
+      ? (snapshot.neutral_targets || [])
+        .filter((target) => target.position)
+        .filter((target) => positionLevel(target.position) === activeLevel)
+        .filter((target) => showRemovedNeutrals || !target.removed)
+        .filter((target) => includeHiddenTargets || !target.hidden)
+        .map((target) => ({
+          type: "neutral",
+          id: target.id,
+          label: `${target.count || 0}x ${target.creature_name || "Unknown"}`,
+          position: target.position,
+          world: {
+            x: (target.position.x + 0.5) * tileSize,
+            y: (target.position.y + 0.5) * tileSize
+          },
+          radius: 7,
+          selected: false,
+          removed: Boolean(target.removed),
+          hidden: Boolean(target.hidden),
+          unsupported: target.estimator_creature_id === null,
+          summary: target.removal_note || `subid ${target.h3m_subid}`
+        }))
+      : [];
 
     return townMarkers.concat(portalMarkers, heroMarkers, neutralMarkers);
   }
@@ -846,7 +871,8 @@
       tileSize,
       mapView.level,
       mapView.showRemovedNeutrals,
-      mapView.showHiddenNeutrals
+      mapView.showHiddenNeutrals,
+      mapView.targetFilter
     );
   }
 
@@ -904,6 +930,40 @@
       button.addEventListener("click", () => setMapLevel(level));
       elements.mapLevelControl.appendChild(button);
     }
+  }
+
+  function renderTargetFilterControl() {
+    clearNode(elements.targetFilterControl);
+    TARGET_FILTERS.forEach((filter) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = filter.label;
+      button.className = filter.id === mapView.targetFilter ? "active" : "";
+      button.disabled = !mapView.snapshot || scanState.running;
+      button.setAttribute("aria-pressed", filter.id === mapView.targetFilter ? "true" : "false");
+      button.addEventListener("click", () => setTargetFilter(filter.id));
+      elements.targetFilterControl.appendChild(button);
+    });
+  }
+
+  function setTargetFilter(filter) {
+    const normalized = normalizeTargetFilter(filter);
+    if (normalized === mapView.targetFilter) {
+      return;
+    }
+
+    mapView.targetFilter = normalized;
+    mapView.hoveredMarkerId = null;
+    elements.canvas.classList.remove("has-marker-hover");
+    hideMapTooltip();
+    hideTargetContextMenu();
+    rebuildMarkerCache(mapView.snapshot);
+    if (!mapView.markers.some((marker) => marker.id === mapView.activeMarkerId)) {
+      mapView.activeMarkerId = null;
+      setTargetDetails(null);
+    }
+    updateMapMetrics(mapView.snapshot);
+    clearScanResults("No scan results.");
   }
 
   function setMapLevel(level) {
@@ -1722,8 +1782,8 @@
     const hasSnapshot = Boolean(mapView.snapshot);
     const canRun = hasSnapshot && Boolean(heroState.selectedHeroId) && !scanState.running;
     elements.scanRadius.disabled = !hasSnapshot || scanState.running;
-    elements.scanTargetType.disabled = !hasSnapshot || scanState.running;
     elements.scanButton.disabled = !canRun;
+    renderTargetFilterControl();
   }
 
   function clearScanResults(message) {
@@ -1731,7 +1791,7 @@
     scanState.running = false;
     scanState.heroId = null;
     scanState.radius = null;
-    scanState.targetType = elements.scanTargetType.value || "all";
+    scanState.targetType = scanTargetTypeForFilter(mapView.targetFilter);
     scanState.results = [];
     scanState.resultByTargetId = new Map();
     appendEmpty(elements.scanState, message || "No scan results.");
@@ -1815,7 +1875,7 @@
 
   function runRadiusScan() {
     const radius = parseScanRadius();
-    const targetType = elements.scanTargetType.value || "all";
+    const targetType = scanTargetTypeForFilter(mapView.targetFilter);
     if (!heroState.selectedHeroId) {
       setScanMessage("Select a hero before scanning.");
       return;
@@ -2755,10 +2815,6 @@
     updateScanControls();
   });
 
-  elements.scanTargetType.addEventListener("change", () => {
-    updateScanControls();
-  });
-
   elements.canvas.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) {
       return;
@@ -2922,6 +2978,7 @@
   elements.showHiddenToggle.checked = mapView.showHiddenNeutrals;
   elements.showHiddenToggle.disabled = true;
   elements.routeOverlayToggle.checked = mapView.showRouteOverlay;
+  renderTargetFilterControl();
   syncHeroRankingControls();
   elements.targetContextMenu.addEventListener("click", (event) => {
     event.stopPropagation();

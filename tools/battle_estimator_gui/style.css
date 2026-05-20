@@ -654,7 +654,7 @@ select:disabled {
 
 .scan-controls {
   display: grid;
-  grid-template-columns: 90px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   margin-bottom: 10px;
 }

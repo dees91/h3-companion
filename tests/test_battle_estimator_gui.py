@@ -246,6 +246,9 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "showFollowLatestDialog",
             "showHiddenToggle",
             "routeOverlayToggle",
+            "targetFilterControl",
+            "targetFilter",
+            "scanTargetTypeForFilter",
             "targetContextMenu",
             "hiddenTargetInFlight",
             "hidden_hero_target_ids",
@@ -310,18 +313,16 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="show-removed-toggle"',
             'id="show-hidden-toggle"',
             'id="show-route-overlay-toggle"',
+            'id="target-filter-control"',
             'Route Overlay',
             'id="map-stage"',
             'id="map-tooltip"',
             'id="target-context-menu"',
             'id="scan-radius"',
-            'id="scan-target-type"',
             'id="scan-button"',
-            'value="all"',
-            'value="neutral"',
-            'value="hero"',
         ):
             self.assertIn(expected, index_html)
+        self.assertNotIn('id="scan-target-type"', index_html)
         for expected in (
             ".chip-button",
             ".hero-item",
@@ -539,6 +540,16 @@ global.fetch = (path, options = {{}}) => {{
       hidden: requestPayload.hidden,
       hidden_neutral_target_ids: [],
       hidden_hero_target_ids: requestPayload.hidden ? [requestPayload.target_id] : []
+    }};
+  }} else if (path === "/api/scan-radius") {{
+    const requestPayload = JSON.parse(options.body || "{{}}");
+    payload = {{
+      hero_id: requestPayload.hero_id,
+      radius: requestPayload.radius,
+      target_type: requestPayload.target_type,
+      include_removed: false,
+      simulations: 1000,
+      results: []
     }};
   }}
   return Promise.resolve({{
@@ -833,6 +844,24 @@ assert.deepStrictEqual(
   ["town:0", "town:random", "portal:100", "portal:110", "portal:120", "hero:0", "neutral:0", "neutral:removed"]
 );
 assert.strictEqual(level0WithRemoved.find((marker) => marker.id === "neutral:removed").removed, true);
+const level0HeroesOnly = helpers.buildMarkerCache(markerSnapshot, 10, 0, false, false, "heroes");
+assert.deepStrictEqual(level0HeroesOnly.map((marker) => marker.id), [
+  "town:0",
+  "town:random",
+  "portal:100",
+  "portal:110",
+  "portal:120",
+  "hero:0"
+]);
+const level0MonstersOnly = helpers.buildMarkerCache(markerSnapshot, 10, 0, false, false, "monsters");
+assert.deepStrictEqual(level0MonstersOnly.map((marker) => marker.id), [
+  "town:0",
+  "town:random",
+  "portal:100",
+  "portal:110",
+  "portal:120",
+  "neutral:0"
+]);
 const hiddenHeroSnapshot = {{
   ...markerSnapshot,
   show_hidden: false,
@@ -857,6 +886,7 @@ assert.ok(!helpers.buildMarkerCache({{ ...hiddenHeroSnapshot, show_hidden: true 
 const level0WithHiddenHero = helpers.buildMarkerCache({{ ...hiddenHeroSnapshot, show_hidden: true }}, 10, 0, false);
 assert.strictEqual(level0WithHiddenHero.find((marker) => marker.id === "hero:hidden").hidden, true);
 assert.strictEqual(helpers.buildMarkerCache(hiddenHeroSnapshot, 10, 0, false, true).find((marker) => marker.id === "hero:hidden").hidden, true);
+assert.ok(!helpers.buildMarkerCache(hiddenHeroSnapshot, 10, 0, false, true, "monsters").some((marker) => marker.id === "hero:hidden"));
 const level1Markers = helpers.buildMarkerCache(markerSnapshot, 10, 1, false);
 assert.deepStrictEqual(level1Markers.map((marker) => marker.id), [
   "town:1",
@@ -1103,6 +1133,62 @@ const portalFillsAfterRender = drawOperations.filter((operation) => (
 ));
 assert.ok(portalFillsAfterRender.length >= 1);
 const renderedView = helpers.currentMapViewForTest();
+function targetFilterButtons() {{
+  return elements["target-filter-control"].children;
+}}
+function scanRequestsSince(startIndex) {{
+  return fetchRequests
+    .slice(startIndex)
+    .filter((request) => request.path === "/api/scan-radius");
+}}
+assert.deepStrictEqual(
+  targetFilterButtons().map((button) => button.textContent),
+  ["Both", "Heroes", "Monsters"]
+);
+assert.strictEqual(targetFilterButtons()[0].className, "active");
+const filterNeutral = renderedView.markers.find((marker) => marker.id === "neutral:0");
+const filterNeutralScreen = helpers.worldToScreen(filterNeutral.world, renderedView);
+elements["battle-map"].dispatch("contextmenu", {{
+  clientX: filterNeutralScreen.x,
+  clientY: filterNeutralScreen.y,
+  preventDefault() {{}}
+}});
+assert.strictEqual(helpers.currentMapViewForTest().activeMarkerId, "neutral:0");
+targetFilterButtons()[1].dispatch("click", {{}});
+const heroesFilterView = helpers.currentMapViewForTest();
+assert.strictEqual(heroesFilterView.activeMarkerId, null);
+assert.ok(!heroesFilterView.markers.some((marker) => marker.type === "neutral"));
+assert.ok(heroesFilterView.markers.some((marker) => marker.type === "hero"));
+assert.ok(elements["target-state"].textContent.includes("No target selected"));
+elements["scan-radius"].value = "3";
+let scanRequestStart = fetchRequests.length;
+elements["scan-button"].dispatch("click", {{}});
+assert.ok(targetFilterButtons().every((button) => button.disabled));
+await flushPromises();
+let scanRequests = scanRequestsSince(scanRequestStart);
+assert.strictEqual(scanRequests.length, 1);
+assert.strictEqual(JSON.parse(scanRequests[0].options.body).target_type, "hero");
+assert.ok(targetFilterButtons().every((button) => !button.disabled));
+targetFilterButtons()[2].dispatch("click", {{}});
+const monstersFilterView = helpers.currentMapViewForTest();
+assert.ok(monstersFilterView.markers.some((marker) => marker.type === "neutral"));
+assert.ok(!monstersFilterView.markers.some((marker) => marker.type === "hero"));
+scanRequestStart = fetchRequests.length;
+elements["scan-button"].dispatch("click", {{}});
+await flushPromises();
+scanRequests = scanRequestsSince(scanRequestStart);
+assert.strictEqual(scanRequests.length, 1);
+assert.strictEqual(JSON.parse(scanRequests[0].options.body).target_type, "neutral");
+targetFilterButtons()[0].dispatch("click", {{}});
+const bothFilterView = helpers.currentMapViewForTest();
+assert.ok(bothFilterView.markers.some((marker) => marker.type === "neutral"));
+assert.ok(bothFilterView.markers.some((marker) => marker.type === "hero"));
+scanRequestStart = fetchRequests.length;
+elements["scan-button"].dispatch("click", {{}});
+await flushPromises();
+scanRequests = scanRequestsSince(scanRequestStart);
+assert.strictEqual(scanRequests.length, 1);
+assert.strictEqual(JSON.parse(scanRequests[0].options.body).target_type, "all");
 const renderedTown = renderedView.markers.find((marker) => marker.id === "town:0");
 const renderedTownScreen = helpers.worldToScreen(renderedTown.world, renderedView);
 const fetchCallsBeforeTownClick = fetchCalls;

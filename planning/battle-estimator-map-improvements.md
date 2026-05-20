@@ -706,17 +706,34 @@ hero and hiding/restoring that hero.
 target filter that controls both visible target markers and scan target type.
 
 **Acceptance criteria:**
-- [ ] The default filter is `both`.
-- [ ] `both` shows heroes and neutral monsters and scans both target types.
-- [ ] `heroes` shows heroes and scans only hero targets.
-- [ ] `monsters` shows neutral monsters and scans only neutral targets.
-- [ ] The old scan target type UI is removed or hidden.
-- [ ] Hidden targets are still excluded unless show-hidden is enabled.
+- [x] The default filter is `both`.
+- [x] `both` shows heroes and neutral monsters and scans both target types.
+- [x] `heroes` shows heroes and scans only hero targets.
+- [x] `monsters` shows neutral monsters and scans only neutral targets.
+- [x] The old scan target type UI is removed or hidden.
+- [x] Hidden targets are still excluded unless show-hidden is enabled.
 
 **Verification:**
-- [ ] Add or update GUI state and scan request tests.
-- [ ] Manual GUI check all three filter modes.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui tests.test_nearby_scan`.
+- [x] Add or update GUI state and scan request tests.
+- [x] Manual GUI check all three filter modes.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui tests.test_nearby_scan`.
+
+**Completion Notes (2026-05-20):**
+- Replaced the scan target type select with a single map toolbar target filter:
+  `Both`, `Heroes`, and `Monsters`.
+- The filter controls hero/neutral marker visibility and maps scan requests to
+  backend `target_type` values `all`, `hero`, and `neutral`; towns and portals
+  remain visible as map context markers.
+- Filter changes clear stale hover/context/active target state and clear prior
+  scan results so old scan rows do not survive a mode change.
+- Hidden marker visibility still follows show-hidden; scan omission of hidden
+  targets remains the Task 10 backend behavior.
+- Manual GUI check: started a local fixture GUI on port 8771, used headless
+  Chrome/CDP to click all three filters, confirmed hero/neutral marker
+  visibility, and verified scan payloads `all`, `hero`, and `neutral`.
+- Verification: `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest tests.test_nearby_scan`; `python3 -m unittest`;
+  `git diff --check`; subagent code review found no blocking issues.
 
 **Dependencies:** None
 
@@ -952,7 +969,7 @@ After Tasks 9 and 17:
 | 9 | End-To-End Map Verification | done | 4, 6, 8 |
 | 10 | Add Hidden Hero Target State | done | - |
 | 11 | Add Hero Marker Context Actions | done | 10 |
-| 12 | Merge Map Filter And Scan Target Type | todo | - |
+| 12 | Merge Map Filter And Scan Target Type | done | - |
 | 13 | Add Scan Sort Modes | todo | - |
 | 14 | Improve Scan Result Hover And Click Behavior | todo | - |
 | 15 | Auto-Refresh Scan After Hero Selection | blocked | 12, 13 |

@@ -78,6 +78,7 @@
           </div>
           <div class="toolbar-metrics" aria-label="Map metrics">
             <div id="map-level-control" class="segmented-control" role="group" aria-label="Map level"></div>
+            <div id="target-filter-control" class="segmented-control" role="group" aria-label="Target filter"></div>
             <label class="toggle-control" for="show-removed-toggle">
               <input id="show-removed-toggle" type="checkbox">
               <span>Show Removed</span>
@@ -121,14 +122,6 @@
             <label for="scan-radius">
               Radius
               <input id="scan-radius" type="number" value="10" min="0" max="200" disabled>
-            </label>
-            <label for="scan-target-type">
-              Target type
-              <select id="scan-target-type" disabled>
-                <option value="all">All</option>
-                <option value="neutral">Neutral</option>
-                <option value="hero">Hero</option>
-              </select>
             </label>
             <button id="scan-button" class="secondary-button" type="button" disabled>Run Scan</button>
           </div>
