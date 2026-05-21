@@ -452,7 +452,7 @@ CLI dispatch should wait until the parser contracts are stable.
 **Completion Notes:**
 - Added an autosave modeling limitation note to save-based simulation output: hero stats, skills, artifacts, spells, morale, and luck are not modeled; Phase 1 uses creature stacks only.
 - The note prints next to selected folder/save context only when `run_analysis()` receives a save context, so manual army mode remains unchanged.
-- Existing autosave paths continue to label the player army with the selected hero name and the enemy army as `Wrog`.
+- Existing autosave paths continue to label the player army with the selected hero name and the enemy army as `Enemy`.
 - Added CLI assertions for selected folder, selected save, hero label, enemy label, limitation note, and absence of the note in manual mode.
 - Verification passed: `python3 -m unittest tests.test_battle_estimator_cli tests.test_h3_save_parser`; `python3 -m unittest discover`; `python3 tools/battle_estimator.py --help`.
 

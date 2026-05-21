@@ -433,7 +433,7 @@ identity model.
   `random_maps` discovery, timestamp/template matching, and clear
   `--map-file` hints on selection failures.
 - Added `--map-file` to `tools/battle_estimator.py`; autosave CLI flows now
-  resolve and print `Plik mapy` when available, and warn clearly when
+  resolve and print `Map file` when available, and warn clearly when
   auto-detection fails.
 - Verified with `python3 -m unittest tests.test_h3_map_parser`,
   `python3 -m unittest tests.test_battle_estimator_cli`,

@@ -267,7 +267,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(str(save_file), result.stdout)
-        self.assertIn(f"Plik mapy:     {map_path}", result.stdout)
+        self.assertIn(f"Map file:     {map_path}", result.stdout)
 
     def test_autosave_mode_auto_resolves_random_map(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -299,7 +299,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             ])
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"Plik mapy:     {map_path}", result.stdout)
+        self.assertIn(f"Map file:     {map_path}", result.stdout)
 
     def test_autosave_mode_reports_bad_explicit_map_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -320,7 +320,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             ])
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("Nie mozna wybrac mapy H3M", result.stderr)
+        self.assertIn("Cannot select H3M map", result.stderr)
         self.assertIn("map file is not a file", result.stderr)
 
     def test_autosave_mode_reports_auto_map_detection_failure(self):
@@ -416,13 +416,13 @@ class BattleEstimatorCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("H3 Nearby Scan", result.stdout)
-        self.assertIn(f"Plik zapisu:     {save_path}", result.stdout)
-        self.assertIn(f"Plik mapy:       {map_path}", result.stdout)
-        self.assertIn("Bohater:         Isra (39,69,1)", result.stdout)
-        self.assertIn("Promien skanu:   2", result.stdout)
+        self.assertIn(f"Save file:     {save_path}", result.stdout)
+        self.assertIn(f"Map file:       {map_path}", result.stdout)
+        self.assertIn("Hero:         Isra (39,69,1)", result.stdout)
+        self.assertIn("Scan radius:   2", result.stdout)
         self.assertIn("Target filter:   neutral", result.stdout)
         self.assertIn("Include removed: yes", result.stdout)
-        self.assertIn("Symulacje:       1", result.stdout)
+        self.assertIn("Simulations:       1", result.stdout)
         self.assertIn("neutral", result.stdout)
         self.assertIn("(39,70,1)", result.stdout)
         self.assertIn("37x Gnoll", result.stdout)
@@ -496,7 +496,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             ])
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Symulacje:       500", result.stdout)
+        self.assertIn("Simulations:       500", result.stdout)
         self.assertIn("No nearby targets found.", result.stdout)
 
     def test_scan_nearby_prints_unsupported_note_for_unknown_neutral(self):
@@ -543,9 +543,9 @@ class BattleEstimatorCliTests(unittest.TestCase):
         result = _run_cli(["10 pikeman", "vs", "20 boar", "-n", "1"])
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Gracz: 10x Pikeman", result.stdout)
-        self.assertIn("Wrog: 20x Boar", result.stdout)
-        self.assertNotIn("Folder zapisu:", result.stdout)
+        self.assertIn("Player: 10x Pikeman", result.stdout)
+        self.assertIn("Enemy: 20x Boar", result.stdout)
+        self.assertNotIn("Save folder:", result.stdout)
         self.assertNotIn("hero stats, skills, artifacts", result.stdout)
 
     def test_short_hero_form_loads_from_explicit_autosave_dir(self):
@@ -567,8 +567,8 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn(str(game_dir), result.stdout)
         self.assertIn("415.GM2", result.stdout)
         self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
-        self.assertIn("Wrog: 1x Pikeman", result.stdout)
-        self.assertIn("Plik zapisu:", result.stdout)
+        self.assertIn("Enemy: 1x Pikeman", result.stdout)
+        self.assertIn("Save file:", result.stdout)
         self.assertIn("hero stats, skills, artifacts", result.stdout)
 
     def test_explicit_hero_flag_accepts_empty_left_side(self):
@@ -838,8 +838,8 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("Isra", result.stdout)
         self.assertIn("731x Skeleton Warrior", result.stdout)
         self.assertNotIn("Tiny", result.stdout)
-        self.assertNotIn("SYMULACJA MONTE CARLO", result.stdout)
-        self.assertNotIn("ANALIZA STATYCZNA", result.stdout)
+        self.assertNotIn("MONTE CARLO SIMULATION", result.stdout)
+        self.assertNotIn("STATIC ANALYSIS", result.stdout)
 
     def test_list_save_heroes_all_heroes_includes_filtered_small_armies(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -964,7 +964,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("415.GM2", result.stdout)
         self.assertIn("  1 Isra", result.stdout)
         self.assertIn("Enemy army:", result.stdout)
-        self.assertIn("SYMULACJA MONTE CARLO", result.stdout)
+        self.assertIn("MONTE CARLO SIMULATION", result.stdout)
         self.assertIn("Isra: 50x Skeleton Warrior", result.stdout)
         self.assertEqual(saved_config["last_hero"], "Isra")
 

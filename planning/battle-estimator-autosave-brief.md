@@ -415,8 +415,8 @@ The list shows:
 Save-based simulation output prints the selected source context:
 
 ```text
-Folder zapisu: 2026.04.26 20;45 Diamond
-Plik zapisu: 417.GM2
+Save folder: 2026.04.26 20;45 Diamond
+Save file: 417.GM2
 Hero: Isra
 ```
 
@@ -424,7 +424,7 @@ Use the hero name as the player army label:
 
 ```text
 Isra: 731x Skeleton Warrior, 181x Zombie, ...
-Wrog: horde Ancient Behemoth
+Enemy: horde Ancient Behemoth
 ```
 
 It also includes a concise limitation note:

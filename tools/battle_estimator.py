@@ -2,10 +2,10 @@
 """
 H3 Battle Estimator
 =====================
-Symulator bitwy Monte Carlo oparty na formule obrażeń z VCMI
-(lib/battle/DamageCalculator.cpp) z kompletną bazą ~150 stworzeń z Heroes III.
+Monte Carlo battle simulator based on the VCMI damage formula
+(lib/battle/DamageCalculator.cpp) with a complete database of ~150 Heroes III creatures.
 
-Użycie:
+Usage:
     python3 tools/battle_estimator.py                           # wizard
     python3 tools/battle_estimator.py Isra vs "horde of ancient behemoth"
     python3 tools/battle_estimator.py --hero Isra --save 415 vs "30 champion"
@@ -15,7 +15,7 @@ Użycie:
     python3 tools/battle_estimator.py --show-config
     python3 tools/battle_estimator.py --clear-autosave-dir
     python3 tools/battle_estimator.py "10 pikeman" vs "20 boar"  # manual mode
-    python3 tools/battle_estimator.py --list castle              # stworzenia Castle
+    python3 tools/battle_estimator.py --list castle              # Castle creatures
 """
 
 import argparse
@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover - direct script execution fallback.
 
 
 # ---------------------------------------------------------------------------
-# Stałe z VCMI: config/gameConfig.json (linie 600-606)
+# Constants from VCMI: config/gameConfig.json (lines 600-606)
 # ---------------------------------------------------------------------------
 ATTACK_POINT_DAMAGE_FACTOR = 0.05
 ATTACK_POINT_DAMAGE_FACTOR_CAP = 4.0
@@ -50,7 +50,7 @@ AUTOSAVE_MODELING_LIMITATION = (
 
 
 # ---------------------------------------------------------------------------
-# Progi ilościowe z CCreatureHandler.cpp (linie 237-257)
+# Quantity thresholds from CCreatureHandler.cpp (lines 237-257)
 # ---------------------------------------------------------------------------
 QUANTITY_DESCRIPTORS = {
     "few":     (1, 4),
@@ -66,7 +66,7 @@ QUANTITY_DESCRIPTORS = {
 
 
 # ---------------------------------------------------------------------------
-# Definicja stworzenia (odpowiednik CCreature w VCMI)
+# Creature definition (VCMI CCreature equivalent)
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Creature:
@@ -85,8 +85,8 @@ class Creature:
     no_retaliation: bool = False   # attacker causes no enemy retaliation
     double_strike: bool = False
     flying: bool = False
-    # NOTE: zdolności jak life drain, regeneration, petrify, breath attack
-    # nie są modelowane w uproszczonej symulacji
+    # NOTE: abilities such as life drain, regeneration, petrify, and breath attack
+    # are not modeled in the simplified simulation
 
     @property
     def shooter(self) -> bool:
@@ -94,8 +94,8 @@ class Creature:
 
 
 # ---------------------------------------------------------------------------
-# Kompletna baza stworzeń — kanoniczne wartości z Heroes III (CRTRAITS.TXT)
-# Źródło: lib/CCreatureHandler.cpp::loadLegacyData(), config/creatures/*.json
+# Complete creature database - canonical Heroes III values (CRTRAITS.TXT)
+# Source: lib/CCreatureHandler.cpp::loadLegacyData(), config/creatures/*.json
 # ---------------------------------------------------------------------------
 CREATURES = [
     # ===== CASTLE (config/creatures/castle.json) =====
@@ -260,26 +260,26 @@ CREATURES = [
     Creature("Azure Dragon",      "Neutral",    7, 50, 50, 70, 80,1000, 19,78845, flying=True),
 ]
 
-# Budujemy indeks do szybkiego wyszukiwania
+# Build an index for fast lookup
 _CREATURE_INDEX = {}
 for _c in CREATURES:
     key = _c.name.lower()
     _CREATURE_INDEX[key] = _c
-    # aliasy bez spacji/myślników
+    # aliases without spaces/hyphens
     _CREATURE_INDEX[key.replace(" ", "")] = _c
     _CREATURE_INDEX[key.replace(" ", "_")] = _c
     _CREATURE_INDEX[key.replace(" ", "-")] = _c
 
 
 def find_creature(query: str) -> Creature:
-    """Wyszukuje stworzenie po nazwie (case-insensitive, fuzzy match)."""
+    """Find a creature by name (case-insensitive, fuzzy match)."""
     q = query.strip().lower()
 
-    # 1. Dokładne dopasowanie
+    # 1. Exact match
     if q in _CREATURE_INDEX:
         return _CREATURE_INDEX[q]
 
-    # 2. Dopasowanie bez spacji/myślników
+    # 2. Match without spaces/hyphens
     q_clean = q.replace(" ", "").replace("-", "").replace("_", "")
     for key, c in _CREATURE_INDEX.items():
         if key.replace(" ", "").replace("-", "").replace("_", "") == q_clean:
@@ -290,12 +290,12 @@ def find_creature(query: str) -> Creature:
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
-        # Wybierz unikalne (deduplikacja bo aliasy)
+        # Keep unique matches (aliases create duplicates)
         unique = list({c.name: c for c in matches}.values())
         if len(unique) == 1:
             return unique[0]
         names = ", ".join(c.name for c in unique[:5])
-        print(f"  Niejednoznaczne: '{query}' pasuje do: {names}", file=sys.stderr)
+        print(f"  Ambiguous: '{query}' matches: {names}", file=sys.stderr)
         sys.exit(1)
 
     # 4. Substring match
@@ -305,21 +305,21 @@ def find_creature(query: str) -> Creature:
         return unique[0]
     if len(unique) > 1:
         names = ", ".join(c.name for c in unique[:5])
-        print(f"  Niejednoznaczne: '{query}' pasuje do: {names}", file=sys.stderr)
+        print(f"  Ambiguous: '{query}' matches: {names}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"  Nie znaleziono stworzenia: '{query}'", file=sys.stderr)
-    print(f"  Użyj --list żeby zobaczyć dostępne stworzenia.", file=sys.stderr)
+    print(f"  Creature not found: '{query}'", file=sys.stderr)
+    print(f"  Use --list to see available creatures.", file=sys.stderr)
     sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
-# Parsowanie opisu armii: "10 pikeman, 2 griffin" lub "lot of boar"
+# Army description parsing: "10 pikeman, 2 griffin" or "lot of boar"
 # ---------------------------------------------------------------------------
 def parse_army(text: str) -> List[Tuple[Creature, int, Optional[Tuple[int, int]]]]:
     """
-    Parsuje opis armii. Zwraca listę (Creature, count, range_or_None).
-    count = -1 gdy podano deskryptor ilościowy (range jest ustawiony).
+    Parse an army description. Returns (Creature, count, range_or_None) items.
+    count = -1 when a quantity descriptor was provided (range is set).
     """
     stacks = []
     parts = re.split(r',\s*', text.strip())
@@ -329,7 +329,7 @@ def parse_army(text: str) -> List[Tuple[Creature, int, Optional[Tuple[int, int]]
         if not part:
             continue
 
-        # Próba: "lot of boar", "horde of skeleton", "few archangel"
+        # Try: "lot of boar", "horde of skeleton", "few archangel"
         qty_match = re.match(
             r'(few|several|pack|lots?|horde|throng|swarm|zounds|legion)\s+(?:of\s+)?(.+)',
             part, re.IGNORECASE
@@ -345,7 +345,7 @@ def parse_army(text: str) -> List[Tuple[Creature, int, Optional[Tuple[int, int]]
             stacks.append((creature, mid, (lo, hi)))
             continue
 
-        # Próba: "35 boar", "10 pikeman"
+        # Try: "35 boar", "10 pikeman"
         num_match = re.match(r'(\d+)\s+(.+)', part)
         if num_match:
             count = int(num_match.group(1))
@@ -354,15 +354,15 @@ def parse_army(text: str) -> List[Tuple[Creature, int, Optional[Tuple[int, int]]
             stacks.append((creature, count, None))
             continue
 
-        print(f"  Nie rozumiem: '{part}'", file=sys.stderr)
-        print(f"  Format: '10 pikeman' lub 'lot of boar'", file=sys.stderr)
+        print(f"  Could not parse: '{part}'", file=sys.stderr)
+        print(f"  Format: '10 pikeman' or 'lot of boar'", file=sys.stderr)
         sys.exit(1)
 
     return stacks
 
 
 # ---------------------------------------------------------------------------
-# Stack — stos stworzeń w walce (odpowiednik CStack w VCMI)
+# Stack - creature stack in battle (VCMI CStack equivalent)
 # ---------------------------------------------------------------------------
 @dataclass
 class Stack:
@@ -458,7 +458,7 @@ class NearbyScanError(ValueError):
 
 
 # ---------------------------------------------------------------------------
-# Formuła obrażeń z DamageCalculator.cpp (linie 556-593)
+# Damage formula from DamageCalculator.cpp (lines 556-593)
 # ---------------------------------------------------------------------------
 def calc_damage_factor(att: int, dfn: int) -> float:
     diff = att - dfn
@@ -478,7 +478,7 @@ def calc_damage(attacker: Stack, defender: Stack, shooting: bool = False) -> int
     factor = calc_damage_factor(attacker.creature.attack,
                                 defender.creature.defense)
 
-    # Kara 50% za strzał w zwarciu (DamageCalculator.cpp:386-389)
+    # 50% penalty for shooting in melee (DamageCalculator.cpp:386-389)
     if attacker.creature.shooter and not shooting:
         factor *= 0.5
 
@@ -502,7 +502,7 @@ def apply_damage(target: Stack, damage: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Symulacja jednej bitwy
+# Single battle simulation
 # ---------------------------------------------------------------------------
 def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
                     verbose: bool = False) -> bool:
@@ -517,9 +517,9 @@ def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
         alive_stacks.sort(key=lambda s: (-s.creature.speed, s.side))
 
         if verbose and turn <= 3:
-            print(f"\n--- Tura {turn} ---")
+            print(f"\n--- Turn {turn} ---")
             for s in alive_stacks:
-                tag = "gracz" if s.side == 0 else "wrog"
+                tag = "player" if s.side == 0 else "enemy"
                 print(f"  {s.creature.name} x{s.count} "
                       f"(HP: {s.total_hp}, {tag})")
 
@@ -533,16 +533,16 @@ def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
             if not enemies:
                 break
 
-            # Strategia wyboru celu:
-            # - Strzelcy atakują cel z najniższym łącznym HP (eliminacja)
-            # - Melee atakuje cel z najmniejszą liczbą (eliminacja stosów)
+            # Target selection strategy:
+            # - Shooters attack the target with the lowest total HP (elimination)
+            # - Melee attacks the smallest stack (stack elimination)
             target = min(enemies, key=lambda s: s.total_hp)
 
-            # Decyzja: strzał czy melee
+            # Decision: ranged shot or melee
             can_shoot = (active.creature.shooter and active.shots_left > 0)
-            shooting = can_shoot  # uproszczenie: strzelec zawsze strzela
+            shooting = can_shoot  # simplification: a shooter always shoots
 
-            # --- Atak ---
+            # --- Attack ---
             dmg = calc_damage(active, target, shooting)
             kills = apply_damage(target, dmg)
             if shooting:
@@ -552,7 +552,7 @@ def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
                 mode = ">>>" if shooting else ">>"
                 print(f"  {mode} {active.creature.name} x{active.count} -> "
                       f"{target.creature.name}: {dmg} dmg, {kills} kills "
-                      f"(zostalo: {target.count})")
+                      f"(remaining: {target.count})")
 
             # --- Double strike (Crusader, Dread Knight, etc.) ---
             if active.creature.double_strike and target.alive:
@@ -560,7 +560,7 @@ def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
                 kills2 = apply_damage(target, dmg2)
                 if verbose and turn <= 3:
                     print(f"      (double) +{dmg2} dmg, +{kills2} kills "
-                          f"(zostalo: {target.count})")
+                          f"(remaining: {target.count})")
 
             # --- Kontratak ---
             if (target.alive
@@ -573,7 +573,7 @@ def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
                 if verbose and turn <= 3:
                     print(f"     << kontra {target.creature.name}: "
                           f"{ret_dmg} dmg, {ret_kills} kills "
-                          f"(zostalo: {active.count})")
+                          f"(remaining: {active.count})")
 
         player_alive = any(s.alive for s in player_stacks)
         enemy_alive = any(s.alive for s in enemy_stacks)
@@ -595,7 +595,7 @@ def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
 
 
 # ---------------------------------------------------------------------------
-# Silnik symulacji
+# Simulation engine
 # ---------------------------------------------------------------------------
 def run_simulations(player_army: List[Tuple[Creature, int]],
                     enemy_army: List[Tuple[Creature, int]],
@@ -610,7 +610,7 @@ def run_simulations(player_army: List[Tuple[Creature, int]],
 
 
 # ---------------------------------------------------------------------------
-# Wyświetlanie
+# Display
 # ---------------------------------------------------------------------------
 def print_army(label: str, army: List[Tuple[Creature, int]]):
     parts = [f"{n}x {c.name}" for c, n in army]
@@ -893,12 +893,12 @@ def print_static_analysis(player: List[Tuple[Creature, int]],
     e_val = ai_value_total(enemy)
     ratio = p_val / e_val if e_val > 0 else float('inf')
 
-    print(f"\n  AIValue gracza:  {p_val:>8}")
-    print(f"  AIValue wroga:   {e_val:>8}")
-    print(f"  Stosunek:        {ratio:>8.2f}x "
-          f"({'przewaga gracza' if ratio > 1 else 'PRZEWAGA WROGA'})")
-    print(f"  HP gracza:       {hp_total(player):>8}")
-    print(f"  HP wroga:        {hp_total(enemy):>8}")
+    print(f"\n  Player AIValue:  {p_val:>8}")
+    print(f"  Enemy AIValue:   {e_val:>8}")
+    print(f"  Ratio:        {ratio:>8.2f}x "
+          f"({'player advantage' if ratio > 1 else 'ENEMY ADVANTAGE'})")
+    print(f"  Player HP:       {hp_total(player):>8}")
+    print(f"  Enemy HP:        {hp_total(enemy):>8}")
 
 
 def list_creatures(faction_filter: Optional[str] = None):
@@ -910,23 +910,23 @@ def list_creatures(faction_filter: Optional[str] = None):
         if faction_filter and faction_filter.lower() not in faction.lower():
             continue
         print(f"\n  === {faction.upper()} ===")
-        print(f"  {'Nazwa':<22} {'Lv':>2} {'Att':>3} {'Def':>3} "
-              f"{'Dmg':>7} {'HP':>4} {'Spd':>3} {'AIVal':>6}  Cechy")
-        print(f"  {'─'*22} {'─'*2} {'─'*3} {'─'*3} "
-              f"{'─'*7} {'─'*4} {'─'*3} {'─'*6}  {'─'*20}")
+        print(f"  {'Name':<22} {'Lv':>2} {'Att':>3} {'Def':>3} "
+              f"{'Dmg':>7} {'HP':>4} {'Spd':>3} {'AIVal':>6}  Traits")
+        print(f"  {'-'*22} {'-'*2} {'-'*3} {'-'*3} "
+              f"{'-'*7} {'-'*4} {'-'*3} {'-'*6}  {'-'*20}")
         for c in creatures:
             traits = []
             if c.shooter:
-                traits.append(f"strzelec({c.shots})")
+                traits.append(f"shooter({c.shots})")
             if c.flying:
-                traits.append("latajacy")
+                traits.append("flying")
             if c.no_retaliation:
-                traits.append("bez-kontr")
+                traits.append("no-retal")
             if c.double_strike:
-                traits.append("2x-atak")
+                traits.append("double")
             if c.retaliations > 1:
                 r = "inf" if c.retaliations >= 99 else str(c.retaliations)
-                traits.append(f"kontr={r}")
+                traits.append(f"retal={r}")
             trait_str = ", ".join(traits) if traits else ""
             print(f"  {c.name:<22} {c.level:>2} {c.attack:>3} {c.defense:>3} "
                   f"{c.min_damage:>3}-{c.max_damage:<3} {c.hit_points:>4} "
@@ -1097,46 +1097,46 @@ def _print_parsed_army(label: str, parsed: List[Tuple[Creature, int, Optional[Tu
 
 def _print_cli_error(exc: Exception):
     if isinstance(exc, NearbyScanError):
-        print(f"  Nie mozna wykonac skanu: {exc}", file=sys.stderr)
+        print(f"  Cannot run scan: {exc}", file=sys.stderr)
         return
 
     if isinstance(exc, h3_save_parser.HeroSelectionError):
         print(
-            f"  Nie mozna wybrac bohatera '{exc.query}': {exc.reason}",
+            f"  Cannot select hero '{exc.query}': {exc.reason}",
             file=sys.stderr,
         )
         if exc.candidate_names:
             print(
-                f"  Kandydaci: {', '.join(exc.candidate_names)}",
+                f"  Candidates: {', '.join(exc.candidate_names)}",
                 file=sys.stderr,
             )
         return
 
     if isinstance(exc, h3_save_parser.SaveSelectionError):
-        print(f"  Nie mozna wybrac zapisu: {exc}", file=sys.stderr)
+        print(f"  Cannot select save: {exc}", file=sys.stderr)
         return
 
     if isinstance(exc, h3_save_parser.SaveLoadError):
-        print(f"  Nie mozna odczytac zapisu: {exc}", file=sys.stderr)
+        print(f"  Cannot read save: {exc}", file=sys.stderr)
         return
 
     if isinstance(exc, h3_save_parser.ConfigError):
-        print(f"  Nie mozna odczytac konfiguracji: {exc}", file=sys.stderr)
+        print(f"  Cannot read config: {exc}", file=sys.stderr)
         return
 
     if isinstance(exc, h3_map_parser.H3MapSelectionError):
-        print(f"  Nie mozna wybrac mapy H3M: {exc}", file=sys.stderr)
+        print(f"  Cannot select H3M map: {exc}", file=sys.stderr)
         return
 
     if isinstance(exc, h3_map_parser.H3MapLoadError):
-        print(f"  Nie mozna odczytac mapy H3M: {exc}", file=sys.stderr)
+        print(f"  Cannot read H3M map: {exc}", file=sys.stderr)
         return
 
-    print(f"  Blad: {exc}", file=sys.stderr)
+    print(f"  Error: {exc}", file=sys.stderr)
 
 
 def _print_usage_examples():
-    print("\nPrzyklady:")
+    print("\nExamples:")
     print("  python3 tools/battle_estimator.py")
     print("  python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra")
     print('  python3 tools/battle_estimator.py Isra vs "horde of ancient behemoth"')
@@ -1205,10 +1205,10 @@ def _list_save_heroes(args: argparse.Namespace):
 
     print("=" * 65)
     print("  H3 Save Heroes")
-    print(f"  Folder zapisu: {context.game_dir}")
-    print(f"  Plik zapisu:   {context.save_file}")
+    print(f"  Save folder: {context.game_dir}")
+    print(f"  Save file:   {context.save_file}")
     if map_file is not None:
-        print(f"  Plik mapy:     {map_file}")
+        print(f"  Map file:     {map_file}")
     print("  Parser mode: XOR 0x01 hero army scanner")
     print("=" * 65)
 
@@ -1239,10 +1239,10 @@ def _print_wizard_header(
 ):
     print("=" * 65)
     print("  H3 Battle Estimator Wizard")
-    print(f"  Folder zapisu: {context.game_dir}")
-    print(f"  Plik zapisu:   {context.save_file}")
+    print(f"  Save folder: {context.game_dir}")
+    print(f"  Save file:   {context.save_file}")
     if map_file is not None:
-        print(f"  Plik mapy:     {map_file}")
+        print(f"  Map file:     {map_file}")
     print("  Parser mode: XOR 0x01 hero army scanner")
     print("=" * 65)
 
@@ -1416,17 +1416,17 @@ def _print_nearby_scan_results(
 ) -> None:
     print("=" * 65)
     print("  H3 Nearby Scan")
-    print(f"  Folder zapisu:   {context.game_dir}")
-    print(f"  Plik zapisu:     {context.save_file}")
-    print(f"  Plik mapy:       {map_file}")
+    print(f"  Save folder:   {context.game_dir}")
+    print(f"  Save file:     {context.save_file}")
+    print(f"  Map file:       {map_file}")
     print(
-        f"  Bohater:         {selected_hero.hero_name} "
+        f"  Hero:         {selected_hero.hero_name} "
         f"{_format_scan_position(selected_hero.x, selected_hero.y, selected_hero.z)}"
     )
-    print(f"  Promien skanu:   {radius}")
+    print(f"  Scan radius:   {radius}")
     print(f"  Target filter:   {target_type}")
     print(f"  Include removed: {'yes' if include_removed else 'no'}")
-    print(f"  Symulacje:       {simulations}")
+    print(f"  Simulations:       {simulations}")
     print("=" * 65)
 
     if not estimates:
@@ -1533,7 +1533,7 @@ def _run_wizard(args: argparse.Namespace) -> int:
         _analysis_simulations(args),
         args.verbose,
         player_label=selected_hero.hero_name,
-        enemy_label="Wrog",
+        enemy_label="Enemy",
         save_context=context,
         map_file=map_file,
     )
@@ -1545,8 +1545,8 @@ def run_analysis(
     enemy_parsed: List[Tuple[Creature, int, Optional[Tuple[int, int]]]],
     simulations: int,
     verbose: bool,
-    player_label: str = "Gracz",
-    enemy_label: str = "Wrog",
+    player_label: str = "Player",
+    enemy_label: str = "Enemy",
     save_context: Optional[h3_save_parser.SaveContext] = None,
     map_file: Optional[Path] = None,
 ):
@@ -1555,13 +1555,13 @@ def run_analysis(
 
     print("=" * 65)
     print("  H3 Battle Estimator")
-    print("  Formula obrazen: lib/battle/DamageCalculator.cpp")
-    print("  Progi ilosciowe: lib/CCreatureHandler.cpp:237-257")
+    print("  Damage formula: lib/battle/DamageCalculator.cpp")
+    print("  Quantity thresholds: lib/CCreatureHandler.cpp:237-257")
     if save_context is not None:
-        print(f"  Folder zapisu: {save_context.game_dir}")
-        print(f"  Plik zapisu:   {save_context.save_file}")
+        print(f"  Save folder: {save_context.game_dir}")
+        print(f"  Save file:   {save_context.save_file}")
         if map_file is not None:
-            print(f"  Plik mapy:     {map_file}")
+            print(f"  Map file:     {map_file}")
         print(f"  {AUTOSAVE_MODELING_LIMITATION}")
     print("=" * 65)
 
@@ -1573,18 +1573,18 @@ def run_analysis(
         print_army(enemy_label, enemy_army)
 
         print(f"\n{'=' * 65}")
-        print(f"  ANALIZA STATYCZNA")
+        print(f"  STATIC ANALYSIS")
         print(f"{'=' * 65}")
         print_static_analysis(player_army, enemy_army)
 
         print(f"\n{'=' * 65}")
-        print(f"  SYMULACJA MONTE CARLO ({simulations} bitew)")
+        print(f"  MONTE CARLO SIMULATION ({simulations} battles)")
         print(f"{'=' * 65}")
 
         win_pct = run_simulations(player_army, enemy_army,
                                   simulations,
                                   verbose_first=verbose)
-        print(f"\n  Szansa wygranej: {win_pct:.1f}%")
+        print(f"\n  Win chance: {win_pct:.1f}%")
         _print_verdict(win_pct)
         print()
         return
@@ -1604,16 +1604,16 @@ def run_analysis(
         _print_parsed_army(enemy_label, enemy_parsed)
 
         print(f"\n{'=' * 65}")
-        print(f"  ANALIZA STATYCZNA (dla srodka zakresu)")
+        print(f"  STATIC ANALYSIS (range midpoint)")
         print(f"{'=' * 65}")
         print_static_analysis(player_army, enemy_army)
 
         print(f"\n{'=' * 65}")
-        print(f"  SKANOWANIE ZAKRESU {lo}-{hi} "
-              f"({simulations} bitew/punkt)")
+        print(f"  RANGE SCAN {lo}-{hi} "
+              f"({simulations} battles/point)")
         print(f"{'=' * 65}")
-        print(f"\n  {'Ilosc':>6} │ {'Win %':>7} │ Wykres")
-        print(f"  {'─'*6}─┼─{'─'*7}─┼─{'─'*40}")
+        print(f"\n  {'Count':>6} | {'Win %':>7} | Chart")
+        print(f"  {'-'*6}-+-{'-'*7}-+-{'-'*40}")
 
         step = max(1, (hi - lo) // 30)
         scan_points = list(range(lo, hi + 1, step))
@@ -1637,11 +1637,11 @@ def run_analysis(
                 verbose_first=(verbose and count == lo)
             )
             results.append(win_pct)
-            bar = "█" * int(win_pct / 2.5)
-            print(f"  {count:>6} │ {win_pct:>6.1f}% │ {bar}")
+            bar = "#" * int(win_pct / 2.5)
+            print(f"  {count:>6} | {win_pct:>6.1f}% | {bar}")
 
         avg_win = sum(results) / len(results) if results else 0
-        print(f"\n  Srednia szansa w zakresie: {avg_win:.1f}%")
+        print(f"\n  Average win chance over range: {avg_win:.1f}%")
         _print_verdict(avg_win)
         print()
         return
@@ -1651,20 +1651,20 @@ def run_analysis(
 
     print_army(player_label, player_army)
     print_army(enemy_label, enemy_army)
-    print("  (Deskryptory ilosciowe zamienione na wartosci srodkowe)")
+    print("  (Quantity descriptors converted to midpoint values)")
 
     print(f"\n{'=' * 65}")
-    print(f"  ANALIZA STATYCZNA")
+    print(f"  STATIC ANALYSIS")
     print(f"{'=' * 65}")
     print_static_analysis(player_army, enemy_army)
 
     print(f"\n{'=' * 65}")
-    print(f"  SYMULACJA MONTE CARLO ({simulations} bitew)")
+    print(f"  MONTE CARLO SIMULATION ({simulations} battles)")
     print(f"{'=' * 65}")
     win_pct = run_simulations(player_army, enemy_army,
                               simulations,
                               verbose_first=verbose)
-    print(f"\n  Szansa wygranej: {win_pct:.1f}%")
+    print(f"\n  Win chance: {win_pct:.1f}%")
     _print_verdict(win_pct)
     print()
 
@@ -1674,45 +1674,45 @@ def run_analysis(
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="H3 Battle Estimator — Monte Carlo na bazie "
+        description="H3 Battle Estimator - Monte Carlo based on "
                     "DamageCalculator.cpp",
         usage='%(prog)s [options] [HERO vs "enemy army"]'
     )
     parser.add_argument("army_specs", nargs="*",
-                        help='Armie rozdzielone słowem "vs"')
+                        help='Armies separated by the word "vs"')
     parser.add_argument("--list", nargs="?", const="", default=None,
-                        help="Wyświetl listę stworzeń (opcjonalnie: nazwa frakcji)")
+                        help="Show the creature list (optional: faction name)")
     parser.add_argument("--list-save-heroes", action="store_true",
-                        help="Wyświetl bohaterów wykrytych w wybranym zapisie")
+                        help="Show heroes detected in the selected save")
     parser.add_argument("--hero",
-                        help='Nazwa bohatera z zapisu (użyj cudzysłowu dla nazw ze spacją)')
+                        help='Hero name from the save (quote names containing spaces)')
     parser.add_argument("--save",
-                        help="Numer zapisu, np. 415; przy remisie wybiera GM2")
+                        help="Save number, e.g. 415; ties prefer GM2")
     parser.add_argument("--save-file",
-                        help="Jawna ścieżka do pliku .GM1/.GM2")
+                        help="Explicit .GM1/.GM2 save file path")
     parser.add_argument("--map-file",
-                        help="Jawna ścieżka do pliku .h3m")
+                        help="Explicit .h3m map file path")
     parser.add_argument("--scan-nearby", type=int,
-                        help="Skanuj cele w promieniu Manhattan od bohatera")
+                        help="Scan targets within Manhattan radius from the hero")
     parser.add_argument("--target-type", choices=VALID_SCAN_TARGET_TYPES,
                         default="all",
-                        help="Typ celu dla skanu: all, neutral lub hero")
+                        help="Scan target type: all, neutral, or hero")
     parser.add_argument("--include-removed", action="store_true",
-                        help="Pokazuj usunięte neutralne cele w trybie debug")
+                        help="Show removed neutral targets in debug mode")
     parser.add_argument("--autosave-dir",
-                        help="Jawny folder gry z numericznymi zapisami .GM1/.GM2")
+                        help="Explicit game folder with numeric .GM1/.GM2 saves")
     parser.add_argument("--set-autosave-dir",
-                        help="Zapisz domyślny folder gry i zakończ")
+                        help="Save the default game folder and exit")
     parser.add_argument("--clear-autosave-dir", action="store_true",
-                        help="Wyczyść zapisany folder gry i zakończ")
+                        help="Clear the saved game folder and exit")
     parser.add_argument("--show-config", action="store_true",
-                        help="Pokaż konfigurację i zakończ")
+                        help="Show configuration and exit")
     parser.add_argument("--all-heroes", action="store_true",
-                        help="Uwzględnij także małe armie bohaterów przy wyborze")
+                        help="Include small hero armies when selecting")
     parser.add_argument("--simulations", "-n", type=int, default=None,
-                        help="Liczba symulacji (domyślnie: 2000; skan: 500)")
+                        help="Number of simulations (default: 2000; scan: 500)")
     parser.add_argument("--verbose", "-v", action="store_true",
-                        help="Pokaż szczegóły pierwszej symulacji")
+                        help="Show details for the first simulation")
     args = parser.parse_args()
 
     if args.list is not None:
@@ -1830,7 +1830,7 @@ def main():
         _analysis_simulations(args),
         args.verbose,
         player_label=hero_army.hero_name,
-        enemy_label="Wrog",
+        enemy_label="Enemy",
         save_context=save_context,
         map_file=map_file,
     )
@@ -1838,29 +1838,29 @@ def main():
 
 def _print_verdict(win_pct: float):
     print(f"\n{'=' * 65}")
-    print("  WERDYKT")
+    print("  VERDICT")
     print(f"{'=' * 65}")
     if win_pct < 10:
-        print(f"  ZDECYDOWANIE NIE ATAKUJ")
-        print(f"  Armia jest za slaba. Potrzebujesz znacznie wiecej jednostek.")
+        print(f"  STRONGLY DO NOT ATTACK")
+        print(f"  The army is too weak. You need significantly more units.")
     elif win_pct < 30:
-        print(f"  RACZEJ NIE ATAKUJ")
-        print(f"  Masz male szanse ({win_pct:.0f}%), "
-              f"ryzyko utraty armii jest wysokie.")
+        print(f"  PROBABLY DO NOT ATTACK")
+        print(f"  Your odds are low ({win_pct:.0f}%), "
+              f"the risk of losing the army is high.")
     elif win_pct < 50:
-        print(f"  RYZYKOWNE")
-        print(f"  Mozesz wygrac ({win_pct:.0f}%), "
-              f"ale prawdopodobnie stracisz wiekszosc armii.")
+        print(f"  RISKY")
+        print(f"  You can win ({win_pct:.0f}%), "
+              f"but you will probably lose most of the army.")
     elif win_pct < 70:
-        print(f"  MOZNA SPROBOWAC")
-        print(f"  Szanse sa umiarkowane ({win_pct:.0f}%), straty beda znaczne.")
+        print(f"  WORTH TRYING")
+        print(f"  Odds are moderate ({win_pct:.0f}%), losses will be significant.")
     elif win_pct < 90:
-        print(f"  TAK, ATAKUJ")
-        print(f"  Powinienes wygrac ({win_pct:.0f}%), "
-              f"ale licz sie ze stratami.")
+        print(f"  YES, ATTACK")
+        print(f"  You should win ({win_pct:.0f}%), "
+              f"but expect losses.")
     else:
-        print(f"  PEWNA WYGRANA")
-        print(f"  Zdecydowana przewaga ({win_pct:.0f}%). Atakuj smialo!")
+        print(f"  SAFE WIN")
+        print(f"  Strong advantage ({win_pct:.0f}%). Attack confidently!")
 
 
 if __name__ == "__main__":
