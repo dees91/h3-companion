@@ -88,6 +88,13 @@ class, and secondary-skill metadata:
 Some battle-estimator constants and map parsing behavior are also documented
 against VCMI as a mechanics reference. See `NOTICE.md` for details.
 
+## Releases And Compatibility
+
+Release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
+
+Versioning, public compatibility expectations, and the release checklist are
+documented in [docs/release-policy.md](docs/release-policy.md).
+
 ## License
 
 H3 Companion is licensed under the GNU General Public License version 2 or

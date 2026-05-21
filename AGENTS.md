@@ -90,6 +90,62 @@ python3 tools/battle_estimator.py --scan-nearby 10 --hero Isra
 python3 tools/battle_estimator.py --save-file "/path/to/415.GM2" --hero Isra vs "30 champion"
 ```
 
+## Documentation Routing
+
+Agents starting work in this repo should use this section to choose the right
+project docs before changing code or public behavior.
+
+Always start with:
+
+- `README.md` for the public project overview, quick start, supported workflow,
+  screenshots, VCMI data notes, and current user-facing framing.
+- `AGENTS.md` for repository-specific working rules, commands, module context,
+  gotchas, and current implementation assumptions.
+
+For releases, compatibility, and public repo preparation:
+
+- `CHANGELOG.md` for user-facing release notes and compatibility notes.
+- `docs/release-policy.md` for versioning, public compatibility surfaces,
+  deprecation rules, release checklist, and GitHub release note template.
+- `NOTICE.md` and `LICENSE` for VCMI-derived data attribution, GPLv2+ project
+  licensing, and public distribution constraints.
+
+For save parsing, autosaves, and local config/cache behavior:
+
+- `planning/battle-estimator-autosave-brief.md` for the autosave-first workflow
+  and early save parsing context.
+- `planning/phase-1-battle-estimator-autosave-mvp-tasks.md` for autosave MVP
+  implementation decisions and parser test expectations.
+- `tools/battle_estimator_save_parsing_checkpoint.md` for detailed historical
+  save parsing findings and observed GM1/GM2 structures.
+
+For nearby scans, H3M parsing, map overlays, portals, and routing:
+
+- `planning/phase-2-battle-estimator-nearby-scan-tasks.md` for nearby scan and
+  H3M parser implementation context.
+- `planning/battle-estimator-map-improvements.md` for map rendering,
+  terrain/route layers, town/portal parsing, and pathfinding decisions.
+
+For GUI work:
+
+- `planning/phase-3-battle-estimator-gui-tasks.md` for the local browser GUI
+  feature history, API shape, state handling, and UX constraints.
+- `README.md` screenshots for the public-facing expected GUI presentation.
+
+For hero skill recommendations:
+
+- `planning/battle-estimator-hero-skill-recommendations.md` for recommender
+  scope, layered rule model, metadata loading, scoring behavior, and test
+  expectations.
+- `config/battle_estimator/hero_skill_recommendations.json` for the active
+  recommendation rule data.
+
+Planning/history docs are useful context, but current code and tests are the
+source of truth when docs conflict. Update public docs (`README.md`,
+`CHANGELOG.md`, `docs/release-policy.md`, `NOTICE.md`) when behavior,
+compatibility, attribution, or release process changes. Avoid churning old
+planning docs for style-only updates.
+
 ## Git Hygiene
 
 - The user may have other work in progress. Always check `git status --short`.
@@ -312,7 +368,6 @@ Planning/history docs are intentionally kept:
 - `planning/phase-3-battle-estimator-gui-tasks.md`
 - `planning/battle-estimator-map-improvements.md`
 - `planning/battle-estimator-hero-skill-recommendations.md`
-- `planning/hero-isra-skills-and-tips.md`
 - `tools/battle_estimator_save_parsing_checkpoint.md`
 
 Some docs still mention old `tools/...` paths and old repo context. That is
