@@ -20,6 +20,20 @@ maps, saves, or binaries; you need your own legally installed copy of the game.
   route layers.
 - Secondary-skill recommendations for standard heroes.
 
+## Screenshots
+
+Use the map view to turn an autosave into a tactical overview: detected heroes,
+neutral stacks, towns, portals, and route overlays stay visible in one compact
+screen.
+
+![H3 Companion map view with pathfinding route overlay](docs/images/map-pathfinding.png)
+
+Radius scans highlight nearby targets directly on the map and rank them in the
+side panel, so you can quickly decide whether to clear, avoid, or route around a
+fight.
+
+![H3 Companion radius scan with target difficulty results](docs/images/radius-scan.png)
+
 ## Quick Start
 
 Run the local browser GUI:
