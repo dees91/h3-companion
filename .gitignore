@@ -7,3 +7,20 @@ htmlcov/
 .DS_Store
 .venv/
 venv/
+.env
+
+# Local Heroes III game data, saves, maps, and exports.
+*.GM1
+*.GM2
+*.gm1
+*.gm2
+*.H3M
+*.h3m
+*.H3S
+*.h3s
+*.H3C
+*.h3c
+*.sav
+*.zip
+*.7z
+*.rar

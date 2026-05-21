@@ -909,7 +909,7 @@ class H3MapParserContractTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("VCMI Battle Estimator", result.stdout)
+        self.assertIn("H3 Battle Estimator", result.stdout)
         self.assertIn("--map-file", result.stdout)
 
     def test_parse_random_map_stamp_finds_embedded_timestamp(self):

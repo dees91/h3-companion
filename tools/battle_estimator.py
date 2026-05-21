@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VCMI Battle Estimator
+H3 Battle Estimator
 =====================
 Symulator bitwy Monte Carlo oparty na formule obrażeń z VCMI
 (lib/battle/DamageCalculator.cpp) z kompletną bazą ~150 stworzeń z Heroes III.
@@ -1204,7 +1204,7 @@ def _list_save_heroes(args: argparse.Namespace):
     )
 
     print("=" * 65)
-    print("  VCMI Save Heroes")
+    print("  H3 Save Heroes")
     print(f"  Folder zapisu: {context.game_dir}")
     print(f"  Plik zapisu:   {context.save_file}")
     if map_file is not None:
@@ -1238,7 +1238,7 @@ def _print_wizard_header(
     map_file: Optional[Path] = None,
 ):
     print("=" * 65)
-    print("  VCMI Battle Estimator Wizard")
+    print("  H3 Battle Estimator Wizard")
     print(f"  Folder zapisu: {context.game_dir}")
     print(f"  Plik zapisu:   {context.save_file}")
     if map_file is not None:
@@ -1415,7 +1415,7 @@ def _print_nearby_scan_results(
     estimates,
 ) -> None:
     print("=" * 65)
-    print("  VCMI Nearby Scan")
+    print("  H3 Nearby Scan")
     print(f"  Folder zapisu:   {context.game_dir}")
     print(f"  Plik zapisu:     {context.save_file}")
     print(f"  Plik mapy:       {map_file}")
@@ -1554,7 +1554,7 @@ def run_analysis(
                  any(r is not None for _, _, r in enemy_parsed)
 
     print("=" * 65)
-    print("  VCMI Battle Estimator")
+    print("  H3 Battle Estimator")
     print("  Formula obrazen: lib/battle/DamageCalculator.cpp")
     print("  Progi ilosciowe: lib/CCreatureHandler.cpp:237-257")
     if save_context is not None:
@@ -1674,7 +1674,7 @@ def run_analysis(
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="VCMI Battle Estimator — Monte Carlo na bazie "
+        description="H3 Battle Estimator — Monte Carlo na bazie "
                     "DamageCalculator.cpp",
         usage='%(prog)s [options] [HERO vs "enemy army"]'
     )

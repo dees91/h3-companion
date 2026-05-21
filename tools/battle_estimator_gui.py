@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local browser GUI server for the VCMI battle estimator."""
+"""Local browser GUI server for H3 Companion."""
 
 from __future__ import annotations
 
@@ -445,7 +445,7 @@ class PathfindingResult:
 class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
     """HTTP handler for the local read-only GUI."""
 
-    server_version = "VCMIBattleEstimatorGUI/0.1"
+    server_version = "H3CompanionGUI/0.1"
 
     def do_GET(self):
         self._handle_get(send_body=True)
@@ -3140,7 +3140,7 @@ def server_url(server: ThreadingHTTPServer) -> str:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="VCMI Battle Estimator GUI")
+    parser = argparse.ArgumentParser(description="H3 Companion GUI")
     parser.add_argument(
         "--host",
         default=DEFAULT_HOST,

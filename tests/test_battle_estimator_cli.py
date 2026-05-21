@@ -415,7 +415,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             ])
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("VCMI Nearby Scan", result.stdout)
+        self.assertIn("H3 Nearby Scan", result.stdout)
         self.assertIn(f"Plik zapisu:     {save_path}", result.stdout)
         self.assertIn(f"Plik mapy:       {map_path}", result.stdout)
         self.assertIn("Bohater:         Isra (39,69,1)", result.stdout)
@@ -704,7 +704,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             ], home=home)
 
         self.assertEqual(set_result.returncode, 0, set_result.stderr)
-        self.assertNotIn("VCMI Battle Estimator", set_result.stdout)
+        self.assertNotIn("H3 Battle Estimator", set_result.stdout)
         self.assertEqual(run_result.returncode, 0, run_result.stderr)
         self.assertIn("Isra: 731x Skeleton Warrior", run_result.stdout)
 
@@ -716,7 +716,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("Config path:", result.stdout)
         self.assertIn("autosave_dir: (not set)", result.stdout)
         self.assertIn("last_hero: (not set)", result.stdout)
-        self.assertNotIn("VCMI Battle Estimator", result.stdout)
+        self.assertNotIn("H3 Battle Estimator", result.stdout)
 
     def test_clear_autosave_dir_preserves_last_hero_and_does_not_simulate(self):
         with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as temp_home:
@@ -732,7 +732,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("Autosave dir cleared", result.stdout)
         self.assertNotIn("autosave_dir", saved_config)
         self.assertEqual(saved_config["last_hero"], "Isra")
-        self.assertNotIn("VCMI Battle Estimator", result.stdout)
+        self.assertNotIn("H3 Battle Estimator", result.stdout)
 
     def test_missing_hero_error_lists_candidates(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -802,8 +802,8 @@ class BattleEstimatorCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("CASTLE", result.stdout)
-        self.assertNotIn("VCMI Battle Estimator", result.stdout)
-        self.assertNotIn("VCMI Save Heroes", result.stdout)
+        self.assertNotIn("H3 Battle Estimator", result.stdout)
+        self.assertNotIn("H3 Save Heroes", result.stdout)
 
     def test_list_save_heroes_lists_context_and_relevant_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -828,7 +828,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             ])
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("VCMI Save Heroes", result.stdout)
+        self.assertIn("H3 Save Heroes", result.stdout)
         self.assertIn(str(game_dir), result.stdout)
         self.assertIn("415.GM2", result.stdout)
         self.assertIn("Parser mode: XOR 0x01 hero army scanner", result.stdout)
@@ -959,7 +959,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             saved_config = json.loads(config_path.read_text(encoding="utf-8"))
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("VCMI Battle Estimator Wizard", result.stdout)
+        self.assertIn("H3 Battle Estimator Wizard", result.stdout)
         self.assertIn(str(game_dir), result.stdout)
         self.assertIn("415.GM2", result.stdout)
         self.assertIn("  1 Isra", result.stdout)
@@ -982,7 +982,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             ], home=home, input_text="Isra\n1 pikeman\n")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("VCMI Battle Estimator Wizard", result.stdout)
+        self.assertIn("H3 Battle Estimator Wizard", result.stdout)
         self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
 
     def test_wizard_uses_available_last_hero_as_default(self):
@@ -1037,7 +1037,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             ], home=home, input_text="1\n1 pikeman\n")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("VCMI Battle Estimator Wizard", result.stdout)
+        self.assertIn("H3 Battle Estimator Wizard", result.stdout)
         self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
         self.assertIn("Warning: could not save last hero", result.stderr)
 
@@ -1055,7 +1055,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
             ], home=home, input_text="")
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("VCMI Battle Estimator Wizard", result.stdout)
+        self.assertIn("H3 Battle Estimator Wizard", result.stdout)
         self.assertIn("No relevant hero armies found", result.stdout)
         self.assertIn("Use --all-heroes", result.stdout)
         self.assertNotIn("Enemy army:", result.stdout)
@@ -1077,7 +1077,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("usage:", result.stdout)
-        self.assertNotIn("VCMI Battle Estimator Wizard", result.stdout)
+        self.assertNotIn("H3 Battle Estimator Wizard", result.stdout)
 
 
 if __name__ == "__main__":
