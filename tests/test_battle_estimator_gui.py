@@ -1231,6 +1231,7 @@ assert.deepStrictEqual(level1Markers.map((marker) => marker.id), [
   "hero:1",
   "neutral:1"
 ]);
+assert.strictEqual(level1Markers.find((marker) => marker.id === "town:1").label, "Dungeon town");
 const overlapSnapshot = {{
   map: {{ width: 4, height: 4, levels: 1 }},
   selected_hero_id: "hero:0",
@@ -1351,7 +1352,7 @@ assert.ok(!tooltip.includes("<"));
 const townTooltip = helpers.markerTooltipText(townMarker);
 assert.ok(townTooltip.includes("Castle Keep"));
 assert.ok(townTooltip.includes("0,0,0"));
-assert.ok(townTooltip.includes("Faction/subid: 3/3"));
+assert.ok(townTooltip.includes("Faction: Inferno (subid 3/3)"));
 assert.ok(townTooltip.includes("Initial owner: Red"));
 assert.strictEqual(helpers.formatWinPct(null), "not available");
 assert.strictEqual(helpers.formatWinPct(0), "0.0%");

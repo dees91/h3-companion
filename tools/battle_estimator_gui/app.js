@@ -64,6 +64,17 @@
     heroSkillsCompareButton: document.getElementById("hero-skills-compare-button")
   };
   const canvasContext = elements.canvas.getContext("2d");
+  const TOWN_FACTION_NAMES = {
+    0: "Castle",
+    1: "Rampart",
+    2: "Tower",
+    3: "Inferno",
+    4: "Necropolis",
+    5: "Dungeon",
+    6: "Stronghold",
+    7: "Fortress",
+    8: "Conflux"
+  };
   const mapView = {
     snapshot: null,
     zoom: 1,
@@ -502,7 +513,8 @@
       return "";
     }
     if (typeof marker.factionSubid === "number") {
-      return `Faction/subid: ${marker.factionSubid}/${marker.h3mSubid}`;
+      const factionName = TOWN_FACTION_NAMES[marker.factionSubid] || "Unknown faction";
+      return `Faction: ${factionName} (subid ${marker.factionSubid}/${marker.h3mSubid})`;
     }
     if (typeof marker.h3mSubid === "number") {
       return `Random town subid: ${marker.h3mSubid}`;
@@ -744,7 +756,9 @@
           type: "town",
           id: town.id,
           label: town.custom_name
-            || (typeof town.faction_subid === "number" ? `Town ${town.faction_subid}` : "Random town"),
+            || (typeof town.faction_subid === "number"
+              ? `${TOWN_FACTION_NAMES[town.faction_subid] || "Unknown"} town`
+              : "Random town"),
           position: town.position,
           world: {
             x: (town.position.x + 0.5) * tileSize,
