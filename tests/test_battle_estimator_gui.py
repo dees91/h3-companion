@@ -225,6 +225,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "Selected hero is not a simulation target.",
             "Hidden target is ignored.",
             "Scan response did not match the current request.",
+            "Choose your color to enable town alerts.",
+            "Current town ownership is unavailable for this snapshot.",
+            "No current towns are owned by your selected color.",
+            "No enemy heroes are inside the alert radius.",
             'addEventListener("input"',
             'addEventListener("contextmenu"',
             '"/api/select-hero"',
@@ -268,6 +272,9 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "alertRadius",
             "alertSettingsStatus",
             "syncAlertSettingsControls",
+            "castleAlertsState",
+            "renderCastleAlerts",
+            "castleAlertDiagnosticText",
             "routeOverlayToggle",
             "portalLinksToggle",
             "targetFilterControl",
@@ -397,6 +404,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="map-stage"',
             'id="map-tooltip"',
             'id="target-context-menu"',
+            'id="castle-alerts-state"',
+            'aria-label="Castle threat alerts"',
             'id="scan-radius"',
             'id="path-state"',
             'id="scan-sort-control"',
@@ -436,6 +445,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".path-segment-list",
             ".path-segment",
             ".target-detail",
+            ".alert-diagnostic",
+            ".alert-list",
+            ".alert-row",
+            ".alert-row-meta",
             ".portal-destination",
             "#battle-map.path-mode",
             ".target-context-menu",
@@ -459,6 +472,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             self.assertIn(expected, style_css)
         self.assertNotIn("Portals only", index_html)
         self.assertNotIn("Portals only", app_js)
+        self.assertLess(
+            index_html.index('id="castle-alerts-state"'),
+            index_html.index('id="target-state"'),
+        )
 
     def test_frontend_snapshot_changed_tracks_alert_contract_fields(self):
         app_js = (
@@ -668,6 +685,9 @@ class Element {{
   }}
   setAttribute(name, value) {{
     this[name] = value;
+  }}
+  removeAttribute(name) {{
+    delete this[name];
   }}
   setPointerCapture() {{}}
 }}
@@ -1188,6 +1208,9 @@ const markerSnapshot = {{
     ["BBBB", "WWWW", "LLLL", "LWBZ"]
   ],
   selected_hero_id: "hero:0",
+  castle_alerts_status: "unconfigured",
+  castle_alerts_status_detail: null,
+  castle_alerts: [],
   heroes: [
     {{
       id: "hero:0",
@@ -2277,6 +2300,72 @@ assert.strictEqual(
   "portal symbols should replace the old shared white stripe"
 );
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+assert.strictEqual(castleAlertsText(), "Choose your color to enable town alerts.");
+for (const [status, expectedText] of [
+  ["unconfigured", "Choose your color to enable town alerts."],
+  ["ownership_unavailable", "Current town ownership is unavailable for this snapshot."],
+  ["no_owned_towns", "No current towns are owned by your selected color."],
+  ["no_threats", "No enemy heroes are inside the alert radius."]
+]) {{
+  helpers.renderSnapshot({{
+    ...markerSnapshot,
+    castle_alerts_status: status,
+    castle_alerts_status_detail: null,
+    castle_alerts: []
+  }}, {{ preserveView: false }});
+  assert.strictEqual(castleAlertsText(), expectedText);
+}}
+helpers.renderSnapshot({{
+  ...markerSnapshot,
+  castle_alerts_status: "ownership_unavailable",
+  castle_alerts_status_detail: "unavailable town ownership: town:7",
+  castle_alerts: []
+}}, {{ preserveView: false }});
+assert.strictEqual(castleAlertsText(), "unavailable town ownership: town:7");
+const renderedAlertSnapshot = {{
+  ...markerSnapshot,
+  castle_alerts_status: "ok",
+  castle_alerts_status_detail: null,
+  castle_alerts: [
+    {{
+      id: "castle-threat:hero:1",
+      enemy_hero_id: "hero:1",
+      enemy_hero_name: "Fafner",
+      enemy_color_id: 2,
+      enemy_color_name: "tan",
+      town_id: "town:0",
+      town_name: "Castle Keep",
+      distance: 4,
+      other_towns_in_radius: 2,
+      enemy_position: {{ x: 2, y: 3, z: 1 }},
+      town_position: {{ x: 0, y: 0, z: 0 }}
+    }}
+  ]
+}};
+helpers.renderSnapshot(renderedAlertSnapshot, {{ preserveView: false }});
+const alertRows = nodesWithClass(elements["castle-alerts-state"], "alert-row");
+assert.strictEqual(alertRows.length, 1);
+assert.strictEqual(elements["castle-alerts-state"].role, "list");
+assert.strictEqual(alertRows[0].dataset.alertId, "castle-threat:hero:1");
+assert.strictEqual(alertRows[0].dataset.enemyHeroId, "hero:1");
+assert.strictEqual(alertRows[0].events.click, undefined);
+assert.ok(castleAlertsText().includes("Fafner"));
+assert.ok(castleAlertsText().includes("Tan"));
+assert.ok(castleAlertsText().includes("4 tiles"));
+assert.ok(castleAlertsText().includes("near Castle Keep"));
+assert.ok(castleAlertsText().includes("+2 other towns in radius"));
+assert.strictEqual(nodesWithClass(elements["castle-alerts-state"], "color-swatch").length, 1);
+const activeBeforeAlertRowDispatch = helpers.currentMapViewForTest().activeMarkerId;
+alertRows[0].dispatch("click", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().activeMarkerId, activeBeforeAlertRowDispatch);
+helpers.renderSnapshot({{
+  ...markerSnapshot,
+  castle_alerts_status: "ok",
+  castle_alerts: []
+}}, {{ preserveView: false }});
+assert.strictEqual(castleAlertsText(), "No enemy heroes are inside the alert radius.");
+assert.strictEqual(elements["castle-alerts-state"].role, undefined);
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 function targetFilterButtons() {{
   return elements["target-filter-control"].children;
 }}
@@ -2320,6 +2409,9 @@ function treeText(node) {{
 }}
 function targetStateText() {{
   return treeText(elements["target-state"]);
+}}
+function castleAlertsText() {{
+  return treeText(elements["castle-alerts-state"]);
 }}
 function nodesWithClass(node, className) {{
   if (!node) {{

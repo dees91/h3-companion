@@ -625,6 +625,63 @@ select:disabled {
   font-size: 13px;
 }
 
+.alert-diagnostic {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #d5dbe3;
+  border-radius: 4px;
+  background: #fbfcfd;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.alert-diagnostic.warning {
+  border-color: #d2a247;
+  background: #fff8e6;
+  color: #6d4b00;
+}
+
+.alert-list {
+  display: grid;
+  gap: 7px;
+  max-height: 190px;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.alert-row {
+  display: grid;
+  gap: 4px;
+}
+
+.alert-row-title,
+.alert-row-meta {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.alert-row-title {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: #202833;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.alert-row-title-text {
+  min-width: 0;
+}
+
+.alert-row-meta {
+  color: #5f6b7a;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .target-detail {
   display: grid;
   gap: 8px;

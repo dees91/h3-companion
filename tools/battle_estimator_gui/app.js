@@ -40,6 +40,7 @@
     targetContextMenu: document.getElementById("target-context-menu"),
     mapOverlayTitle: document.getElementById("map-overlay-title"),
     mapOverlayDetail: document.getElementById("map-overlay-detail"),
+    castleAlertsState: document.getElementById("castle-alerts-state"),
     targetState: document.getElementById("target-state"),
     estimateState: document.getElementById("estimate-state"),
     pathState: document.getElementById("path-state"),
@@ -1080,8 +1081,107 @@
           return;
         }
         stateRequests.alertSettingsInFlight = false;
-        syncAlertSettingsControls(mapView.snapshot, finalStatus, finalStatusClass);
+    syncAlertSettingsControls(mapView.snapshot, finalStatus, finalStatusClass);
       });
+  }
+
+  function castleAlertDiagnosticText(snapshot) {
+    if (!snapshot) {
+      return "Snapshot unavailable.";
+    }
+    const status = snapshot.castle_alerts_status;
+    if (status === "unconfigured") {
+      return "Choose your color to enable town alerts.";
+    }
+    if (status === "ownership_unavailable") {
+      return snapshot.castle_alerts_status_detail
+        || "Current town ownership is unavailable for this snapshot.";
+    }
+    if (status === "no_owned_towns") {
+      return "No current towns are owned by your selected color.";
+    }
+    if (status === "no_threats") {
+      return "No enemy heroes are inside the alert radius.";
+    }
+    if (status === "ok") {
+      return "No enemy heroes are inside the alert radius.";
+    }
+    return "Alert status is unavailable.";
+  }
+
+  function setCastleAlertDiagnostic(message, className) {
+    clearNode(elements.castleAlertsState);
+    elements.castleAlertsState.className = [
+      "alert-diagnostic",
+      "empty-state",
+      className || ""
+    ].filter(Boolean).join(" ");
+    elements.castleAlertsState.textContent = message;
+    elements.castleAlertsState.title = message;
+    elements.castleAlertsState.removeAttribute("role");
+  }
+
+  function castleAlertTitle(alert) {
+    return alert.enemy_hero_name || alert.enemy_hero_id || "Unknown hero";
+  }
+
+  function castleAlertMeta(alert) {
+    const parts = [
+      `${alert.distance} tiles`,
+      `near ${alert.town_name || alert.town_id || "town"}`
+    ];
+    if (alert.other_towns_in_radius > 0) {
+      parts.push(`+${alert.other_towns_in_radius} other towns in radius`);
+    }
+    return parts.join(" | ");
+  }
+
+  function renderCastleAlerts(snapshot) {
+    const alerts = snapshot && Array.isArray(snapshot.castle_alerts)
+      ? snapshot.castle_alerts
+      : [];
+    if (!snapshot) {
+      setCastleAlertDiagnostic(castleAlertDiagnosticText(null));
+      return;
+    }
+    if (snapshot.castle_alerts_status !== "ok" || alerts.length === 0) {
+      setCastleAlertDiagnostic(
+        castleAlertDiagnosticText(snapshot),
+        snapshot.castle_alerts_status === "ownership_unavailable" ? "warning" : ""
+      );
+      return;
+    }
+
+    clearNode(elements.castleAlertsState);
+    elements.castleAlertsState.className = "alert-list";
+    elements.castleAlertsState.title = "";
+    elements.castleAlertsState.setAttribute("role", "list");
+    alerts.forEach((alert) => {
+      const row = document.createElement("div");
+      row.className = "list-item alert-row";
+      row.dataset.alertId = alert.id || "";
+      row.dataset.enemyHeroId = alert.enemy_hero_id || "";
+      row.setAttribute("role", "listitem");
+
+      const title = document.createElement("div");
+      title.className = "alert-row-title";
+      appendColorSwatch(title, alert.enemy_color_name);
+
+      const titleText = document.createElement("span");
+      titleText.className = "alert-row-title-text";
+      titleText.textContent = castleAlertTitle(alert);
+      title.appendChild(titleText);
+
+      const meta = document.createElement("div");
+      meta.className = "alert-row-meta";
+      const colorName = alert.enemy_color_name ? titleCase(alert.enemy_color_name) : "unknown color";
+      meta.textContent = `${colorName} | ${castleAlertMeta(alert)}`;
+      meta.title = meta.textContent;
+
+      row.appendChild(title);
+      row.appendChild(meta);
+      elements.castleAlertsState.appendChild(row);
+    });
   }
 
   function markerTooltipText(marker) {
@@ -5051,6 +5151,7 @@
     elements.portalLinksToggle.checked = mapView.showPortalLinks;
     elements.portalLinksToggle.disabled = false;
     syncAlertSettingsControls(snapshot);
+    renderCastleAlerts(snapshot);
     rebuildMarkerCache(snapshot);
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
@@ -5115,6 +5216,7 @@
     elements.portalLinksToggle.disabled = true;
     stateRequests.alertSettingsInFlight = false;
     syncAlertSettingsControls(null);
+    renderCastleAlerts(null);
     mapView.pathMode = false;
     syncDualLevelControl(null);
     updatePathModeControl();
@@ -5596,6 +5698,7 @@
   renderTargetFilterControl();
   renderScanSortControl();
   syncAlertSettingsControls(null);
+  renderCastleAlerts(null);
   syncHeroRankingControls();
   syncHeroSkillControls();
   elements.targetContextMenu.addEventListener("click", (event) => {
