@@ -869,7 +869,16 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T03. Added synthetic, green fixture-contract tests for the
+  bounded `hero_on_town_tile_proxy` hypothesis without adding production parser
+  behavior. Save-parser tests now cover H3M initial owner `A` with exactly one
+  visible hero owner `B` on the deterministic town tile, plus
+  `ownership_unavailable` fixture cases for no matching hero, unowned owner,
+  invalid owner, multiple visible heroes on the same town tile, wrong level,
+  and missing hero position. GUI tests now include a synthetic `.GM2` plus
+  synthetic `.h3m` snapshot where a red initial-owner town and tan visible hero
+  occupy the same town tile. All data is generated in tests; no real saves or
+  maps are required.
 
 ---
 
@@ -1725,8 +1734,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | M07 | Map UX Follow-Up Verification | done | M01, M02, M03, M04, M05, M06 | priority-map-ux | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, planning doc |
 | T01 | Collect Local Save Evidence | done | -- | research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T02 | Document Save Ownership Hypothesis | done | T01 | research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
-| T03 | Synthetic Current Town Ownership Fixtures | todo | T02 | parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
-| T04 | Parse Current Town Ownership | blocked | T03 | parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
+| T03 | Synthetic Current Town Ownership Fixtures | done | T02 | parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
+| T04 | Parse Current Town Ownership | todo | T03 | parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
 | T05 | Join Save Ownership To H3M Town Targets | blocked | T04 | backend | Main | M | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
 | T06 | Persist My Color And Alert Radius | todo | -- | backend | Parallel | S | Config | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
 | T07 | Build Threat Alert Service | blocked | T05, T06 | backend | Main | M | Core/API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |

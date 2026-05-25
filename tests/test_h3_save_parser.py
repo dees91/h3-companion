@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from tools import battle_estimator
+from tools import h3_map_parser
 from tools import h3_save_parser
 from tools import hero_skill_recommender
 
@@ -19,6 +20,9 @@ ISRA_CREATURE_IDS = (57, 59, 63, 65, 67, 56, 69)
 ISRA_MOVED_CREATURE_IDS = (59, 57, 63, 65, 67, 56, 69)
 ISRA_COUNTS = (731, 181, 59, 47, 19, 316, 8)
 ISRA_MOVED_COUNTS = (181, 731, 59, 47, 19, 316, 8)
+TOWN_PROXY_SOURCE = "hero_on_town_tile_proxy"
+OWNERSHIP_PROXY = "proxy"
+OWNERSHIP_UNAVAILABLE = "ownership_unavailable"
 
 
 def _xor_encode(raw: bytes, key=h3_save_parser.HERO_ARMY_XOR_KEY) -> bytes:
@@ -146,6 +150,61 @@ def _build_multi_xor_hero_fixture(hero_specs):
         chunks.append(chunk)
         chunks.append(b"\x00" * 64)
     return b"".join(chunks)
+
+
+def _build_town_proxy_fixture_heroes(hero_specs):
+    if not hero_specs:
+        return h3_save_parser.H3SVG_SIGNATURE
+    return _build_multi_xor_hero_fixture(hero_specs)
+
+
+def _synthetic_town_target(
+    position=(6, 5, 0),
+    initial_owner=0,
+    object_index=17,
+    h3m_subid=3,
+):
+    x, y, z = position
+    return SimpleNamespace(
+        object_index=object_index,
+        object_id=h3_map_parser.H3M_OBJECT_TOWN,
+        h3m_subid=h3m_subid,
+        faction_subid=h3m_subid,
+        x=x,
+        y=y,
+        z=z,
+        anchor_x=x + 1,
+        anchor_y=y,
+        anchor_z=z,
+        initial_owner=initial_owner,
+    )
+
+
+def _expected_town_proxy_fixture_status(town, heroes):
+    matching_heroes = tuple(
+        hero for hero in heroes
+        if hero.position is not None
+        and (hero.x, hero.y, hero.z) == (town.x, town.y, town.z)
+    )
+    if len(matching_heroes) != 1:
+        return {
+            "ownership_status": OWNERSHIP_UNAVAILABLE,
+            "matching_hero_names": tuple(hero.hero_name for hero in matching_heroes),
+        }
+
+    hero = matching_heroes[0]
+    if hero.owner_color_id is None:
+        return {
+            "ownership_status": OWNERSHIP_UNAVAILABLE,
+            "matching_hero_names": (hero.hero_name,),
+        }
+
+    return {
+        "ownership_status": OWNERSHIP_PROXY,
+        "expected_ownership_source": TOWN_PROXY_SOURCE,
+        "expected_proxy_owner_color_id": hero.owner_color_id,
+        "matching_hero_names": (hero.hero_name,),
+    }
 
 
 def _hero_army(hero_name, stacks, source_offset=0, owner_color_id=None):
@@ -1850,6 +1909,145 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertIsNotNone(hero)
         self.assertIsNone(hero.owner_color_id)
         self.assertIsNone(hero.owner_color_name)
+
+    def test_current_town_ownership_proxy_fixture_cases_are_bounded(self):
+        cases = (
+            {
+                "name": "captured_by_visible_hero",
+                "town": _synthetic_town_target(initial_owner=0),
+                "hero_specs": (
+                    {
+                        "hero_name": "Marius",
+                        "position": (6, 5, 0),
+                        "owner_color_id": 2,
+                    },
+                ),
+                "expected_status": OWNERSHIP_PROXY,
+                "expected_proxy_owner_color_id": 2,
+                "expected_heroes": (
+                    ("Marius", h3_save_parser.HeroPosition(6, 5, 0), 2),
+                ),
+            },
+            {
+                "name": "no_visible_hero_on_town_tile",
+                "town": _synthetic_town_target(initial_owner=0),
+                "hero_specs": (),
+                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_heroes": (),
+            },
+            {
+                "name": "hero_on_tile_is_unowned",
+                "town": _synthetic_town_target(initial_owner=0),
+                "hero_specs": (
+                    {
+                        "hero_name": "NoOwner",
+                        "position": (6, 5, 0),
+                        "owner_color_id": h3_save_parser.HERO_OWNER_UNOWNED,
+                    },
+                ),
+                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_heroes": (
+                    ("NoOwner", h3_save_parser.HeroPosition(6, 5, 0), None),
+                ),
+            },
+            {
+                "name": "hero_on_tile_has_invalid_owner",
+                "town": _synthetic_town_target(initial_owner=0),
+                "hero_specs": (
+                    {
+                        "hero_name": "BadOwner",
+                        "position": (6, 5, 0),
+                        "owner_color_id": len(h3_save_parser.PLAYER_COLOR_NAMES),
+                    },
+                ),
+                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_heroes": (
+                    ("BadOwner", h3_save_parser.HeroPosition(6, 5, 0), None),
+                ),
+            },
+            {
+                "name": "multiple_visible_owned_heroes_on_town_tile",
+                "town": _synthetic_town_target(initial_owner=0),
+                "hero_specs": (
+                    {
+                        "hero_name": "Marius",
+                        "position": (6, 5, 0),
+                        "owner_color_id": 2,
+                    },
+                    {
+                        "hero_name": "Dace",
+                        "position": (6, 5, 0),
+                        "owner_color_id": 2,
+                    },
+                ),
+                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_heroes": (
+                    ("Marius", h3_save_parser.HeroPosition(6, 5, 0), 2),
+                    ("Dace", h3_save_parser.HeroPosition(6, 5, 0), 2),
+                ),
+            },
+            {
+                "name": "same_coordinates_wrong_level",
+                "town": _synthetic_town_target(initial_owner=0),
+                "hero_specs": (
+                    {
+                        "hero_name": "Underground",
+                        "position": (6, 5, 1),
+                        "owner_color_id": 2,
+                    },
+                ),
+                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_heroes": (
+                    ("Underground", h3_save_parser.HeroPosition(6, 5, 1), 2),
+                ),
+            },
+            {
+                "name": "matching_hero_has_no_position",
+                "town": _synthetic_town_target(initial_owner=0),
+                "hero_specs": (
+                    {
+                        "hero_name": "NoPos",
+                        "owner_color_id": 2,
+                    },
+                ),
+                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_heroes": (
+                    ("NoPos", None, 2),
+                ),
+            },
+        )
+
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                data = _build_town_proxy_fixture_heroes(case["hero_specs"])
+                heroes = h3_save_parser.scan_xor01_hero_armies(data)
+                town = case["town"]
+
+                result = _expected_town_proxy_fixture_status(town, heroes)
+
+                self.assertEqual(
+                    [
+                        (hero.hero_name, hero.position, hero.owner_color_id)
+                        for hero in heroes
+                    ],
+                    list(case["expected_heroes"]),
+                )
+                self.assertEqual(town.object_id, h3_map_parser.H3M_OBJECT_TOWN)
+                self.assertEqual(town.initial_owner, 0)
+                self.assertEqual(result["ownership_status"], case["expected_status"])
+                if case["expected_status"] == OWNERSHIP_PROXY:
+                    self.assertEqual(
+                        result["expected_ownership_source"],
+                        TOWN_PROXY_SOURCE,
+                    )
+                    self.assertEqual(
+                        result["expected_proxy_owner_color_id"],
+                        case["expected_proxy_owner_color_id"],
+                    )
+                    self.assertNotEqual(
+                        town.initial_owner,
+                        result["expected_proxy_owner_color_id"],
+                    )
 
     def test_parse_xor01_hero_at_keeps_army_when_position_window_is_invalid(self):
         data, name_offset = _build_xor_hero_fixture(name_offset=180)

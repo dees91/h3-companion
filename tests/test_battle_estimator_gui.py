@@ -4298,6 +4298,51 @@ assert.ok(pathSegmentButtons().length >= 4);
 
             self._with_server(check, app_state=app_state)
 
+    def test_state_endpoint_has_synthetic_town_proxy_fixture_inputs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 256,
+                        "position": (6, 5, 0),
+                        "owner_color_id": 2,
+                    },
+                ),
+            )
+            map_path = _write_h3m_map_with_town(
+                temp_path / "town-map.h3m",
+                owner=0,
+            )
+            config_path = temp_path / "config.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                town = payload["town_targets"][0]
+                hero = payload["heroes"][0]
+                self.assertEqual(town["initial_owner"], 0)
+                self.assertEqual(town["initial_owner_color_name"], "red")
+                self.assertEqual(town["position"], {"x": 6, "y": 5, "z": 0})
+                self.assertEqual(hero["owner_color_id"], 2)
+                self.assertEqual(hero["owner_color_name"], "tan")
+                self.assertEqual(hero["position"], town["position"])
+                self.assertNotEqual(town["initial_owner"], hero["owner_color_id"])
+
+            self._with_server(check, app_state=app_state)
+
     def test_state_endpoint_includes_portal_targets_and_edges(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -7706,7 +7751,7 @@ def _write_gui_save(
     return save_path
 
 
-def _write_h3m_map_with_town(path: Path) -> Path:
+def _write_h3m_map_with_town(path: Path, owner=2) -> Path:
     visit_mask = bytes((0x01, 0x00, 0x00, 0x00, 0x00, 0x40))
     payload = _minimal_h3m_with_templates_and_objects(
         h3_map_parser.H3M_FORMAT_SOD,
@@ -7723,7 +7768,7 @@ def _write_h3m_map_with_town(path: Path) -> Path:
                 (7, 5, 0),
                 0,
                 _town_payload(
-                    owner=2,
+                    owner=owner,
                     custom_name="Castle Keep",
                     has_garrison=True,
                 ),
