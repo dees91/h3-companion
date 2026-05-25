@@ -1339,7 +1339,18 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T13. Inspected two local real `GM1` saves from one
+  generated-map series using local `h3sed export` output as the comparison
+  oracle for current/effective primary skills and current secondary skills.
+  Documented anonymized candidate offsets relative to the existing hero
+  `source_offset`, including experience, level, mana, skill count, secondary
+  level/slot vectors, and primary Attack/Defense/Power/Knowledge. The observed
+  combat fields live in the same hero struct as name, army, position, and owner
+  for the validated `GM1` cases. Also documented validation signals,
+  artifact/spellbook/specialty caveats, and the unsupported `GM2` case where
+  local `h3sed` rejects offset-65 saves and no independent combat ground truth
+  is available. No real save bytes, real save/map files, cache files, or private
+  paths were added.
 
 ---
 
@@ -1833,8 +1844,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T10 | Render Alerts Sidebar Section | done | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | T11 | Center And Activate Alert Target | done | T10 | frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
 | T12 | Docs And Verification Pass | done | T08, T09, T10, T11 | quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md` |
-| T13 | Research Save Hero Combat Data | todo | -- | hero-combat-research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
-| T14 | Document Hero Combat Data Hypothesis | blocked | T13 | hero-combat-research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
+| T13 | Research Save Hero Combat Data | done | -- | hero-combat-research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
+| T14 | Document Hero Combat Data Hypothesis | todo | T13 | hero-combat-research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T15 | Synthetic Hero Combat Fixtures | blocked | T14 | hero-combat-parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
 | T16 | Parse Hero Primary Skills | blocked | T15 | hero-combat-parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
 | T17 | Parse Hero Secondary Skills | blocked | T16 | hero-combat-parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |

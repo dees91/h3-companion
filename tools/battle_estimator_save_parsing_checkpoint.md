@@ -628,6 +628,113 @@ tasks should validate the bounded proxy path and preserve
 These fixtures should be synthetic byte buffers and synthetic map targets only;
 real `.GM1`, `.GM2`, or `.h3m` files must not be committed.
 
+## Hero Combat Data Evidence, Anonymized
+
+Date: 2026-05-25
+
+This research pass inspected local real saves in place. No real save files, map
+files, cache files, raw bytes, paths, map names, player names, or custom object
+names are recorded here.
+
+The validation source was local `h3sed export` output for the same save files.
+This is not a game-screen screenshot, but it is an independent parser already
+used as a reference in earlier save-parsing work. The observed primary values
+should be treated as current/effective save-stored values until artifact/base
+stat separation is validated directly.
+
+### Validated GM1 Combat Fields
+
+Two real Shadow of Death `GM1` saves from one generated-map series were
+inspected. Both have `H3SVG` at offset `0` and use the raw `0x00` hero-struct
+encoding. The observed hero is a standard built-in hero name, not private data.
+
+For the validated hero, combat-adjacent fields are in the same hero struct
+already used for name, army, position, and owner color. No linked record was
+needed for these fields.
+
+Offsets below are relative to the parser's existing `source_offset`, which is
+the hero name offset:
+
+| Field | Candidate Offset | Encoding |
+|---|---:|---|
+| hero struct start | `source_offset - 169` | anchor |
+| experience | `source_offset - 130` | little-endian `u32` |
+| learned secondary skill count | `source_offset - 126` | `u8` |
+| mana left | `source_offset - 122` | little-endian `u16` |
+| level | `source_offset - 120` | `u8` |
+| secondary skill levels | `source_offset + 13` through `+40` | 28 `u8` values |
+| secondary skill display slots | `source_offset + 41` through `+68` | 28 `u8` values |
+| primary skills | `source_offset + 69` through `+72` | attack, defense, power, knowledge as `u8` |
+
+Secondary skills use the standard H3 skill order:
+
+```text
+Pathfinding, Archery, Logistics, Scouting, Diplomacy, Navigation, Leadership,
+Wisdom, Mysticism, Luck, Ballistics, Eagle Eye, Necromancy, Estates,
+Fire Magic, Air Magic, Water Magic, Earth Magic, Scholar, Tactics, Artillery,
+Learning, Offense, Armorer, Intelligence, Sorcery, Resistance, First Aid
+```
+
+A skill is active when its level byte is non-zero and its slot byte is non-zero
+and less than or equal to the learned skill count. Slot bytes define hero-screen
+ordering. Level ids decode as `1 = Basic`, `2 = Advanced`, `3 = Expert`.
+
+Validated observations:
+
+| Save Label | Candidate Primary | `h3sed` Primary | Candidate Secondary Skills | `h3sed` Secondary Skills |
+|---|---|---|---|---|
+| Combat Save A | `3/1/3/3` | `3/1/3/3` | Expert Wisdom; Expert Earth Magic; Basic Necromancy; Advanced First Aid; Basic Eagle Eye | same |
+| Combat Save B | `4/2/4/5` | `4/2/4/5` | Expert Wisdom; Expert Earth Magic; Advanced Necromancy; Expert First Aid; Expert Eagle Eye | same |
+
+The same relative fields also matched `h3sed` experience, level, mana, and
+skill count:
+
+| Save Label | Experience | Level | Mana Left | Skill Count |
+|---|---:|---:|---:|---:|
+| Combat Save A | `6843` | `6` | `1` | `5` |
+| Combat Save B | `14944` | `10` | `11` | `5` |
+
+Validation signals:
+
+- the existing parser identified the same hero record by name, army, position,
+  owner color, and source offset,
+- primary values changed between the two saves while the relative offsets
+  stayed stable,
+- secondary skills decoded exact names, order, and levels, including
+  Necromancy changing from Basic to Advanced and First Aid/Eagle Eye changing
+  from partial to Expert,
+- another nearby standard hero in the same saves decoded different primary
+  values at the same relative offsets, reducing the chance that these are
+  global or static bytes,
+- `h3sed` reports the same learned skill count as the decoded non-empty skill
+  slots.
+
+### Adjacent Data And Unsupported Fields
+
+The same h3sed layout places spellbook and artifact data later in the same
+hero struct: equipped artifact slots start at `source_offset + 213`,
+the spellbook slot is at `source_offset + 349`, and inventory starts at
+`source_offset + 365`. Those offsets were not validated enough for the battle
+estimator in this pass. In particular:
+
+- artifact ids and combination-artifact reservation bytes need separate parser
+  fixtures before they can be trusted,
+- primary Attack/Defense values should be treated as current/effective
+  save-stored values; base stats minus artifact bonuses were not independently
+  validated,
+- spellbook presence is observable in the struct, but spellbook contents and
+  castable spell state remain outside the passive combat estimator scope,
+- no separate numeric hero specialty identifier was isolated; continue linking
+  standard hero metadata by resolved hero name plus source-offset identity until
+  a save-side id is validated.
+
+The local `h3sed` version rejected the observed offset-65 multiplayer `GM2`
+saves as unrecognized. Existing `GM2` army/name/position/owner parsing still
+works through XOR `0x01`, and these combat offsets are plausible under the same
+relative layout, but `GM2` combat context must remain unsupported until at
+least two `GM2` saves have independent Attack/Defense and secondary-skill
+ground truth.
+
 ## Important Caveats
 
 - This checkpoint only proves army extraction for the observed Porting Kit /
