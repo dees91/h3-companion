@@ -1741,23 +1741,50 @@ with one-way monoliths, two-way monoliths, multi-exit portals, and
 subterranean gates.
 
 **Acceptance criteria:**
-- [ ] Portal marker symbols are visually distinguishable at normal gameplay
+- [x] Portal marker symbols are visually distinguishable at normal gameplay
       zoom.
-- [ ] Hover preview is fast and does not move the map.
-- [ ] Pinned portal relation remains understandable after switching levels to a
+- [x] Hover preview is fast and does not move the map.
+- [x] Pinned portal relation remains understandable after switching levels to a
       destination.
-- [ ] Multi-exit portals clearly show possible exits and non-deterministic
+- [x] Multi-exit portals clearly show possible exits and non-deterministic
       status.
-- [ ] Exit-only or no-known-destination portals are visibly diagnostic rather
+- [x] Exit-only or no-known-destination portals are visibly diagnostic rather
       than looking like usable entrances.
-- [ ] Path mode and normal click-to-simulate workflows still work after the
+- [x] Path mode and normal click-to-simulate workflows still work after the
       portal changes.
 
 **Verification:**
-- [ ] Run `python3 -m unittest`.
-- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
-- [ ] Start the GUI and manually verify portal readability on at least one
+- [x] Run `python3 -m unittest`.
+- [x] Run `node --check tools/battle_estimator_gui/app.js`.
+- [x] Start the GUI and manually verify portal readability on at least one
       current Diamond save/map.
+
+**Completion Notes (2026-05-25):**
+- Verified the real local Diamond snapshot through the GUI on port 8774:
+  save `343.GM2`, map `dees91,Danny96 2026.05.24 18;35 Diamond.h3m`, 46 portal
+  targets, 46 portal edges, 12 heroes, and 377 neutral targets.
+- Headless Chrome viewport was `1400 x 813` with map zoom `0.8`. Symbol-region
+  pixel checks confirmed distinct visible portal symbols for one-way entrance
+  `portal:2560`, one-way exit `portal:2564`, two-way monolith `portal:2528`,
+  and subterranean gate `portal:2435`.
+- Multi-exit verification used `portal:2566` on level 1 with same-level
+  destination `portal:2570` and cross-level destination `portal:2571`;
+  the target panel showed two destination rows and possible/non-deterministic
+  status.
+- Hover preview on `portal:2566` completed in about 146 ms, changed
+  `hoveredSourceId` to `portal:2566`, made no network requests, and preserved
+  level, pan, and zoom exactly.
+- Destination actions kept `pinnedSourceId` as `portal:2566`; following
+  `portal:2570` stayed on level 1 and following `portal:2571` switched to
+  level 0. Both destination panels showed exit-only/no-outgoing diagnostics.
+- Path mode check selected `hero:750478`, hovered/clicked `portal:2566`, sent
+  one `/api/path-route` request with `target_id: "portal:2566"`, sent no
+  `/api/simulate-target`, and left ordinary pinning disabled. Normal mode then
+  produced simulation requests for a neutral target and enemy `hero:762512`
+  without path-route requests.
+- Verification: `node --check tools/battle_estimator_gui/app.js`;
+  `python3 -m unittest`; headless Chrome/CDP GUI check on local port 8774;
+  `git diff --check`.
 
 **Dependencies:** Tasks 26, 27, 28, 29, 30
 
@@ -1811,13 +1838,13 @@ After Tasks 18-25:
 
 After Tasks 26-31:
 
-- [ ] Portal markers are distinguishable by type/role without relying only on
+- [x] Portal markers are distinguishable by type/role without relying only on
       color.
-- [ ] Hover and pinned portal relation previews make same-level and cross-level
+- [x] Hover and pinned portal relation previews make same-level and cross-level
       destinations easy to inspect.
-- [ ] Multi-exit portals are clearly labeled as possible/non-deterministic.
-- [ ] Exit-only and no-known-destination portals are visibly diagnostic.
-- [ ] Path mode still treats portal clicks as route requests.
+- [x] Multi-exit portals are clearly labeled as possible/non-deterministic.
+- [x] Exit-only and no-known-destination portals are visibly diagnostic.
+- [x] Path mode still treats portal clicks as route requests.
 
 ### Checkpoint: Complete
 
@@ -1831,7 +1858,7 @@ After Tasks 9, 17, 25, and 31:
 - [x] Target hiding, map filtering, scan sorting, scan hover, scan click, auto
       refresh, and scan rings work together in the GUI.
 - [x] Path mode can find and display same-level and cross-level land routes.
-- [ ] Portal relation preview makes portal destinations understandable without
+- [x] Portal relation preview makes portal destinations understandable without
       opening a separate portal list.
 
 ## Risks And Mitigations
@@ -1919,4 +1946,4 @@ After Tasks 9, 17, 25, and 31:
 | 28 | Render Portal Relation Overlay | done | 26, 27 |
 | 29 | Expand Portal Target Details And Navigation | done | 28 |
 | 30 | Preserve Path Mode Portal Semantics | done | 29 |
-| 31 | End-To-End Portal Readability Verification | todo | 26, 27, 28, 29, 30 |
+| 31 | End-To-End Portal Readability Verification | done | 26, 27, 28, 29, 30 |
