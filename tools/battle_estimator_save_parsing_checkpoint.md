@@ -507,6 +507,98 @@ approaches:
 2. A direct current-town-owner parser, still requiring a better save-side
    structure hypothesis and synthetic fixtures.
 
+## Bounded Current Town Ownership Hypothesis
+
+This section deliberately documents a bounded proxy hypothesis, not a direct
+save-side town-owner parser. The direct town-owner byte or save-side town record
+has not been isolated. Any implementation based on this section must expose its
+confidence and must return `ownership_unavailable` outside the narrow supported
+case.
+
+### Town Target Identity
+
+Candidate towns are recognized from the parsed H3M map, not from a direct save
+town structure. A town target is eligible only when the H3M parser can provide a
+deterministic town identity:
+
+- `object_id` is the standard H3M town object type,
+- `object_index` and `h3m_subid` are available,
+- the town's anchor tile and projected visitable tile are available,
+- `x`, `y`, and `z` identify one deterministic visitable tile,
+- `faction_subid` and H3M `initial_owner` are preserved as map context.
+
+The current save does not need to repeat all of that identity for the proxy
+path. The map target gives the candidate town; the save contributes visible
+hero state that may imply current control.
+
+### Proxy Owner Inference
+
+Current owner color is not decoded directly from a town record. The supported
+proxy path is:
+
+1. Parse visible hero records with the existing supported save scanner.
+2. Decode the hero owner color from the hero struct start
+   (`source_offset - 169`) using the known save encoding.
+3. Decode the hero position from the five-byte position field
+   (`source_offset - 194`) using the same save encoding.
+4. Match a hero to a town only when hero `(x, y, z)` exactly equals the H3M
+   town target's projected visitable tile.
+5. If exactly one eligible owned hero matches the town tile, infer:
+
+```text
+current_owner_color = hero.owner_color_id
+ownership_source = hero_on_town_tile_proxy
+ownership_confidence = proxy
+```
+
+If a future direct save-side town-owner field is discovered and passes its own
+validation, it should supersede this proxy. If the direct field and proxy
+conflict, the parser must not silently choose one; it should expose
+`ownership_unavailable` or a dedicated conflict status until the conflict is
+understood.
+
+### Required `ownership_unavailable` Cases
+
+Return `ownership_unavailable` instead of guessing when any of these conditions
+apply:
+
+- the H3M map is unavailable, mismatched, or cannot be parsed,
+- the object is not a standard parsed H3M town target,
+- the town's visitable tile cannot be resolved deterministically,
+- the save format is unsupported or hero records cannot be scanned with a
+  supported key/layout,
+- no eligible visible hero occupies the town visitable tile,
+- the matching hero has no decoded owner color or is unowned,
+- the matching hero has no decoded position, an out-of-bounds position, or a
+  level that does not match the town tile,
+- multiple visible owned heroes occupy the same town tile, even when their
+  owner colors agree,
+- a hidden or otherwise parser-invisible hero is required to explain ownership,
+- a future direct current-owner field is present but conflicts with the proxy,
+- any candidate structure is truncated, ambiguous, or only matches by loose byte
+  patterns such as object index or coordinates without semantic validation.
+
+### Fixture Implications
+
+Until a direct owner record is found, synthetic fixtures for the next parser
+tasks should validate the bounded proxy path and preserve
+`ownership_unavailable` for non-proxy cases. Useful synthetic cases:
+
+- a town with H3M initial owner `A` and one visible hero of owner `B` on the
+  town visitable tile, expecting proxy current owner `B`,
+- a town with no hero on its visitable tile, expecting `ownership_unavailable`,
+- a town with a hero on the tile but unknown/unowned owner, expecting
+  `ownership_unavailable`,
+- two visible owned heroes on the same town tile, expecting
+  `ownership_unavailable`,
+- a map/save mismatch where hero coordinates would otherwise match a different
+  map, expecting `ownership_unavailable`,
+- malformed/truncated hero owner or position fields, expecting
+  `ownership_unavailable`.
+
+These fixtures should be synthetic byte buffers and synthetic map targets only;
+real `.GM1`, `.GM2`, or `.h3m` files must not be committed.
+
 ## Important Caveats
 
 - This checkpoint only proves army extraction for the observed Porting Kit /

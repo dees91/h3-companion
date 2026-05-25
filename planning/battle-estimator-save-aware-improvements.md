@@ -821,7 +821,19 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T02. Added a bounded current-town-ownership hypothesis to
+  the save parsing checkpoint. The hypothesis deliberately treats town identity
+  as H3M-derived town target identity, not a discovered save-side town record,
+  and states that the direct town-owner byte/record remains unknown. Current
+  owner color is described as a `hero_on_town_tile_proxy`: decode a visible
+  hero's owner and position from the supported hero struct, match exactly to a
+  parsed town visitable tile, and infer proxy owner only when there is exactly
+  one eligible owned hero. The checkpoint now lists required
+  `ownership_unavailable` cases for missing/mismatched maps, unsupported save
+  layouts, absent or ambiguous heroes, unowned/unknown owners, nondeterministic
+  town tiles, direct/proxy conflicts, and loose byte-pattern matches. T03 is
+  unblocked to build synthetic fixtures for this bounded proxy path while
+  preserving `ownership_unavailable` outside it.
 
 ---
 
@@ -1712,8 +1724,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | M06 | Dual-Level Interactions And Portal Links | done | M03, M05 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M07 | Map UX Follow-Up Verification | done | M01, M02, M03, M04, M05, M06 | priority-map-ux | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, planning doc |
 | T01 | Collect Local Save Evidence | done | -- | research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
-| T02 | Document Save Ownership Hypothesis | todo | T01 | research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
-| T03 | Synthetic Current Town Ownership Fixtures | blocked | T02 | parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
+| T02 | Document Save Ownership Hypothesis | done | T01 | research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
+| T03 | Synthetic Current Town Ownership Fixtures | todo | T02 | parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
 | T04 | Parse Current Town Ownership | blocked | T03 | parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
 | T05 | Join Save Ownership To H3M Town Targets | blocked | T04 | backend | Main | M | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
 | T06 | Persist My Color And Alert Radius | todo | -- | backend | Parallel | S | Config | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
