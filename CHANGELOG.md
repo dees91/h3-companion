@@ -9,11 +9,19 @@ defined in [docs/release-policy.md](docs/release-policy.md).
 
 ### Added
 
-- None.
+- Dual-level map view for two-level maps, with Surface and Underground lanes
+  rendered side by side.
+- Portal relation hints now include cross-level ghost destinations, destination
+  level badges, and multi-exit/non-deterministic indicators.
 
 ### Changed
 
-- None.
+- Map marker overlap now prioritizes towns, portals, and heroes above neutral
+  monster markers.
+- Subterranean gates with a single resolved paired gate now click through to the
+  destination level outside path mode.
+- Path, scan, context-menu, and portal-destination interactions now work in the
+  dual-level map view.
 
 ### Fixed
 

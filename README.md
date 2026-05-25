@@ -14,8 +14,9 @@ maps, saves, or binaries; you need your own legally installed copy of the game.
   saves.
 - Battle estimation for manual armies, save heroes, nearby neutral stacks, and
   enemy heroes.
-- Browser GUI with a simple tile map, hero/monster markers, target hiding,
-  hero ranking, radius scans, and pathfinding overlays.
+- Browser GUI with a simple tile map, optional dual-level view, hero/monster
+  markers, target hiding, hero ranking, radius scans, portal hints, and
+  pathfinding overlays.
 - H3M map parsing for neutral monsters, towns, portals, subterranean gates, and
   route layers.
 - Secondary-skill recommendations for standard heroes.

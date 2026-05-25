@@ -720,7 +720,23 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for M07. Verified the combined map UX work using the existing
+  headless GUI representative snapshots rather than real save/map files. The
+  synthetic coverage includes overlapping markers with lowered neutral priority,
+  paired subterranean gate click-through, cross-level portal ghost destinations,
+  dual-level Surface/Underground lanes, lane-specific route overlays, portal
+  relation overlays, ghost hit testing in both cross-level directions, path mode
+  tile clicks with correct `z`, inter-lane gap rejection, path route rendering
+  in both lanes, path segment focus, scan hover/click centering, and context
+  menus on underground-lane targets. Single-level regression coverage confirms
+  unsupported/non-two-level maps keep dual-level controls inactive and off-level
+  portal ghosts remain hidden in single-level mode. README and CHANGELOG now
+  mention the user-visible dual-level map, portal hints, marker priority, and
+  subterranean gate interaction updates. Verified with
+  `node --check tools/battle_estimator_gui/app.js`,
+  `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest`, `git diff --check`, and `git status --short`. No real
+  `.GM1`, `.GM2`, or `.h3m` files were used or staged.
 
 ---
 
@@ -1682,7 +1698,7 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | M04 | Dual-Level View State And Geometry | done | -- | priority-map-ux | Main | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | M05 | Render Dual-Level Map And Markers | done | M04 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M06 | Dual-Level Interactions And Portal Links | done | M03, M05 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
-| M07 | Map UX Follow-Up Verification | todo | M01, M02, M03, M04, M05, M06 | priority-map-ux | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, planning doc |
+| M07 | Map UX Follow-Up Verification | done | M01, M02, M03, M04, M05, M06 | priority-map-ux | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, planning doc |
 | T01 | Collect Local Save Evidence | todo | -- | research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T02 | Document Save Ownership Hypothesis | blocked | T01 | research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T03 | Synthetic Current Town Ownership Fixtures | blocked | T02 | parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
