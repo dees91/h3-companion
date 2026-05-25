@@ -262,6 +262,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "showFollowLatestDialog",
             "showHiddenToggle",
             "routeOverlayToggle",
+            "portalLinksToggle",
             "targetFilterControl",
             "targetFilter",
             "scanTargetTypeForFilter",
@@ -276,8 +277,11 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "Current hero",
             "showHiddenInFlight",
             "showRouteOverlay",
+            "showPortalLinks",
             "ROUTE_OVERLAY_STYLES",
             "drawRouteOverlay",
+            "drawPortalRelationOverlay",
+            "portalCrossLevelSummaries",
             "routeRowsForLevel",
             "routeStateForChar",
             "routeStyleForChar",
@@ -362,9 +366,11 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="show-removed-toggle"',
             'id="show-hidden-toggle"',
             'id="show-route-overlay-toggle"',
+            'id="portal-links-toggle"',
             'id="path-mode-toggle"',
             'id="target-filter-control"',
             'Route Overlay',
+            'Portal Links',
             'Path Mode',
             'id="map-stage"',
             'id="map-tooltip"',
@@ -508,14 +514,45 @@ const context = new Proxy({{
   closePath() {{
     drawOperations.push({{ op: "closePath" }});
   }},
+  setLineDash(value) {{
+    this.lineDash = Array.isArray(value) ? value.slice() : [];
+    drawOperations.push({{
+      op: "setLineDash",
+      value: this.lineDash
+    }});
+  }},
   stroke() {{
     drawOperations.push({{
       op: "stroke",
       strokeStyle: this.strokeStyle,
       lineWidth: this.lineWidth,
       globalAlpha: this.globalAlpha,
-      arc: this.lastArc
+      arc: this.lastArc,
+      lineDash: this.lineDash || []
     }});
+  }},
+  fillText(text, x, y) {{
+    drawOperations.push({{
+      op: "fillText",
+      fillStyle: this.fillStyle,
+      font: this.font,
+      text,
+      x,
+      y
+    }});
+  }},
+  strokeText(text, x, y) {{
+    drawOperations.push({{
+      op: "strokeText",
+      strokeStyle: this.strokeStyle,
+      font: this.font,
+      text,
+      x,
+      y
+    }});
+  }},
+  measureText(text) {{
+    return {{ width: String(text || "").length * 7 }};
   }}
 }}, {{
   get(target, prop) {{
@@ -1791,6 +1828,153 @@ function hasVerticalSegment(segments, minHeight) {{
     && Math.abs(segment.from.y - segment.to.y) >= minHeight
   ));
 }}
+function portalRelationStrokeOps() {{
+  return drawOperations.filter((operation) => (
+    operation.op === "stroke" && operation.strokeStyle === "#2563eb"
+  ));
+}}
+function portalRelationBadgeTexts() {{
+  return drawOperations.filter((operation) => (
+    operation.op === "fillText" && operation.fillStyle === "#1e3a8a"
+  ));
+}}
+function dispatchCanvasPointer(type, point, pointerId = 700) {{
+  elements["battle-map"].dispatch(type, {{
+    button: 0,
+    pointerId,
+    clientX: point.x,
+    clientY: point.y
+  }});
+}}
+const relationOverlaySnapshot = {{
+  map: {{ width: 8, height: 4, levels: 2 }},
+  route_layers: [
+    ["LLLLLLLL", "LLLLLLLL", "LLLLLLLL", "LLLLLLLL"],
+    ["LLLLLLLL", "LLLLLLLL", "LLLLLLLL", "LLLLLLLL"]
+  ],
+  selected_hero_id: null,
+  heroes: [],
+  neutral_targets: [],
+  town_targets: [],
+  portal_targets: [
+    {{
+      id: "portal:source-a",
+      object_index: 10,
+      position: {{ x: 1, y: 1, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "entrance",
+      channel_key: "monolith-one-way:10"
+    }},
+    {{
+      id: "portal:same-a",
+      object_index: 11,
+      position: {{ x: 3, y: 1, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "exit",
+      channel_key: "monolith-one-way:10"
+    }},
+    {{
+      id: "portal:cross-a",
+      object_index: 12,
+      position: {{ x: 5, y: 1, z: 1 }},
+      portal_type: "monolith_one_way",
+      role: "exit",
+      channel_key: "monolith-one-way:10"
+    }},
+    {{
+      id: "portal:source-b",
+      object_index: 20,
+      position: {{ x: 1, y: 2, z: 0 }},
+      portal_type: "monolith_two_way",
+      role: "both",
+      channel_key: "monolith-two-way:20"
+    }},
+    {{
+      id: "portal:same-b",
+      object_index: 21,
+      position: {{ x: 6, y: 2, z: 0 }},
+      portal_type: "monolith_two_way",
+      role: "both",
+      channel_key: "monolith-two-way:20"
+    }}
+  ],
+  portal_edges: [
+    {{ source_id: "portal:source-a", destination_id: "portal:same-a" }},
+    {{ source_id: "portal:source-a", destination_id: "portal:cross-a" }},
+    {{ source_id: "portal:source-b", destination_id: "portal:same-b" }}
+  ]
+}};
+helpers.renderSnapshot(relationOverlaySnapshot, {{ preserveView: false }});
+assert.strictEqual(elements["portal-links-toggle"].disabled, false);
+assert.strictEqual(elements["portal-links-toggle"].checked, true);
+const relationView = helpers.currentMapViewForTest();
+const relationSourceA = relationView.markers.find((marker) => marker.id === "portal:source-a");
+const relationSourceB = relationView.markers.find((marker) => marker.id === "portal:source-b");
+const relationSourceAPoint = helpers.worldToScreen(relationSourceA.world, relationView);
+const relationSourceBPoint = helpers.worldToScreen(relationSourceB.world, relationView);
+const beforePortalHoverView = helpers.currentMapViewForTest();
+drawOperations.length = 0;
+dispatchCanvasPointer("pointermove", relationSourceAPoint, 701);
+assert.strictEqual(helpers.currentMapViewForTest().activeMarkerId, beforePortalHoverView.activeMarkerId);
+let relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, "portal:source-a");
+assert.strictEqual(relationState.pinnedSourceId, null);
+assert.strictEqual(relationState.activeSourceId, "portal:source-a");
+assert.ok(portalRelationStrokeOps().some((operation) => (
+  operation.lineDash && operation.lineDash.length === 2
+)), "multi-exit relation should draw dashed same-level links");
+assert.ok(portalRelationBadgeTexts().some((operation) => (
+  operation.text.includes("L1") && operation.text.includes("?")
+)), "cross-level relation should draw a target-level badge");
+assert.deepStrictEqual(
+  helpers.portalCrossLevelSummaries(relationState.relation),
+  [{{ level: 1, count: 1, label: "L1" }}]
+);
+drawOperations.length = 0;
+dispatchCanvasPointer("pointerdown", relationSourceAPoint, 702);
+dispatchCanvasPointer("pointerup", relationSourceAPoint, 702);
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.pinnedSourceId, "portal:source-a");
+assert.ok(portalRelationStrokeOps().some((operation) => (
+  operation.lineDash && operation.lineDash.length === 2
+)));
+drawOperations.length = 0;
+elements["portal-links-toggle"].checked = false;
+elements["portal-links-toggle"].dispatch("change", {{}});
+assert.strictEqual(portalRelationStrokeOps().length, 0);
+assert.strictEqual(portalRelationBadgeTexts().length, 0);
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.pinnedSourceId, "portal:source-a");
+assert.strictEqual(relationState.activeSourceId, "portal:source-a");
+drawOperations.length = 0;
+elements["portal-links-toggle"].checked = true;
+elements["portal-links-toggle"].dispatch("change", {{}});
+assert.ok(portalRelationStrokeOps().some((operation) => (
+  operation.lineDash && operation.lineDash.length === 2
+)));
+assert.ok(portalRelationBadgeTexts().some((operation) => operation.text.includes("L1")));
+drawOperations.length = 0;
+dispatchCanvasPointer("pointermove", relationSourceBPoint, 703);
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, "portal:source-b");
+assert.strictEqual(relationState.pinnedSourceId, "portal:source-a");
+assert.strictEqual(relationState.activeSourceId, "portal:source-b");
+assert.ok(portalRelationStrokeOps().length > 0);
+assert.ok(!portalRelationStrokeOps().some((operation) => (
+  operation.lineDash && operation.lineDash.length > 0
+)), "single-exit hovered relation should not inherit pinned dashed style");
+assert.strictEqual(portalRelationBadgeTexts().length, 0);
+drawOperations.length = 0;
+elements["battle-map"].dispatch("pointerleave", {{}});
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, null);
+assert.strictEqual(relationState.pinnedSourceId, "portal:source-a");
+assert.strictEqual(relationState.activeSourceId, "portal:source-a");
+assert.ok(portalRelationStrokeOps().some((operation) => (
+  operation.lineDash && operation.lineDash.length === 2
+)));
+assert.ok(portalRelationBadgeTexts().some((operation) => operation.text.includes("L1")));
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 const noSelectedSkillsSnapshot = {{
   ...markerSnapshot,
   selected_hero_id: null,

@@ -26,6 +26,7 @@
     showRemovedToggle: document.getElementById("show-removed-toggle"),
     showHiddenToggle: document.getElementById("show-hidden-toggle"),
     routeOverlayToggle: document.getElementById("show-route-overlay-toggle"),
+    portalLinksToggle: document.getElementById("portal-links-toggle"),
     pathModeToggle: document.getElementById("path-mode-toggle"),
     heroSkillsButton: document.getElementById("hero-skills-button"),
     heroRankingButton: document.getElementById("hero-ranking-button"),
@@ -85,6 +86,7 @@
     showRemovedNeutrals: false,
     showHiddenNeutrals: false,
     showRouteOverlay: true,
+    showPortalLinks: true,
     pathMode: false,
     targetFilter: "both",
     markers: [],
@@ -1487,6 +1489,7 @@
     }
     canvasContext.stroke();
 
+    drawPortalRelationOverlay(tileSize);
     drawPathRoute(tileSize);
     drawMarkers();
     elements.zoom.textContent = `Zoom ${Math.round(mapView.zoom * 100)}%`;
@@ -1534,6 +1537,112 @@
       x: (position.x + 0.5) * tileSize,
       y: (position.y + 0.5) * tileSize
     };
+  }
+
+  function portalCrossLevelSummaries(relation) {
+    const countsByLevel = new Map();
+    (relation && relation.crossLevelDestinations || []).forEach((destination) => {
+      const level = positionLevel(destination.position);
+      countsByLevel.set(level, (countsByLevel.get(level) || 0) + 1);
+    });
+    return Array.from(countsByLevel.entries())
+      .sort((left, right) => left[0] - right[0])
+      .map(([level, count]) => ({
+        level,
+        count,
+        label: `L${level}${count > 1 ? ` x${count}` : ""}`
+      }));
+  }
+
+  function drawPortalRelationArrow(from, to, dashed) {
+    const angle = Math.atan2(to.y - from.y, to.x - from.x);
+    const headLength = clamp(7 * Math.sqrt(mapView.zoom), 5, 12);
+    const headAngle = Math.PI / 6;
+    const headLeft = {
+      x: to.x - Math.cos(angle - headAngle) * headLength,
+      y: to.y - Math.sin(angle - headAngle) * headLength
+    };
+    const headRight = {
+      x: to.x - Math.cos(angle + headAngle) * headLength,
+      y: to.y - Math.sin(angle + headAngle) * headLength
+    };
+
+    canvasContext.setLineDash(dashed ? [7, 5] : []);
+    canvasContext.strokeStyle = "rgba(255, 255, 255, 0.84)";
+    canvasContext.lineWidth = 5;
+    canvasContext.beginPath();
+    canvasContext.moveTo(from.x, from.y);
+    canvasContext.lineTo(to.x, to.y);
+    canvasContext.stroke();
+
+    canvasContext.strokeStyle = "#2563eb";
+    canvasContext.lineWidth = 2;
+    canvasContext.beginPath();
+    canvasContext.moveTo(from.x, from.y);
+    canvasContext.lineTo(to.x, to.y);
+    canvasContext.stroke();
+
+    canvasContext.setLineDash([]);
+    canvasContext.fillStyle = "#2563eb";
+    canvasContext.beginPath();
+    canvasContext.moveTo(to.x, to.y);
+    canvasContext.lineTo(headLeft.x, headLeft.y);
+    canvasContext.lineTo(headRight.x, headRight.y);
+    canvasContext.closePath();
+    canvasContext.fill();
+  }
+
+  function drawPortalRelationBadge(source, relation) {
+    const summaries = portalCrossLevelSummaries(relation);
+    if (summaries.length === 0) {
+      return;
+    }
+    const label = `${summaries.map((summary) => summary.label).join(" ")}${relation.isNonDeterministic ? " ?" : ""}`;
+    const width = Math.max(30, label.length * 7 + 10);
+    const height = 18;
+    const x = source.x + 10;
+    const y = source.y - 26;
+
+    canvasContext.fillStyle = "rgba(255, 255, 255, 0.92)";
+    canvasContext.fillRect(x, y, width, height);
+    canvasContext.strokeStyle = "#2563eb";
+    canvasContext.lineWidth = 1.5;
+    canvasContext.setLineDash(relation.isNonDeterministic ? [3, 3] : []);
+    canvasContext.strokeRect(x, y, width, height);
+    canvasContext.setLineDash([]);
+    canvasContext.fillStyle = "#1e3a8a";
+    canvasContext.font = "11px Arial, Helvetica, sans-serif";
+    canvasContext.fillText(label, x + 5, y + 13);
+  }
+
+  function drawPortalRelationOverlay(tileSize) {
+    if (!mapView.showPortalLinks) {
+      return;
+    }
+    const relation = currentPortalRelation();
+    if (!relation || !relation.sourcePosition) {
+      return;
+    }
+    if (positionLevel(relation.sourcePosition) !== mapView.level) {
+      return;
+    }
+
+    const source = worldToScreen(pathPointForPosition(relation.sourcePosition, tileSize), mapView);
+    const sameLevelDestinations = (relation.sameLevelDestinations || [])
+      .filter((destination) => destination.position)
+      .filter((destination) => positionLevel(destination.position) === mapView.level);
+    const dashed = Boolean(relation.isNonDeterministic);
+
+    canvasContext.save();
+    canvasContext.globalAlpha = 0.88;
+    canvasContext.lineCap = "round";
+    canvasContext.lineJoin = "round";
+    sameLevelDestinations.forEach((destination) => {
+      const target = worldToScreen(pathPointForPosition(destination.position, tileSize), mapView);
+      drawPortalRelationArrow(source, target, dashed);
+    });
+    drawPortalRelationBadge(source, relation);
+    canvasContext.restore();
   }
 
   function drawPathRoute(tileSize) {
@@ -4095,6 +4204,8 @@
     mapView.showHiddenNeutrals = Boolean(snapshot.show_hidden);
     elements.showHiddenToggle.checked = mapView.showHiddenNeutrals;
     elements.showHiddenToggle.disabled = false;
+    elements.portalLinksToggle.checked = mapView.showPortalLinks;
+    elements.portalLinksToggle.disabled = false;
     rebuildMarkerCache(snapshot);
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
@@ -4154,6 +4265,8 @@
     elements.canvas.classList.remove("has-marker-hover");
     elements.showHiddenToggle.checked = false;
     elements.showHiddenToggle.disabled = true;
+    elements.portalLinksToggle.checked = mapView.showPortalLinks;
+    elements.portalLinksToggle.disabled = true;
     mapView.pathMode = false;
     updatePathModeControl();
     hideMapTooltip();
@@ -4347,6 +4460,11 @@
 
   elements.routeOverlayToggle.addEventListener("change", () => {
     mapView.showRouteOverlay = elements.routeOverlayToggle.checked;
+    drawMap();
+  });
+
+  elements.portalLinksToggle.addEventListener("change", () => {
+    mapView.showPortalLinks = elements.portalLinksToggle.checked;
     drawMap();
   });
 
@@ -4549,6 +4667,8 @@
     pathSegmentText,
     pathSegmentTypeLabel,
     portalRelationForSource,
+    portalCrossLevelSummaries,
+    drawPortalRelationOverlay,
     portalDestinationText,
     portalMarkerSymbolKind,
     drawPortalMarkerSymbol,
@@ -4569,6 +4689,8 @@
   elements.showHiddenToggle.checked = mapView.showHiddenNeutrals;
   elements.showHiddenToggle.disabled = true;
   elements.routeOverlayToggle.checked = mapView.showRouteOverlay;
+  elements.portalLinksToggle.checked = mapView.showPortalLinks;
+  elements.portalLinksToggle.disabled = true;
   updatePathModeControl();
   renderTargetFilterControl();
   renderScanSortControl();

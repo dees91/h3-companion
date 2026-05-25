@@ -1571,26 +1571,51 @@ destinations should be represented with clear target-level badges and
 destination counts.
 
 **Acceptance criteria:**
-- [ ] Hovering a portal previews its outgoing destinations without moving the
+- [x] Hovering a portal previews its outgoing destinations without moving the
       map.
-- [ ] Clicking a portal outside Path mode pins the relation until cleared or
+- [x] Clicking a portal outside Path mode pins the relation until cleared or
       replaced.
-- [ ] Same-level destinations render with restrained lines or arrows from
+- [x] Same-level destinations render with restrained lines or arrows from
       source to destination.
-- [ ] Cross-level destinations show target-level badges/counts instead of a
+- [x] Cross-level destinations show target-level badges/counts instead of a
       misleading off-level line.
-- [ ] Multi-exit destinations are visually marked as possible/non-deterministic
+- [x] Multi-exit destinations are visually marked as possible/non-deterministic
       exits, for example with dashed links.
-- [ ] The user can disable relation drawing with a compact `Portal links`
+- [x] The user can disable relation drawing with a compact `Portal links`
       toggle.
 
 **Verification:**
-- [ ] Add frontend tests for hover, pinning, cross-level, same-level, and
+- [x] Add frontend tests for hover, pinning, cross-level, same-level, and
       multi-exit overlay behavior.
-- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
-- [ ] Manual GUI check that overlays do not obscure hero, town, neutral, and
+- [x] Run `node --check tools/battle_estimator_gui/app.js`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Manual GUI check that overlays do not obscure hero, town, neutral, and
       route information.
+
+**Completion Notes (2026-05-25):**
+- Added a compact `Portal Links` map-toolbar toggle. It controls drawing only:
+  disabling and re-enabling it preserves hovered/pinned portal relation state.
+- Added contextual portal relation overlay rendering between the map grid and
+  path route layer, so route overlays stay below it and path/markers stay above
+  it. Same-level destinations draw restrained source-to-destination arrows.
+- Multi-exit/non-deterministic source relations draw dashed links and dashed
+  cross-level badges with `?` status. Cross-level destinations are aggregated
+  into level badges such as `L1 x2` at the source, without drawing misleading
+  off-level lines.
+- Added frontend smoke coverage for hover preview, normal-mode pinning, toggle
+  off/on preserving state, same-level links, cross-level badges, multi-exit
+  dashed styling, and hover precedence over pinned relations.
+- Manual GUI check: started the local GUI against the current Diamond save
+  `343.GM2` and map `dees91,Danny96 2026.05.24 18;35 Diamond.h3m`; verified a
+  real snapshot with 46 portals and 46 edges. Headless Chrome pinned
+  `portal:2566` with same-level destination `portal:2570` and cross-level
+  destination `portal:2571`, confirmed `Portal Links` off/on changed only the
+  canvas overlay while keeping the pinned relation, hovered `portal:2544` over
+  the pinned relation and confirmed pointer leave restored the pin, and verified
+  the overlay remained visible after zooming out to about `0.45`.
+- Verification: `node --check tools/battle_estimator_gui/app.js`;
+  `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`.
 
 **Dependencies:** Tasks 26, 27
 
@@ -1847,7 +1872,7 @@ After Tasks 9, 17, 25, and 31:
 | 25 | End-To-End Pathfinding Verification | done | 18, 19, 20, 21, 22, 23, 24 |
 | 26 | Add Portal Relation View State | done | 8 |
 | 27 | Redesign Portal Marker Symbols | done | 26 |
-| 28 | Render Portal Relation Overlay | todo | 26, 27 |
-| 29 | Expand Portal Target Details And Navigation | blocked | 28 |
+| 28 | Render Portal Relation Overlay | done | 26, 27 |
+| 29 | Expand Portal Target Details And Navigation | todo | 28 |
 | 30 | Preserve Path Mode Portal Semantics | blocked | 29 |
 | 31 | End-To-End Portal Readability Verification | blocked | 26, 27, 28, 29, 30 |
