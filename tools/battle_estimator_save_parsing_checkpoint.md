@@ -735,6 +735,127 @@ relative layout, but `GM2` combat context must remain unsupported until at
 least two `GM2` saves have independent Attack/Defense and secondary-skill
 ground truth.
 
+## Bounded Hero Combat Data Hypothesis
+
+This section is a parser hypothesis for future implementation tasks, not a
+claim that combat context is already parsed. It deliberately supports only the
+validated narrow case and must return explicit non-complete statuses outside
+that case.
+
+### Supported Structure
+
+The first supported combat-context structure should be:
+
+- Shadow of Death `GM1`,
+- `H3SVG` at offset `0`,
+- accepted hero record using raw `0x00` encoding,
+- same hero struct already accepted by name, army, position, and owner parsing.
+
+The hero name offset remains the stable anchor (`source_offset`). The candidate
+combat fields are in the same hero struct:
+
+| Field | Relative Offset From `source_offset` | Decode |
+|---|---:|---|
+| experience | `-130` | little-endian `u32` |
+| secondary skill count | `-126` | `u8` |
+| mana left | `-122` | little-endian `u16` |
+| level | `-120` | `u8` |
+| secondary skill levels | `+13..+40` | 28 `u8` values |
+| secondary skill slots | `+41..+68` | 28 `u8` values |
+| primary skills | `+69..+72` | attack, defense, power, knowledge as `u8` |
+
+When future fixtures validate XOR `0x01` combat data, the same relative offsets
+may be tested with the same per-hero decode key used for name/army parsing.
+Until then, `GM2` and XOR `0x01` combat context are unsupported.
+
+### Primary Skill Decode
+
+Primary skills decode as four one-byte current/effective save-stored values in
+file order:
+
+```text
+attack, defense, spell_power, knowledge
+```
+
+These values must not be described as base stats. Artifact bonuses may already
+be included, and artifact/base separation is not validated. A later artifact
+parser must avoid double-counting artifact bonuses when primary skills are
+already read from the save.
+
+For the parser tasks, primary context is complete only when:
+
+- the hero record itself is accepted by the existing scanner,
+- the four-byte primary window is in bounds,
+- all four values can be decoded with the supported record key,
+- fixture validation proves the values round-trip for representative low,
+  changed, and magic-primary cases.
+
+If primary decoding fails, return combat context `unavailable`; do not infer
+stats from hero class, level, VCMI starting data, or artifact guesses.
+
+### Secondary Skill Decode
+
+Secondary skill data is two parallel 28-byte vectors indexed by standard H3
+secondary-skill order. Level ids are:
+
+```text
+0 = absent, 1 = Basic, 2 = Advanced, 3 = Expert
+```
+
+Slot ids are one-based hero-screen ordering. For complete secondary context:
+
+- the skill count must be an integer `0..8`,
+- active skills must have both non-zero level and non-zero slot,
+- inactive skills must have both level and slot equal to zero,
+- active level ids must be `1..3`,
+- active slots must form the exact permutation `1..skill_count`,
+- no skill id may appear twice, which should already follow from the fixed
+  vector but must remain true after normalization,
+- the number of active skills must equal the skill count,
+- each normalized skill id must be known to the recommender/VCMI metadata
+  mapping before it is exposed to GUI skill state.
+
+If primary skills validate but secondary skills fail any rule above, return a
+`primary-only` combat context. Do not fall back to VCMI starting skills or the
+manually maintained recommendation state as if they were current save skills.
+
+Experience, level, and mana are supporting fields. They can help validate a
+fixture or explain a parsed context, but they should not be hard gates for
+primary or secondary skill support until exact range and consistency rules are
+covered by synthetic tests.
+
+### Required Non-Complete Cases
+
+Return `unavailable` when:
+
+- the save is not a supported `GM1`/`H3SVG=0`/raw-hero-struct case,
+- the existing hero scanner does not accept the hero record,
+- the primary window is truncated or cannot be decoded,
+- the candidate structure only matches by loose byte patterns without a valid
+  hero name/army anchor,
+- a future direct hero id or linked combat record conflicts with the same-struct
+  data and the conflict is not understood.
+
+Return `primary-only` when:
+
+- primary skills validate but the secondary vectors are truncated,
+- skill count is greater than `8`,
+- active secondary slots are duplicated, out of range, or not an exact
+  `1..skill_count` permutation,
+- any level id is outside `0..3`, or an active level id is outside `1..3`,
+- a level/slot mismatch leaves one side zero and the other non-zero,
+- decoded secondary skill ids cannot be mapped to known project metadata.
+
+Leave these fields unsupported until separately validated:
+
+- artifacts and backpack inventory,
+- base primary stats separated from artifact bonuses,
+- spellbook contents, castable spell state, and mana model beyond `mana_left`,
+- current morale, luck, terrain, tactics, active spell effects, and battle-side
+  modifiers,
+- save-side numeric hero specialty identifiers,
+- `GM2`/XOR `0x01` combat context.
+
 ## Important Caveats
 
 - This checkpoint only proves army extraction for the observed Porting Kit /

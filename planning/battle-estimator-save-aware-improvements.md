@@ -1385,7 +1385,18 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T14. Added a bounded hero combat parser hypothesis that
+  names the first supported structure as Shadow of Death `GM1` with `H3SVG` at
+  offset `0`, raw `0x00` hero records, and the same accepted hero struct used
+  for name, army, position, and owner parsing. Documented relative offsets from
+  `source_offset` for primary skills, secondary skill count/level/slot vectors,
+  experience, level, and mana. Primary skills are explicitly current/effective
+  save-stored values, not base stats. Secondary skills require exact active
+  level/slot consistency and an exact `1..count` slot permutation for complete
+  context. The hypothesis requires `unavailable` or `primary-only` for
+  unsupported/truncated/ambiguous cases and keeps artifacts, spellbook contents,
+  specialty ids, and `GM2`/XOR `0x01` combat context unsupported until separate
+  validation.
 
 ---
 
@@ -1845,8 +1856,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T11 | Center And Activate Alert Target | done | T10 | frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
 | T12 | Docs And Verification Pass | done | T08, T09, T10, T11 | quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md` |
 | T13 | Research Save Hero Combat Data | done | -- | hero-combat-research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
-| T14 | Document Hero Combat Data Hypothesis | todo | T13 | hero-combat-research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
-| T15 | Synthetic Hero Combat Fixtures | blocked | T14 | hero-combat-parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
+| T14 | Document Hero Combat Data Hypothesis | done | T13 | hero-combat-research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
+| T15 | Synthetic Hero Combat Fixtures | todo | T14 | hero-combat-parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
 | T16 | Parse Hero Primary Skills | blocked | T15 | hero-combat-parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
 | T17 | Parse Hero Secondary Skills | blocked | T16 | hero-combat-parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
 | T18 | Build Combat Context Contract | blocked | T17 | hero-combat-backend | Main | M | API/Core | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
