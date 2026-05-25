@@ -101,6 +101,18 @@ HERO_STRUCT_POSITION_FROM_NAME_OFFSET = -194
 HERO_POSITION_SIZE = 5
 MAX_HERO_POSITION_COORD = 255
 MAX_HERO_POSITION_LEVEL = 1
+H3M_TOWN_OBJECT_ID = 98
+TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY = "hero_on_town_tile_proxy"
+TOWN_OWNERSHIP_STATUS_PROXY = "proxy"
+TOWN_OWNERSHIP_STATUS_UNAVAILABLE = "ownership_unavailable"
+TOWN_OWNERSHIP_REASON_NOT_STANDARD_TOWN_TARGET = "not_standard_town_target"
+TOWN_OWNERSHIP_REASON_MISSING_TOWN_IDENTITY = "missing_town_identity"
+TOWN_OWNERSHIP_REASON_MISSING_TOWN_POSITION = "missing_town_position"
+TOWN_OWNERSHIP_REASON_NO_VISIBLE_HERO = "no_visible_hero_on_town_tile"
+TOWN_OWNERSHIP_REASON_AMBIGUOUS_VISIBLE_HEROES = (
+    "ambiguous_visible_heroes_on_town_tile"
+)
+TOWN_OWNERSHIP_REASON_MISSING_HERO_OWNER_COLOR = "missing_hero_owner_color"
 
 HERO_ARMY_TYPES_FROM_NAME_OFFSET = (
     HERO_STRUCT_ARMY_TYPES_OFFSET - HERO_STRUCT_NAME_OFFSET
@@ -403,6 +415,58 @@ class HeroTarget:
     @property
     def army_summary(self) -> str:
         return self.army.army_summary
+
+
+@dataclass(frozen=True)
+class TownOwnershipObservation:
+    """Current town ownership observation derived from save hero state."""
+
+    object_index: int | None
+    h3m_subid: int | None
+    position: HeroPosition | None
+    current_owner_color_id: int | None = None
+    ownership_status: str = TOWN_OWNERSHIP_STATUS_UNAVAILABLE
+    ownership_source: str | None = None
+    ownership_confidence: str = TOWN_OWNERSHIP_STATUS_UNAVAILABLE
+    reason: str | None = None
+    matching_hero_names: tuple[str, ...] = ()
+    matching_hero_source_offsets: tuple[int | None, ...] = ()
+
+    @property
+    def current_owner_color_name(self) -> str | None:
+        if self.current_owner_color_id is None:
+            return None
+        if 0 <= self.current_owner_color_id < len(PLAYER_COLOR_NAMES):
+            return PLAYER_COLOR_NAMES[self.current_owner_color_id]
+        return None
+
+    @property
+    def x(self) -> int | None:
+        return None if self.position is None else self.position.x
+
+    @property
+    def y(self) -> int | None:
+        return None if self.position is None else self.position.y
+
+    @property
+    def z(self) -> int | None:
+        return None if self.position is None else self.position.z
+
+    @property
+    def matching_hero_count(self) -> int:
+        return len(self.matching_hero_names)
+
+    @property
+    def matching_hero_name(self) -> str | None:
+        if len(self.matching_hero_names) != 1:
+            return None
+        return self.matching_hero_names[0]
+
+    @property
+    def matching_hero_source_offset(self) -> int | None:
+        if len(self.matching_hero_source_offsets) != 1:
+            return None
+        return self.matching_hero_source_offsets[0]
 
 
 class SaveLoadError(ValueError):
@@ -902,6 +966,168 @@ def find_h3svg_offset(data: bytes) -> int | None:
     if offset == -1:
         return None
     return offset
+
+
+def detect_current_town_ownership(
+    data: bytes,
+    town_targets,
+) -> tuple[TownOwnershipObservation, ...]:
+    """Infer current town ownership from save bytes and parsed H3M towns."""
+
+    return infer_current_town_ownership(
+        town_targets,
+        scan_xor01_hero_armies(data),
+    )
+
+
+def infer_current_town_ownership(
+    town_targets,
+    heroes,
+) -> tuple[TownOwnershipObservation, ...]:
+    """Infer proxy current town ownership from parsed towns and visible heroes.
+
+    This helper does not validate that town targets came from the matching map.
+    Callers must only pass trusted H3M targets for the save being analyzed.
+    """
+
+    if town_targets is None:
+        return ()
+    hero_list = tuple(heroes or ())
+    return tuple(
+        _infer_current_town_ownership_for_target(target, hero_list)
+        for target in town_targets
+    )
+
+
+def _infer_current_town_ownership_for_target(
+    target,
+    heroes,
+) -> TownOwnershipObservation:
+    object_index = _town_target_int_attr(target, "object_index")
+    h3m_subid = _town_target_int_attr(target, "h3m_subid")
+    position = _town_target_position(target)
+
+    if _town_target_int_attr(target, "object_id") != H3M_TOWN_OBJECT_ID:
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            position,
+            TOWN_OWNERSHIP_REASON_NOT_STANDARD_TOWN_TARGET,
+        )
+    if (
+        object_index is None
+        or h3m_subid is None
+        or not _town_target_has_anchor_identity(target)
+    ):
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            position,
+            TOWN_OWNERSHIP_REASON_MISSING_TOWN_IDENTITY,
+        )
+    if position is None:
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            None,
+            TOWN_OWNERSHIP_REASON_MISSING_TOWN_POSITION,
+        )
+
+    matching_heroes = tuple(
+        hero for hero in heroes
+        if hero.position is not None
+        and (hero.x, hero.y, hero.z) == (position.x, position.y, position.z)
+    )
+    if not matching_heroes:
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            position,
+            TOWN_OWNERSHIP_REASON_NO_VISIBLE_HERO,
+        )
+    if len(matching_heroes) != 1:
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            position,
+            TOWN_OWNERSHIP_REASON_AMBIGUOUS_VISIBLE_HEROES,
+            matching_heroes=matching_heroes,
+        )
+
+    hero = matching_heroes[0]
+    if hero.owner_color_id is None:
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            position,
+            TOWN_OWNERSHIP_REASON_MISSING_HERO_OWNER_COLOR,
+            matching_heroes=matching_heroes,
+        )
+
+    return TownOwnershipObservation(
+        object_index=object_index,
+        h3m_subid=h3m_subid,
+        position=position,
+        current_owner_color_id=hero.owner_color_id,
+        ownership_status=TOWN_OWNERSHIP_STATUS_PROXY,
+        ownership_source=TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY,
+        ownership_confidence=TOWN_OWNERSHIP_STATUS_PROXY,
+        reason=None,
+        matching_hero_names=(hero.hero_name,),
+        matching_hero_source_offsets=(hero.source_offset,),
+    )
+
+
+def _unavailable_town_ownership_observation(
+    object_index: int | None,
+    h3m_subid: int | None,
+    position: HeroPosition | None,
+    reason: str,
+    matching_heroes=(),
+) -> TownOwnershipObservation:
+    return TownOwnershipObservation(
+        object_index=object_index,
+        h3m_subid=h3m_subid,
+        position=position,
+        ownership_status=TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+        ownership_source=None,
+        ownership_confidence=TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+        reason=reason,
+        matching_hero_names=tuple(hero.hero_name for hero in matching_heroes),
+        matching_hero_source_offsets=tuple(
+            hero.source_offset for hero in matching_heroes
+        ),
+    )
+
+
+def _town_target_int_attr(target, name: str) -> int | None:
+    value = getattr(target, name, None)
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 0:
+        return None
+    return parsed
+
+
+def _town_target_position(target) -> HeroPosition | None:
+    x = _town_target_int_attr(target, "x")
+    y = _town_target_int_attr(target, "y")
+    z = _town_target_int_attr(target, "z")
+    if x is None or y is None or z is None:
+        return None
+    return HeroPosition(x, y, z)
+
+
+def _town_target_has_anchor_identity(target) -> bool:
+    return (
+        _town_target_int_attr(target, "anchor_x") is not None
+        and _town_target_int_attr(target, "anchor_y") is not None
+        and _town_target_int_attr(target, "anchor_z") is not None
+    )
 
 
 def detect_removed_neutral_records(

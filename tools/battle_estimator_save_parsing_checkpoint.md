@@ -557,6 +557,35 @@ conflict, the parser must not silently choose one; it should expose
 `ownership_unavailable` or a dedicated conflict status until the conflict is
 understood.
 
+### Implemented Parser Contract
+
+The implemented T04 parser contract lives in `tools/h3_save_parser.py`:
+
+- `infer_current_town_ownership(town_targets, heroes)` is the core API. It
+  accepts parsed H3M town targets and the raw detected visible save heroes.
+- `detect_current_town_ownership(data, town_targets)` is a convenience wrapper
+  that scans hero records from decompressed save bytes and delegates to
+  `infer_current_town_ownership`.
+- Results are `TownOwnershipObservation` records with explicit
+  `ownership_status`, `ownership_source`, `ownership_confidence`, optional
+  `current_owner_color_id`, `reason`, and matching-hero details.
+- Successful proxy observations use:
+
+```text
+ownership_status = proxy
+ownership_source = hero_on_town_tile_proxy
+ownership_confidence = proxy
+```
+
+Unavailable observations use `ownership_status = ownership_unavailable` and a
+closed reason string such as `no_visible_hero_on_town_tile`,
+`ambiguous_visible_heroes_on_town_tile`, or `missing_hero_owner_color`.
+
+This API does not prove that the supplied H3M map is the correct map for the
+save. Callers must only pass town targets from a trusted map/save context. If
+map resolution is missing or mismatched, the caller should treat ownership as
+unavailable instead of calling the proxy inference on unrelated town targets.
+
 ### Required `ownership_unavailable` Cases
 
 Return `ownership_unavailable` instead of guessing when any of these conditions

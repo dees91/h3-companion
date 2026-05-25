@@ -20,9 +20,6 @@ ISRA_CREATURE_IDS = (57, 59, 63, 65, 67, 56, 69)
 ISRA_MOVED_CREATURE_IDS = (59, 57, 63, 65, 67, 56, 69)
 ISRA_COUNTS = (731, 181, 59, 47, 19, 316, 8)
 ISRA_MOVED_COUNTS = (181, 731, 59, 47, 19, 316, 8)
-TOWN_PROXY_SOURCE = "hero_on_town_tile_proxy"
-OWNERSHIP_PROXY = "proxy"
-OWNERSHIP_UNAVAILABLE = "ownership_unavailable"
 
 
 def _xor_encode(raw: bytes, key=h3_save_parser.HERO_ARMY_XOR_KEY) -> bytes:
@@ -163,48 +160,23 @@ def _synthetic_town_target(
     initial_owner=0,
     object_index=17,
     h3m_subid=3,
+    object_id=h3_map_parser.H3M_OBJECT_TOWN,
+    include_anchor=True,
 ):
     x, y, z = position
-    return SimpleNamespace(
+    attrs = dict(
         object_index=object_index,
-        object_id=h3_map_parser.H3M_OBJECT_TOWN,
+        object_id=object_id,
         h3m_subid=h3m_subid,
         faction_subid=h3m_subid,
         x=x,
         y=y,
         z=z,
-        anchor_x=x + 1,
-        anchor_y=y,
-        anchor_z=z,
         initial_owner=initial_owner,
     )
-
-
-def _expected_town_proxy_fixture_status(town, heroes):
-    matching_heroes = tuple(
-        hero for hero in heroes
-        if hero.position is not None
-        and (hero.x, hero.y, hero.z) == (town.x, town.y, town.z)
-    )
-    if len(matching_heroes) != 1:
-        return {
-            "ownership_status": OWNERSHIP_UNAVAILABLE,
-            "matching_hero_names": tuple(hero.hero_name for hero in matching_heroes),
-        }
-
-    hero = matching_heroes[0]
-    if hero.owner_color_id is None:
-        return {
-            "ownership_status": OWNERSHIP_UNAVAILABLE,
-            "matching_hero_names": (hero.hero_name,),
-        }
-
-    return {
-        "ownership_status": OWNERSHIP_PROXY,
-        "expected_ownership_source": TOWN_PROXY_SOURCE,
-        "expected_proxy_owner_color_id": hero.owner_color_id,
-        "matching_hero_names": (hero.hero_name,),
-    }
+    if include_anchor:
+        attrs.update(anchor_x=x + 1, anchor_y=y, anchor_z=z)
+    return SimpleNamespace(**attrs)
 
 
 def _hero_army(hero_name, stacks, source_offset=0, owner_color_id=None):
@@ -1910,7 +1882,7 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertIsNone(hero.owner_color_id)
         self.assertIsNone(hero.owner_color_name)
 
-    def test_current_town_ownership_proxy_fixture_cases_are_bounded(self):
+    def test_detect_current_town_ownership_uses_bounded_proxy_cases(self):
         cases = (
             {
                 "name": "captured_by_visible_hero",
@@ -1922,8 +1894,10 @@ class H3SaveParserContractTests(unittest.TestCase):
                         "owner_color_id": 2,
                     },
                 ),
-                "expected_status": OWNERSHIP_PROXY,
+                "expected_status": h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY,
+                "expected_reason": None,
                 "expected_proxy_owner_color_id": 2,
+                "expected_matching_names": ("Marius",),
                 "expected_heroes": (
                     ("Marius", h3_save_parser.HeroPosition(6, 5, 0), 2),
                 ),
@@ -1932,7 +1906,9 @@ class H3SaveParserContractTests(unittest.TestCase):
                 "name": "no_visible_hero_on_town_tile",
                 "town": _synthetic_town_target(initial_owner=0),
                 "hero_specs": (),
-                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_status": h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                "expected_reason": h3_save_parser.TOWN_OWNERSHIP_REASON_NO_VISIBLE_HERO,
+                "expected_matching_names": (),
                 "expected_heroes": (),
             },
             {
@@ -1945,7 +1921,11 @@ class H3SaveParserContractTests(unittest.TestCase):
                         "owner_color_id": h3_save_parser.HERO_OWNER_UNOWNED,
                     },
                 ),
-                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_status": h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                "expected_reason": (
+                    h3_save_parser.TOWN_OWNERSHIP_REASON_MISSING_HERO_OWNER_COLOR
+                ),
+                "expected_matching_names": ("NoOwner",),
                 "expected_heroes": (
                     ("NoOwner", h3_save_parser.HeroPosition(6, 5, 0), None),
                 ),
@@ -1960,7 +1940,11 @@ class H3SaveParserContractTests(unittest.TestCase):
                         "owner_color_id": len(h3_save_parser.PLAYER_COLOR_NAMES),
                     },
                 ),
-                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_status": h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                "expected_reason": (
+                    h3_save_parser.TOWN_OWNERSHIP_REASON_MISSING_HERO_OWNER_COLOR
+                ),
+                "expected_matching_names": ("BadOwner",),
                 "expected_heroes": (
                     ("BadOwner", h3_save_parser.HeroPosition(6, 5, 0), None),
                 ),
@@ -1980,7 +1964,11 @@ class H3SaveParserContractTests(unittest.TestCase):
                         "owner_color_id": 2,
                     },
                 ),
-                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_status": h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                "expected_reason": (
+                    h3_save_parser.TOWN_OWNERSHIP_REASON_AMBIGUOUS_VISIBLE_HEROES
+                ),
+                "expected_matching_names": ("Marius", "Dace"),
                 "expected_heroes": (
                     ("Marius", h3_save_parser.HeroPosition(6, 5, 0), 2),
                     ("Dace", h3_save_parser.HeroPosition(6, 5, 0), 2),
@@ -1996,7 +1984,9 @@ class H3SaveParserContractTests(unittest.TestCase):
                         "owner_color_id": 2,
                     },
                 ),
-                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_status": h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                "expected_reason": h3_save_parser.TOWN_OWNERSHIP_REASON_NO_VISIBLE_HERO,
+                "expected_matching_names": (),
                 "expected_heroes": (
                     ("Underground", h3_save_parser.HeroPosition(6, 5, 1), 2),
                 ),
@@ -2010,7 +2000,9 @@ class H3SaveParserContractTests(unittest.TestCase):
                         "owner_color_id": 2,
                     },
                 ),
-                "expected_status": OWNERSHIP_UNAVAILABLE,
+                "expected_status": h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                "expected_reason": h3_save_parser.TOWN_OWNERSHIP_REASON_NO_VISIBLE_HERO,
+                "expected_matching_names": (),
                 "expected_heroes": (
                     ("NoPos", None, 2),
                 ),
@@ -2023,7 +2015,15 @@ class H3SaveParserContractTests(unittest.TestCase):
                 heroes = h3_save_parser.scan_xor01_hero_armies(data)
                 town = case["town"]
 
-                result = _expected_town_proxy_fixture_status(town, heroes)
+                observations = h3_save_parser.detect_current_town_ownership(
+                    data,
+                    (town,),
+                )
+                infer_observations = h3_save_parser.infer_current_town_ownership(
+                    (town,),
+                    heroes,
+                )
+                result = observations[0]
 
                 self.assertEqual(
                     [
@@ -2032,22 +2032,103 @@ class H3SaveParserContractTests(unittest.TestCase):
                     ],
                     list(case["expected_heroes"]),
                 )
+                self.assertEqual(observations, infer_observations)
                 self.assertEqual(town.object_id, h3_map_parser.H3M_OBJECT_TOWN)
                 self.assertEqual(town.initial_owner, 0)
-                self.assertEqual(result["ownership_status"], case["expected_status"])
-                if case["expected_status"] == OWNERSHIP_PROXY:
+                self.assertEqual(result.object_index, town.object_index)
+                self.assertEqual(result.h3m_subid, town.h3m_subid)
+                self.assertEqual(
+                    result.position,
+                    h3_save_parser.HeroPosition(town.x, town.y, town.z),
+                )
+                self.assertEqual(result.ownership_status, case["expected_status"])
+                self.assertEqual(result.reason, case["expected_reason"])
+                self.assertEqual(
+                    result.matching_hero_names,
+                    case["expected_matching_names"],
+                )
+                self.assertEqual(
+                    result.matching_hero_count,
+                    len(case["expected_matching_names"]),
+                )
+                if (
+                    case["expected_status"]
+                    == h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY
+                ):
                     self.assertEqual(
-                        result["expected_ownership_source"],
-                        TOWN_PROXY_SOURCE,
+                        result.ownership_source,
+                        h3_save_parser.TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY,
                     )
                     self.assertEqual(
-                        result["expected_proxy_owner_color_id"],
+                        result.ownership_confidence,
+                        h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY,
+                    )
+                    self.assertEqual(
+                        result.current_owner_color_id,
                         case["expected_proxy_owner_color_id"],
                     )
+                    self.assertEqual(result.current_owner_color_name, "tan")
+                    self.assertEqual(result.matching_hero_name, "Marius")
+                    self.assertIsNotNone(result.matching_hero_source_offset)
                     self.assertNotEqual(
                         town.initial_owner,
-                        result["expected_proxy_owner_color_id"],
+                        result.current_owner_color_id,
                     )
+                else:
+                    self.assertIsNone(result.current_owner_color_id)
+                    self.assertIsNone(result.current_owner_color_name)
+                    self.assertIsNone(result.ownership_source)
+                    self.assertEqual(
+                        result.ownership_confidence,
+                        h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                    )
+
+    def test_infer_current_town_ownership_rejects_invalid_town_targets(self):
+        hero = _positioned_hero_army(
+            "Marius",
+            [(57, 10)],
+            position=(6, 5, 0),
+            source_offset=256,
+            owner_color_id=2,
+        )
+        cases = (
+            (
+                _synthetic_town_target(object_id=999),
+                h3_save_parser.TOWN_OWNERSHIP_REASON_NOT_STANDARD_TOWN_TARGET,
+            ),
+            (
+                _synthetic_town_target(object_index=None),
+                h3_save_parser.TOWN_OWNERSHIP_REASON_MISSING_TOWN_IDENTITY,
+            ),
+            (
+                _synthetic_town_target(include_anchor=False),
+                h3_save_parser.TOWN_OWNERSHIP_REASON_MISSING_TOWN_IDENTITY,
+            ),
+            (
+                SimpleNamespace(
+                    object_index=17,
+                    object_id=h3_map_parser.H3M_OBJECT_TOWN,
+                    h3m_subid=3,
+                    anchor_x=7,
+                    anchor_y=5,
+                    anchor_z=0,
+                ),
+                h3_save_parser.TOWN_OWNERSHIP_REASON_MISSING_TOWN_POSITION,
+            ),
+        )
+
+        for town, expected_reason in cases:
+            with self.subTest(reason=expected_reason):
+                observation = h3_save_parser.infer_current_town_ownership(
+                    (town,),
+                    (hero,),
+                )[0]
+
+                self.assertEqual(
+                    observation.ownership_status,
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                )
+                self.assertEqual(observation.reason, expected_reason)
 
     def test_parse_xor01_hero_at_keeps_army_when_position_window_is_invalid(self):
         data, name_offset = _build_xor_hero_fixture(name_offset=180)
