@@ -17,6 +17,10 @@ defined in [docs/release-policy.md](docs/release-policy.md).
   snapshots, exposed in town targets and used by the GUI.
 - Defensive owned-town alerts in the GUI, configured with `My color` and
   `Alert radius`, with alert rows that focus the threatening enemy hero.
+- Save-derived hero combat context for verified GM1 records, exposing current
+  primary and secondary skills in hero snapshots plus applied passive combat
+  modifiers and per-side model labels in estimate payloads, CLI output, and the
+  GUI estimate panel.
 
 ### Changed
 
@@ -26,6 +30,8 @@ defined in [docs/release-policy.md](docs/release-policy.md).
   destination level outside path mode.
 - Path, scan, context-menu, and portal-destination interactions now work in the
   dual-level map view.
+- Nearby neutral and hero-vs-hero estimates now use save-derived Attack/Defense
+  plus Offence, Armorer, and Archery when those fields are parsed and validated.
 
 ### Fixed
 
@@ -35,6 +41,10 @@ defined in [docs/release-policy.md](docs/release-policy.md).
 
 - Existing local configs keep `My color` unset and use the default
   `Alert radius` of `10` until changed in the GUI.
+- Battle estimates explicitly label applied save-derived combat modifiers and
+  omitted components. Artifacts, active spells, morale/luck, and tactics are
+  visible as omitted model components; terrain, specialties, and many creature
+  special abilities remain simplified or unmodeled.
 
 ## [0.1.0] - 2026-05-21
 

@@ -379,26 +379,27 @@ Implemented pieces:
    - builds other-hero target records from parsed hero armies and positions
    - detects removed neutral monster records from the late save log
 
-3. Scan and estimation in `tools/battle_estimator.py`
+3. Historical Phase 2 scan and estimation in `tools/battle_estimator.py`
    - filters targets to the selected hero's `z` level
    - uses Manhattan distance, `abs(dx) + abs(dy)`
    - filters removed neutrals by default, with `--include-removed` for debug
    - estimates neutral targets as one mapped creature stack
-   - estimates hero targets as army-only and marks them `army-only`
+   - estimated hero targets as army-only and marked them `army-only`
    - uses `500` simulations per scan target by default; `--simulations/-n`
      overrides this
    - keeps unsupported targets in the output with a clear note instead of
      crashing the whole scan
 
-Known Phase 2 limitations:
+Known Phase 2 limitations from this historical checkpoint:
 
 - `.h3m` neutral counts are base map object counts; save-side split/upgraded
   neutral compositions are not reconstructed.
 - Scan distance is not pathfinding. It ignores terrain, roads, obstacles,
   guards, movement points, and reachability.
 - Only same-level (`z`) targets are included.
-- Hero-vs-hero estimates use creature stacks only. Hero stats, skills,
-  artifacts, spells, morale, luck, terrain, and tactics are still not modeled.
+- Hero-vs-hero estimates used creature stacks only. This was superseded by the
+  later bounded hero-combat implementation for supported GM1 combat-context
+  records.
 - Unsupported H3M DEF/template mappings are reported as unsupported notes.
 
 Local real-file verification used this command shape; real save and map files
@@ -871,6 +872,50 @@ Invalid secondary vectors keep the accepted primary skills and return
 `unknown_secondary_skill`, or `truncated_secondary`. Unsupported save layouts
 still return `unavailable`, and no parser path falls back to VCMI starting
 skills or manually maintained recommendation state.
+
+### T18-T21 Combat Context And Estimator Implementation
+
+Implemented on 2026-05-25.
+
+The supported parser gate remains deliberately narrow:
+
+- loaded save path suffix is `.GM1` case-insensitively,
+- `H3SVG` starts at offset `0`,
+- the accepted hero record uses raw `0x00` encoding,
+- the hero record is already accepted by name, army, position, and owner
+  parsing.
+
+`HeroCombatContext` now carries `status`, `source`, `reason`,
+`primary_skills`, and validated `secondary_skills`. Only the loaded-save-aware
+parser path can set `source = save`. Direct byte scans, GM2 combat context, and
+XOR `0x01` combat context still return unavailable combat context, although
+their armies may still be parsed for army-only estimates.
+
+The estimator applies only these save-derived combat effects:
+
+- current/effective primary Attack and Defense,
+- Offence passive melee damage,
+- Armorer passive incoming damage reduction,
+- Archery passive ranged damage.
+
+Spell Power and Knowledge are exposed as parsed primary fields but are not used
+by the current battle simulator. Artifacts, active spells and spellbook effects,
+morale/luck, tactics, terrain, specialties, and many creature special abilities
+remain omitted or simplified.
+
+Estimate payloads and GUI/CLI output report an explicit combat model instead of
+overloading target notes. Per-side statuses are estimator-facing:
+
+- `army-only`: no save-derived combat context was applied for that side,
+- `primary-only`: primary Attack/Defense was applied, but secondary passives
+  were not validated,
+- `primary+secondary`: primary Attack/Defense and validated secondary passives
+  were available,
+- `partial`: reserved for future partially parsed save-derived context.
+
+The GUI estimate panel shows a compact model label and applied component chips,
+and lists globally omitted model components so partial modeling is visible to
+the user.
 
 Experience, level, and mana are supporting fields. They can help validate a
 fixture or explain a parsed context, but they should not be hard gates for

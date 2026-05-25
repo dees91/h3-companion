@@ -21,6 +21,21 @@ maps, saves, or binaries; you need your own legally installed copy of the game.
   route layers.
 - Secondary-skill recommendations for standard heroes.
 
+## Battle Model Transparency
+
+Battle estimates still start from the detected creature stacks in your save. For
+verified hero-combat save context, the estimator also applies save-derived
+current Attack/Defense and passive Offence, Armorer, and Archery modifiers. This
+currently covers a narrow GM1 combat-context structure; observed GM1/GM2 hero
+armies can still be listed and scanned even when their combat modifiers are not
+available.
+
+The CLI and GUI label each estimate side as `army-only`, `primary-only`, or
+`primary+secondary`, and show which modifiers were applied. The GUI also lists
+major omitted model components: artifacts, active spells, morale/luck, and
+tactics. Other simplifications remain, including terrain effects, specialty
+effects, and many creature special abilities.
+
 ## Screenshots
 
 Use the map view to turn an autosave into a tactical overview: detected heroes,

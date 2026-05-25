@@ -195,8 +195,11 @@ those files instead of raw `json.loads()`.
 - Contains hardcoded HoMM3 creature stats derived from VCMI data.
 - Supports manual army mode, autosave hero mode, save hero listing, and nearby
   target scanning.
-- Simulation is intentionally simplified and does not model hero stats, spells,
-  artifacts, morale, luck, or many special creature abilities.
+- Uses save-derived primary Attack/Defense and passive Offence, Armorer, and
+  Archery when parsed through supported hero combat context.
+- Simulation is intentionally simplified and does not model artifacts, active
+  spells, morale, luck, tactics, terrain effects, specialties, or many special
+  creature abilities.
 
 `tools/h3_save_parser.py`
 
@@ -208,6 +211,8 @@ those files instead of raw `json.loads()`.
   - `~/.cache/vcmi-battle-estimator`
 - Hero army scanner for observed multiplayer/hotseat save structures.
 - Best-effort current town ownership inference for observed GM1/GM2 structures.
+- Bounded hero combat context parsing for loaded `.GM1` saves with `H3SVG` at
+  offset `0` and raw `0x00` hero records.
 - Hidden target persistence.
 - `My color` and `Alert radius` local config persistence.
 - Manual current-skill state persistence for hero recommendations.
@@ -267,9 +272,17 @@ Hero save parsing:
 - Hotseat/unencoded structures are also handled through the parser's supported
   key set.
 - Parser reads hero name, army stacks, position when available, and owner color.
-- Current secondary skills are not automatically parsed from saves. The skill
-  recommendation UI uses manually maintained current skill state, falling back
-  to VCMI starting skills.
+- Save-derived hero combat context is supported only for loaded `.GM1` saves
+  whose `H3SVG` signature is at offset `0` and whose accepted hero combat record
+  uses raw `0x00` bytes.
+- Supported combat context can expose current/effective primary skills and
+  validated current secondary skills. The estimator uses only Attack/Defense and
+  passive Offence, Armorer, and Archery.
+- Unsupported combat-context variants include GM2 and XOR `0x01` combat fields;
+  their hero armies can still be parsed for army-only estimates.
+- The hero skill recommendation UI still uses manually maintained current skill
+  state, falling back to VCMI starting skills. That recommendation state must not
+  be used as combat-estimator input.
 
 ## Map And Routing Context
 

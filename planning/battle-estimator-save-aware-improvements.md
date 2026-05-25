@@ -124,14 +124,16 @@ underground together.
 
 ## Critical Implementation Notes
 
-- Current town ownership is not implemented today. Existing town markers expose
-  `.h3m` `initial_owner` only, and older planning explicitly marks current town
-  ownership as out of scope.
-- The parser currently extracts save-derived hero army, position, and owner
-  color from observed GM1/GM2 structures. Town ownership must be researched
-  separately from real local saves and then covered with synthetic tests.
-- Current hero combat context is not implemented today. `HeroArmy` contains
-  name, stacks, source offset, position, and owner color only.
+- Current town ownership is implemented for observed supported structures as
+  best-effort save-derived fields joined to H3M town targets. Older planning
+  that says current ownership is out of scope is historical.
+- The parser extracts save-derived hero army, position, owner color, current
+  town ownership evidence, and bounded hero combat context from observed
+  supported structures, with synthetic tests for supported and unavailable
+  cases.
+- `HeroArmy` includes a `combat_context` field. Supported loaded `.GM1`
+  `H3SVG=0` raw `0x00` combat records can expose current/effective primary
+  skills and validated current secondary skills.
 - Existing hero skill recommendation state is manually maintained for advice.
   It must not be reused as combat-estimator input unless a future task
   explicitly asks for a manual what-if mode.
@@ -1787,7 +1789,21 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- README now describes save-derived hero combat context, per-side estimate model
+  labels, and omitted model components without claiming broad GM2 combat support.
+- CHANGELOG Unreleased records improved neutral and hero-vs-hero estimates from
+  save-derived Attack/Defense plus Offence, Armorer, and Archery when parsed.
+- AGENTS.md documents the bounded `.GM1`/`H3SVG=0`/raw `0x00` combat-context
+  support and keeps hero skill recommendation state separate from combat math.
+- The save parsing checkpoint now marks earlier army-only hero estimate notes as
+  historical and documents the implemented T18-T21 combat context, estimator,
+  unsupported variants, and visible model labels.
+- Manual GUI compactness check: reviewed the T21 Estimate panel CSS and DOM
+  shape after implementation; model labels use wrapping `long-value` rows and
+  chip rows use flex wrapping with no changes to hero lists or scan rows.
+- Verified with `python3 -m unittest`, `node --check
+  tools/battle_estimator_gui/app.js`, `git status --short`, and staged-file
+  audit before commit.
 
 ---
 
@@ -1837,40 +1853,40 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 ### Checkpoint: Hero Combat Research Ready
 
-- [ ] T13 and T14 are `done`.
-- [ ] Current hero combat data hypothesis is documented.
-- [ ] The hypothesis covers primary skills, secondary skills, and explicitly
+- [x] T13 and T14 are `done`.
+- [x] Current hero combat data hypothesis is documented.
+- [x] The hypothesis covers primary skills, secondary skills, and explicitly
       marks artifacts, spellbook, mana, experience, level, and specialty data
       as supported, unsupported, or observed-but-not-modeled.
-- [ ] No private saves, private map files, or local absolute save paths are in
+- [x] No private saves, private map files, or local absolute save paths are in
       the working tree.
 
 ### Checkpoint: Hero Combat Parser Ready
 
-- [ ] T15, T16, T17, and T18 are `done`.
-- [ ] Synthetic fixtures prove complete, partial, and unsupported hero combat
+- [x] T15, T16, T17, and T18 are `done`.
+- [x] Synthetic fixtures prove complete, partial, and unsupported hero combat
       contexts.
-- [ ] Hero snapshots expose combat context without using VCMI starting skills
+- [x] Hero snapshots expose combat context without using VCMI starting skills
       or manually maintained recommendation state.
 
 ### Checkpoint: Passive Combat Estimator Ready
 
-- [ ] T19, T20, and T21 are `done`.
-- [ ] Save-derived primary Attack/Defense affect neutral and hero estimates
+- [x] T19, T20, and T21 are `done`.
+- [x] Save-derived primary Attack/Defense affect neutral and hero estimates
       when available.
-- [ ] Save-derived Offense, Armorer, and Archery affect estimates only when
+- [x] Save-derived Offense, Armorer, and Archery affect estimates only when
       current secondary skills are parsed.
-- [ ] GUI estimate details clearly label applied and omitted model components.
+- [x] GUI estimate details clearly label applied and omitted model components.
 
 ### Checkpoint: Complete
 
-- [ ] M07 is `done`.
-- [ ] T12 is `done`.
-- [ ] T22 is `done`.
-- [ ] Full Python suite passes.
-- [ ] JavaScript syntax check passes.
-- [ ] Manual GUI check has been recorded in completion notes.
-- [ ] Real save files remain excluded from the repository.
+- [x] M07 is `done`.
+- [x] T12 is `done`.
+- [x] T22 is `done`.
+- [x] Full Python suite passes.
+- [x] JavaScript syntax check passes.
+- [x] Manual GUI check has been recorded in completion notes.
+- [x] Real save files remain excluded from the repository.
 
 ## Risks And Mitigations
 
@@ -1945,4 +1961,4 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T19 | Apply Passive Combat Modifiers | done | T18 | hero-combat-estimator | Main | M | Core | `tools/battle_estimator.py`, estimator tests |
 | T20 | Expose Combat Model Notes | done | T19 | hero-combat-api | Main | S | API/CLI | `tools/battle_estimator.py`, `tools/battle_estimator_gui.py`, tests |
 | T21 | Render Estimate Model Details | done | T20 | hero-combat-frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
-| T22 | Hero Combat Docs And Verification | todo | T21 | hero-combat-quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint doc |
+| T22 | Hero Combat Docs And Verification | done | T21 | hero-combat-quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint doc |
