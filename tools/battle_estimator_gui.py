@@ -1195,7 +1195,7 @@ def _build_domain_snapshot_from_source(
     save_fingerprint = source.save_fingerprint
     map_fingerprint = source.map_fingerprint
     loaded_save = h3_save_parser.load_save(save_context.save_file)
-    detected_heroes = h3_save_parser.scan_xor01_hero_armies(loaded_save.data)
+    detected_heroes = h3_save_parser.scan_hero_armies_from_loaded_save(loaded_save)
     loaded_map = h3_map_parser.load_h3m(resolved_map_file, parse_objects=True)
     team_by_color = _team_by_color(loaded_map.players)
     heroes = _prefer_owned_heroes(detected_heroes)
@@ -2343,7 +2343,36 @@ def _serialize_hero(
         "army_summary": hero.army_summary,
         "total_creatures": hero.total_creatures,
         "ai_value": hero.ai_value,
+        "combat_context": _serialize_hero_combat_context(hero.combat_context),
         "hidden": hidden,
+    }
+
+
+def _serialize_hero_combat_context(context) -> dict:
+    return {
+        "status": context.status,
+        "source": context.source,
+        "reason": context.reason,
+        "primary": _serialize_hero_primary_skills(context.primary_skills),
+        "secondary_skills": [
+            {"skill": skill.skill_id, "level": skill.level}
+            for skill in context.secondary_skills
+        ],
+        "passive_modifiers": h3_save_parser.hero_combat_passive_modifiers(
+            context,
+        ),
+        "unsupported_observed": [],
+    }
+
+
+def _serialize_hero_primary_skills(primary_skills) -> dict | None:
+    if primary_skills is None:
+        return None
+    return {
+        "attack": primary_skills.attack,
+        "defense": primary_skills.defense,
+        "spell_power": primary_skills.spell_power,
+        "knowledge": primary_skills.knowledge,
     }
 
 

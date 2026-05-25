@@ -2514,6 +2514,50 @@ class H3SaveParserContractTests(unittest.TestCase):
                 hero_skill_recommender.CurrentSkill("armorer", "advanced"),
             ),
         )
+        self.assertEqual(hero.combat_context.source, h3_save_parser.HERO_COMBAT_SOURCE_SAVE)
+        self.assertEqual(
+            h3_save_parser.hero_combat_passive_modifiers(hero.combat_context),
+            {
+                "offence_melee_pct": 30,
+                "armorer_all_pct": 10,
+                "archery_ranged_pct": 10,
+            },
+        )
+
+    def test_passive_modifiers_require_save_source(self):
+        secondary_skills = (
+            hero_skill_recommender.CurrentSkill("offence", "expert"),
+            hero_skill_recommender.CurrentSkill("armorer", "advanced"),
+            hero_skill_recommender.CurrentSkill("archery", "basic"),
+        )
+        manual_like_context = h3_save_parser.HeroCombatContext(
+            status=h3_save_parser.HERO_COMBAT_STATUS_UNAVAILABLE,
+            reason=h3_save_parser.HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE,
+        )
+        save_context = h3_save_parser.HeroCombatContext(
+            status=h3_save_parser.HERO_COMBAT_STATUS_PARTIAL,
+            source=h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
+            primary_skills=h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
+            secondary_skills=secondary_skills,
+            reason="test_partial",
+        )
+
+        self.assertEqual(
+            h3_save_parser.hero_combat_passive_modifiers(manual_like_context),
+            {
+                "offence_melee_pct": 0,
+                "armorer_all_pct": 0,
+                "archery_ranged_pct": 0,
+            },
+        )
+        self.assertEqual(
+            h3_save_parser.hero_combat_passive_modifiers(save_context),
+            {
+                "offence_melee_pct": 30,
+                "armorer_all_pct": 10,
+                "archery_ranged_pct": 10,
+            },
+        )
 
     def test_secondary_combat_context_failures_keep_primary_only_context(self):
         levels_with_invalid_level = [0] * HERO_COMBAT_SECONDARY_SKILL_COUNT
@@ -2677,6 +2721,7 @@ class H3SaveParserContractTests(unittest.TestCase):
                     name_offset,
                     key=0x00,
                     combat_context_supported=True,
+                    combat_context_source=h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
                     hero_skill_id_by_index=skill_id_by_index,
                 )
 
@@ -2690,6 +2735,31 @@ class H3SaveParserContractTests(unittest.TestCase):
                     h3_save_parser.HERO_COMBAT_REASON_UNKNOWN_SECONDARY_SKILL,
                 )
                 self.assertEqual(hero.secondary_skills, ())
+
+    def test_direct_byte_parse_does_not_claim_save_combat_source(self):
+        data, name_offset = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            secondary_skills=(
+                (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+            ),
+            xor_key=0x00,
+        )
+
+        hero = h3_save_parser.parse_hero_at(
+            data,
+            name_offset,
+            key=0x00,
+            combat_context_supported=True,
+        )
+
+        self.assertIsNotNone(hero)
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_UNAVAILABLE,
+        )
+        self.assertIsNone(hero.combat_context.source)
+        self.assertIsNone(hero.primary_skills)
+        self.assertEqual(hero.secondary_skills, ())
 
     def test_gm2_primary_combat_context_is_unavailable(self):
         data, _ = _build_hero_combat_fixture(

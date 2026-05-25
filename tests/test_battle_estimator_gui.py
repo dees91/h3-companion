@@ -8680,6 +8680,167 @@ class BattleEstimatorGuiSnapshotTests(unittest.TestCase):
             secondary_skills,
         )
 
+    def test_supported_gm1_snapshot_serializes_combat_context(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            secondary_skills = (
+                (HERO_COMBAT_ARCHERY_INDEX, HERO_COMBAT_LEVEL_BASIC, 1),
+                (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 2),
+                (HERO_COMBAT_ARMORER_INDEX, HERO_COMBAT_LEVEL_ADVANCED, 3),
+            )
+            _write_gui_combat_save(
+                game_dir,
+                "001.GM1",
+                primary_skills=(8, 6, 4, 5),
+                secondary_skills=secondary_skills,
+            )
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m")
+
+            snapshot = battle_estimator_gui.build_state_snapshot(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+        combat_context = snapshot["heroes"][0]["combat_context"]
+        self.assertEqual(
+            combat_context["status"],
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
+        )
+        self.assertEqual(
+            combat_context["source"],
+            h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
+        )
+        self.assertIsNone(combat_context["reason"])
+        self.assertEqual(
+            combat_context["primary"],
+            {"attack": 8, "defense": 6, "spell_power": 4, "knowledge": 5},
+        )
+        self.assertEqual(
+            combat_context["secondary_skills"],
+            [
+                {"skill": "archery", "level": "basic"},
+                {"skill": "offence", "level": "expert"},
+                {"skill": "armorer", "level": "advanced"},
+            ],
+        )
+        self.assertEqual(
+            combat_context["passive_modifiers"],
+            {
+                "offence_melee_pct": 30,
+                "armorer_all_pct": 10,
+                "archery_ranged_pct": 10,
+            },
+        )
+        self.assertEqual(combat_context["unsupported_observed"], [])
+
+    def test_primary_only_snapshot_serializes_secondary_failure_reason(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_combat_save(
+                game_dir,
+                "001.GM1",
+                primary_skills=(8, 6, 4, 5),
+                secondary_count=9,
+                secondary_skills=(
+                    (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+                ),
+            )
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m")
+
+            snapshot = battle_estimator_gui.build_state_snapshot(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+        combat_context = snapshot["heroes"][0]["combat_context"]
+        self.assertEqual(
+            combat_context["status"],
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_ONLY,
+        )
+        self.assertEqual(
+            combat_context["source"],
+            h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
+        )
+        self.assertEqual(
+            combat_context["reason"],
+            h3_save_parser.HERO_COMBAT_REASON_INVALID_SECONDARY_COUNT,
+        )
+        self.assertEqual(
+            combat_context["primary"],
+            {"attack": 8, "defense": 6, "spell_power": 4, "knowledge": 5},
+        )
+        self.assertEqual(combat_context["secondary_skills"], [])
+        self.assertEqual(
+            combat_context["passive_modifiers"],
+            {
+                "offence_melee_pct": 0,
+                "armorer_all_pct": 0,
+                "archery_ranged_pct": 0,
+            },
+        )
+
+    def test_unsupported_gm2_snapshot_serializes_unavailable_combat_context(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_combat_save(
+                game_dir,
+                "001.GM2",
+                primary_skills=(8, 6, 4, 5),
+            )
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m")
+
+            snapshot = battle_estimator_gui.build_state_snapshot(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+        combat_context = snapshot["heroes"][0]["combat_context"]
+        self.assertEqual(
+            combat_context["status"],
+            h3_save_parser.HERO_COMBAT_STATUS_UNAVAILABLE,
+        )
+        self.assertIsNone(combat_context["source"])
+        self.assertEqual(
+            combat_context["reason"],
+            h3_save_parser.HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE,
+        )
+        self.assertIsNone(combat_context["primary"])
+        self.assertEqual(combat_context["secondary_skills"], [])
+        self.assertEqual(
+            combat_context["passive_modifiers"],
+            {
+                "offence_melee_pct": 0,
+                "armorer_all_pct": 0,
+                "archery_ranged_pct": 0,
+            },
+        )
+
+    def test_partial_combat_context_serializes_distinct_status(self):
+        context = h3_save_parser.HeroCombatContext(
+            status=h3_save_parser.HERO_COMBAT_STATUS_PARTIAL,
+            source=h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
+            primary_skills=h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
+            reason="test_partial",
+        )
+
+        payload = battle_estimator_gui._serialize_hero_combat_context(context)
+
+        self.assertEqual(payload["status"], h3_save_parser.HERO_COMBAT_STATUS_PARTIAL)
+        self.assertEqual(payload["source"], h3_save_parser.HERO_COMBAT_SOURCE_SAVE)
+        self.assertEqual(payload["reason"], "test_partial")
+        self.assertEqual(
+            payload["primary"],
+            {"attack": 8, "defense": 6, "spell_power": 4, "knowledge": 5},
+        )
+        self.assertEqual(payload["secondary_skills"], [])
+        self.assertEqual(payload["unsupported_observed"], [])
+
     def test_follow_latest_snapshot_uses_latest_numeric_save_and_marks_removed_neutrals(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -8949,6 +9110,7 @@ def _write_gui_combat_save(
     hero_name="Isra",
     primary_skills=(8, 6, 4, 5),
     secondary_skills=(),
+    secondary_count=None,
     name_offset=256,
     xor_key=0x00,
 ) -> tuple[Path, int]:
@@ -8956,6 +9118,7 @@ def _write_gui_combat_save(
         hero_name=hero_name,
         primary_skills=primary_skills,
         secondary_skills=secondary_skills,
+        secondary_count=secondary_count,
         name_offset=name_offset,
         xor_key=xor_key,
     )

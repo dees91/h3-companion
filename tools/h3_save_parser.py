@@ -115,6 +115,8 @@ HERO_COMBAT_PRIMARY_SIZE = 4
 HERO_COMBAT_STATUS_UNAVAILABLE = "unavailable"
 HERO_COMBAT_STATUS_PRIMARY_ONLY = "primary-only"
 HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY = "primary+secondary"
+HERO_COMBAT_STATUS_PARTIAL = "partial"
+HERO_COMBAT_SOURCE_SAVE = "save"
 HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE = "unsupported_save_structure"
 HERO_COMBAT_REASON_TRUNCATED_PRIMARY = "truncated_primary"
 HERO_COMBAT_REASON_TRUNCATED_SECONDARY = "truncated_secondary"
@@ -129,6 +131,28 @@ HERO_COMBAT_SECONDARY_LEVEL_BY_ID = {
     1: "basic",
     2: "advanced",
     3: "expert",
+}
+HERO_COMBAT_PASSIVE_MODIFIER_DEFAULTS = {
+    "offence_melee_pct": 0,
+    "armorer_all_pct": 0,
+    "archery_ranged_pct": 0,
+}
+HERO_COMBAT_PASSIVE_MODIFIERS = {
+    "offence": {
+        "basic": ("offence_melee_pct", 10),
+        "advanced": ("offence_melee_pct", 20),
+        "expert": ("offence_melee_pct", 30),
+    },
+    "armorer": {
+        "basic": ("armorer_all_pct", 5),
+        "advanced": ("armorer_all_pct", 10),
+        "expert": ("armorer_all_pct", 15),
+    },
+    "archery": {
+        "basic": ("archery_ranged_pct", 10),
+        "advanced": ("archery_ranged_pct", 25),
+        "expert": ("archery_ranged_pct", 50),
+    },
 }
 H3M_TOWN_OBJECT_ID = 98
 TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY = "hero_on_town_tile_proxy"
@@ -384,6 +408,7 @@ class HeroCombatContext:
     """Save-derived hero combat fields and their parse confidence status."""
 
     status: str = HERO_COMBAT_STATUS_UNAVAILABLE
+    source: str | None = None
     primary_skills: HeroPrimarySkills | None = None
     secondary_skills: tuple["CurrentSkill", ...] = ()
     reason: str | None = HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE
@@ -394,13 +419,18 @@ class HeroCombatContext:
             HERO_COMBAT_STATUS_UNAVAILABLE,
             HERO_COMBAT_STATUS_PRIMARY_ONLY,
             HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
+            HERO_COMBAT_STATUS_PARTIAL,
         ):
             raise ValueError(f"unknown hero combat context status: {self.status!r}")
+        if self.source is not None and self.source != HERO_COMBAT_SOURCE_SAVE:
+            raise ValueError(f"unknown hero combat context source: {self.source!r}")
         if self.status == HERO_COMBAT_STATUS_UNAVAILABLE:
             if self.primary_skills is not None:
                 raise ValueError("unavailable combat context cannot include primary skills")
             if self.secondary_skills:
                 raise ValueError("unavailable combat context cannot include secondary skills")
+            if self.source is not None:
+                raise ValueError("unavailable combat context cannot include a source")
             if self.reason is None:
                 raise ValueError("unavailable combat context requires a reason")
         if self.status == HERO_COMBAT_STATUS_PRIMARY_ONLY:
@@ -408,6 +438,8 @@ class HeroCombatContext:
                 raise ValueError("primary-only combat context requires primary skills")
             if self.secondary_skills:
                 raise ValueError("primary-only combat context cannot include secondary skills")
+            if self.source != HERO_COMBAT_SOURCE_SAVE:
+                raise ValueError("primary-only combat context requires save source")
             if self.reason is None:
                 raise ValueError("primary-only combat context requires a reason")
         if self.status == HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY:
@@ -415,10 +447,19 @@ class HeroCombatContext:
                 raise ValueError(
                     "primary+secondary combat context requires primary skills"
                 )
+            if self.source != HERO_COMBAT_SOURCE_SAVE:
+                raise ValueError("primary+secondary combat context requires save source")
             if self.reason is not None:
                 raise ValueError(
                     "primary+secondary combat context must not include a reason"
                 )
+        if self.status == HERO_COMBAT_STATUS_PARTIAL:
+            if self.primary_skills is None and not self.secondary_skills:
+                raise ValueError("partial combat context requires parsed data")
+            if self.source != HERO_COMBAT_SOURCE_SAVE:
+                raise ValueError("partial combat context requires save source")
+            if self.reason is None:
+                raise ValueError("partial combat context requires a reason")
 
 
 @dataclass(frozen=True)
@@ -975,6 +1016,11 @@ def scan_hero_armies_from_loaded_save(loaded_save: LoadedSave) -> tuple[HeroArmy
     return scan_xor01_hero_armies(
         loaded_save.data,
         combat_context_supported=combat_context_supported,
+        combat_context_source=(
+            HERO_COMBAT_SOURCE_SAVE
+            if combat_context_supported
+            else None
+        ),
         hero_skill_id_by_index=(
             _hero_skill_id_by_index()
             if combat_context_supported
@@ -1861,15 +1907,42 @@ def _hero_skill_id_by_index() -> dict[int, str]:
     return by_index
 
 
+def hero_combat_passive_modifiers(
+    context: HeroCombatContext,
+) -> dict[str, int]:
+    """Return save-derived passive combat modifier percentages."""
+
+    modifiers = dict(HERO_COMBAT_PASSIVE_MODIFIER_DEFAULTS)
+    if context.source != HERO_COMBAT_SOURCE_SAVE:
+        return modifiers
+    if context.status not in (
+        HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
+        HERO_COMBAT_STATUS_PARTIAL,
+    ):
+        return modifiers
+
+    for skill in context.secondary_skills:
+        modifier = HERO_COMBAT_PASSIVE_MODIFIERS.get(skill.skill_id, {}).get(
+            skill.level
+        )
+        if modifier is None:
+            continue
+        key, value = modifier
+        modifiers[key] = value
+    return modifiers
+
+
 def _hero_combat_context_for_record(
     data: bytes,
     name_offset: int,
     key: int,
     combat_context_supported: bool,
+    combat_context_source: str | None,
     hero_skill_id_by_index: dict[int, str] | None,
 ) -> HeroCombatContext:
     if (
         not combat_context_supported
+        or combat_context_source != HERO_COMBAT_SOURCE_SAVE
         or key != HERO_COMBAT_SUPPORTED_XOR_KEY
         or not data.startswith(H3SVG_SIGNATURE)
     ):
@@ -1891,11 +1964,13 @@ def _hero_combat_context_for_record(
     except HeroSecondarySkillDecodeError as exc:
         return HeroCombatContext(
             status=HERO_COMBAT_STATUS_PRIMARY_ONLY,
+            source=combat_context_source,
             primary_skills=primary_skills,
             reason=exc.reason,
         )
     return HeroCombatContext(
         status=HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
+        source=combat_context_source,
         primary_skills=primary_skills,
         secondary_skills=secondary_skills,
         reason=None,
@@ -1908,6 +1983,7 @@ def parse_hero_at(
     key: int = HERO_ARMY_XOR_KEY,
     *,
     combat_context_supported: bool = False,
+    combat_context_source: str | None = None,
     hero_skill_id_by_index: dict[int, str] | None = None,
 ) -> HeroArmy | None:
     """Parse one hero-army candidate by hero-name offset and XOR key."""
@@ -1958,6 +2034,7 @@ def parse_hero_at(
             name_offset,
             key,
             combat_context_supported,
+            combat_context_source,
             hero_skill_id_by_index,
         ),
     )
@@ -1968,6 +2045,7 @@ def parse_xor01_hero_at(
     name_offset: int,
     *,
     combat_context_supported: bool = False,
+    combat_context_source: str | None = None,
     hero_skill_id_by_index: dict[int, str] | None = None,
 ) -> HeroArmy | None:
     """Parse one XOR 0x01 hero-army candidate by hero-name offset."""
@@ -1977,6 +2055,7 @@ def parse_xor01_hero_at(
         name_offset,
         HERO_ARMY_XOR_KEY,
         combat_context_supported=combat_context_supported,
+        combat_context_source=combat_context_source,
         hero_skill_id_by_index=hero_skill_id_by_index,
     )
 
@@ -1985,6 +2064,7 @@ def scan_xor01_hero_armies(
     data: bytes,
     *,
     combat_context_supported: bool = False,
+    combat_context_source: str | None = None,
     hero_skill_id_by_index: dict[int, str] | None = None,
 ) -> tuple[HeroArmy, ...]:
     """Scan decompressed save bytes for encoded and hotseat hero armies."""
@@ -2001,6 +2081,7 @@ def scan_xor01_hero_armies(
                 name_offset,
                 key,
                 combat_context_supported=combat_context_supported,
+                combat_context_source=combat_context_source,
                 hero_skill_id_by_index=hero_skill_id_by_index,
             )
             if hero_army is not None:
