@@ -1,4 +1,4 @@
-# Battle Estimator Current Town Alerts - Task Breakdown
+# Battle Estimator Save-Aware Improvements - Task Breakdown
 
 > **Source**: planning discussion on 2026-05-25.
 >
@@ -174,7 +174,7 @@ Recommended `castle_alerts_status` values:
 ## Dependency Graph
 
 ```text
-Current Town Alerts
+Save-Aware Improvements
 
   Research:
     T01 [Collect Local Save Evidence]

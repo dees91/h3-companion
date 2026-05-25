@@ -116,9 +116,10 @@ For save parsing, autosaves, and local config/cache behavior:
   and early save parsing context.
 - `planning/phase-1-battle-estimator-autosave-mvp-tasks.md` for autosave MVP
   implementation decisions and parser test expectations.
-- `planning/battle-estimator-current-town-alerts.md` for save-derived current
-  town ownership research, player color settings, alert radius behavior, and
-  defensive castle/town threat alert tasks.
+- `planning/battle-estimator-save-aware-improvements.md` for save-derived
+  current town ownership research, player color settings, alert radius
+  behavior, defensive castle/town threat alerts, and related save-aware
+  improvement tasks.
 - `tools/battle_estimator_save_parsing_checkpoint.md` for detailed historical
   save parsing findings and observed GM1/GM2 structures.
 
