@@ -1516,20 +1516,43 @@ current snapshot proves insufficient during implementation.
 using simple canvas-drawn symbols in addition to existing colors.
 
 **Acceptance criteria:**
-- [ ] One-way monolith entrance has an outbound direction symbol.
-- [ ] One-way monolith exit is visibly exit-only and does not look like a
+- [x] One-way monolith entrance has an outbound direction symbol.
+- [x] One-way monolith exit is visibly exit-only and does not look like a
       normal usable entrance.
-- [ ] Two-way monolith has a bidirectional symbol.
-- [ ] Subterranean gate has a distinct level-transfer/stairs-style symbol.
-- [ ] Marker identity remains readable with route overlays, scan rings, hover
+- [x] Two-way monolith has a bidirectional symbol.
+- [x] Subterranean gate has a distinct level-transfer/stairs-style symbol.
+- [x] Marker identity remains readable with route overlays, scan rings, hover
       rings, active rings, and compact zoom levels.
 
 **Verification:**
-- [ ] Add or update canvas drawing smoke tests.
-- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
-- [ ] Manual GUI check on a map with one-way, two-way, and subterranean
+- [x] Add or update canvas drawing smoke tests.
+- [x] Run `node --check tools/battle_estimator_gui/app.js`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Manual GUI check on a map with one-way, two-way, and subterranean
       portals.
+
+**Completion Notes (2026-05-25):**
+- Replaced the previous shared white portal stripe with canvas-drawn symbols
+  selected by `portalMarkerSymbolKind()`: outbound arrow for one-way entrances,
+  exit-only barrier/chevron for one-way exits, bidirectional arrows for two-way
+  monoliths, and stairs for subterranean gates.
+- Kept portal colors, marker bodies, hit testing, relation state, and path/click
+  semantics unchanged. Symbols draw after the portal body and before scan,
+  hover, and active rings, so rings remain outside marker identity.
+- Added frontend smoke coverage that logs path drawing operations and verifies
+  distinct symbol signatures for one-way entrance, one-way exit, two-way
+  monolith, subterranean gate, unknown fallback, and removal of the old shared
+  stripe.
+- Manual GUI check: started the local GUI against the current Diamond save
+  `343.GM2` and map `dees91,Danny96 2026.05.24 18;35 Diamond.h3m`; verified a
+  real snapshot with 46 portals and 46 edges, including one-way entrances,
+  one-way exits, two-way monoliths, and subterranean gates. Headless Chrome
+  centered representative portals `portal:2560`, `portal:2564`, `portal:2528`,
+  and `portal:2435`; symbol pixels remained visible at normal zoom `0.8` and
+  compact zoom about `0.4`.
+- Verification: `node --check tools/battle_estimator_gui/app.js`;
+  `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`.
 
 **Dependencies:** Task 26
 
@@ -1823,8 +1846,8 @@ After Tasks 9, 17, 25, and 31:
 | 24 | Add Path Segment List And Cross-Level Navigation | done | 23 |
 | 25 | End-To-End Pathfinding Verification | done | 18, 19, 20, 21, 22, 23, 24 |
 | 26 | Add Portal Relation View State | done | 8 |
-| 27 | Redesign Portal Marker Symbols | todo | 26 |
-| 28 | Render Portal Relation Overlay | blocked | 26, 27 |
+| 27 | Redesign Portal Marker Symbols | done | 26 |
+| 28 | Render Portal Relation Overlay | todo | 26, 27 |
 | 29 | Expand Portal Target Details And Navigation | blocked | 28 |
 | 30 | Preserve Path Mode Portal Semantics | blocked | 29 |
 | 31 | End-To-End Portal Readability Verification | blocked | 26, 27, 28, 29, 30 |

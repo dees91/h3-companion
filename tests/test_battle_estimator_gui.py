@@ -305,6 +305,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "Town target is not a battle simulation target.",
             "Portal target is not a battle simulation target.",
             "portalDestinationText",
+            "portalMarkerSymbolKind",
+            "drawPortalMarkerSymbol",
             "portalRelationForSource",
             "currentPortalRelation",
             "currentPortalRelationStateForTest",
@@ -472,6 +474,39 @@ const context = new Proxy({{
       width,
       height
     }});
+  }},
+  strokeRect(x, y, width, height) {{
+    drawOperations.push({{
+      op: "strokeRect",
+      strokeStyle: this.strokeStyle,
+      lineWidth: this.lineWidth,
+      globalAlpha: this.globalAlpha,
+      x,
+      y,
+      width,
+      height
+    }});
+  }},
+  moveTo(x, y) {{
+    drawOperations.push({{
+      op: "moveTo",
+      strokeStyle: this.strokeStyle,
+      lineWidth: this.lineWidth,
+      x,
+      y
+    }});
+  }},
+  lineTo(x, y) {{
+    drawOperations.push({{
+      op: "lineTo",
+      strokeStyle: this.strokeStyle,
+      lineWidth: this.lineWidth,
+      x,
+      y
+    }});
+  }},
+  closePath() {{
+    drawOperations.push({{ op: "closePath" }});
   }},
   stroke() {{
     drawOperations.push({{
@@ -1563,6 +1598,100 @@ assert.strictEqual(elements["path-mode-toggle"].disabled, false);
 assert.strictEqual(elements["path-mode-toggle"].checked, false);
 assert.strictEqual(renderedView.pathMode, false);
 assert.strictEqual(elements["path-state"].textContent, "No path requested.");
+const symbolSnapshot = {{
+  map: {{ width: 8, height: 2, levels: 1 }},
+  route_layers: [["LLLLLLLL", "LLLLLLLL"]],
+  selected_hero_id: null,
+  heroes: [],
+  neutral_targets: [],
+  town_targets: [],
+  portal_targets: [
+    {{
+      id: "portal:entrance",
+      object_index: 1,
+      position: {{ x: 0, y: 0, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "entrance",
+      channel_key: "monolith-one-way:1"
+    }},
+    {{
+      id: "portal:exit",
+      object_index: 2,
+      position: {{ x: 2, y: 0, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "exit",
+      channel_key: "monolith-one-way:1"
+    }},
+    {{
+      id: "portal:two-way",
+      object_index: 3,
+      position: {{ x: 4, y: 0, z: 0 }},
+      portal_type: "monolith_two_way",
+      role: "both",
+      channel_key: "monolith-two-way:2"
+    }},
+    {{
+      id: "portal:stairs",
+      object_index: 4,
+      position: {{ x: 6, y: 0, z: 0 }},
+      portal_type: "subterranean_gate",
+      role: "both",
+      channel_key: "subterranean:4"
+    }}
+  ],
+  portal_edges: []
+}};
+drawOperations.length = 0;
+helpers.renderSnapshot(symbolSnapshot, {{ preserveView: false }});
+const symbolView = helpers.currentMapViewForTest();
+const symbolMarkers = new Map(symbolView.markers.map((marker) => [marker.id, marker]));
+assert.strictEqual(helpers.portalMarkerSymbolKind(symbolMarkers.get("portal:entrance")), "outbound");
+assert.strictEqual(helpers.portalMarkerSymbolKind(symbolMarkers.get("portal:exit")), "exit_only");
+assert.strictEqual(helpers.portalMarkerSymbolKind(symbolMarkers.get("portal:two-way")), "bidirectional");
+assert.strictEqual(helpers.portalMarkerSymbolKind(symbolMarkers.get("portal:stairs")), "stairs");
+assert.strictEqual(helpers.portalMarkerSymbolKind({{ type: "portal", portalType: "unknown" }}), "unknown");
+const entrancePoint = helpers.worldToScreen(symbolMarkers.get("portal:entrance").world, symbolView);
+const exitPoint = helpers.worldToScreen(symbolMarkers.get("portal:exit").world, symbolView);
+const twoWayPoint = helpers.worldToScreen(symbolMarkers.get("portal:two-way").world, symbolView);
+const stairsPoint = helpers.worldToScreen(symbolMarkers.get("portal:stairs").world, symbolView);
+const entranceOps = symbolLineOpsNear(entrancePoint);
+const exitSegments = adjacentLineSegments(symbolLineOpsNear(exitPoint));
+const twoWayOps = symbolLineOpsNear(twoWayPoint);
+const stairsSegments = adjacentLineSegments(symbolLineOpsNear(stairsPoint));
+assert.ok(entranceOps.some((operation) => (
+  operation.op === "lineTo"
+  && operation.x > entrancePoint.x + 7
+  && Math.abs(operation.y - entrancePoint.y) <= 1
+)), "one-way entrance should draw an outbound arrow point");
+assert.ok(!entranceOps.some((operation) => (
+  operation.op === "lineTo"
+  && operation.x < entrancePoint.x - 7
+  && Math.abs(operation.y - entrancePoint.y) <= 1
+)), "one-way entrance should not draw a left-facing arrow point");
+assert.ok(hasVerticalSegment(exitSegments, 10), "one-way exit should draw an exit-only barrier");
+assert.ok(!hasHorizontalSegment(exitSegments, 14), "one-way exit should not reuse the entrance shaft");
+assert.ok(twoWayOps.some((operation) => (
+  operation.op === "lineTo"
+  && operation.x > twoWayPoint.x + 7
+  && Math.abs(operation.y - twoWayPoint.y) <= 1
+)), "two-way monolith should draw a right arrow point");
+assert.ok(twoWayOps.some((operation) => (
+  operation.op === "lineTo"
+  && operation.x < twoWayPoint.x - 7
+  && Math.abs(operation.y - twoWayPoint.y) <= 1
+)), "two-way monolith should draw a left arrow point");
+assert.ok(horizontalSegmentCount(stairsSegments, 5) >= 3, "subterranean gate should draw stair steps");
+assert.strictEqual(
+  drawOperations.filter((operation) => (
+    operation.op === "fillRect"
+    && operation.fillStyle === "#f8fafc"
+    && operation.width <= 20
+    && operation.height >= 20
+  )).length,
+  0,
+  "portal symbols should replace the old shared white stripe"
+);
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 function targetFilterButtons() {{
   return elements["target-filter-control"].children;
 }}
@@ -1626,6 +1755,41 @@ function heroSkillRequestsSince(startIndex, path) {{
 }}
 function mapTileScreenPoint(x, y, view) {{
   return helpers.worldToScreen({{ x: (x + 0.5) * 28, y: (y + 0.5) * 28 }}, view);
+}}
+function symbolLineOpsNear(point) {{
+  return drawOperations.filter((operation) => (
+    (operation.op === "moveTo" || operation.op === "lineTo")
+    && operation.strokeStyle === "#f8fafc"
+    && Math.abs(operation.x - point.x) <= 28
+    && Math.abs(operation.y - point.y) <= 28
+  ));
+}}
+function adjacentLineSegments(operations) {{
+  const segments = [];
+  for (let index = 0; index < operations.length - 1; index += 1) {{
+    if (operations[index].op === "moveTo" && operations[index + 1].op === "lineTo") {{
+      segments.push({{ from: operations[index], to: operations[index + 1] }});
+    }}
+  }}
+  return segments;
+}}
+function hasHorizontalSegment(segments, minWidth) {{
+  return segments.some((segment) => (
+    Math.abs(segment.from.y - segment.to.y) <= 0.5
+    && Math.abs(segment.from.x - segment.to.x) >= minWidth
+  ));
+}}
+function horizontalSegmentCount(segments, minWidth) {{
+  return segments.filter((segment) => (
+    Math.abs(segment.from.y - segment.to.y) <= 0.5
+    && Math.abs(segment.from.x - segment.to.x) >= minWidth
+  )).length;
+}}
+function hasVerticalSegment(segments, minHeight) {{
+  return segments.some((segment) => (
+    Math.abs(segment.from.x - segment.to.x) <= 0.5
+    && Math.abs(segment.from.y - segment.to.y) >= minHeight
+  ));
 }}
 const noSelectedSkillsSnapshot = {{
   ...markerSnapshot,

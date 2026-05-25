@@ -613,6 +613,25 @@
     return PORTAL_MARKER_STYLES[portalType] || PORTAL_MARKER_STYLES.unknown;
   }
 
+  function portalMarkerSymbolKind(marker) {
+    if (!marker || marker.type !== "portal") {
+      return "unknown";
+    }
+    if (marker.portalType === "subterranean_gate") {
+      return "stairs";
+    }
+    if (marker.portalType === "monolith_two_way") {
+      return "bidirectional";
+    }
+    if (marker.portalType === "monolith_one_way" && marker.role === "exit") {
+      return "exit_only";
+    }
+    if (marker.portalType === "monolith_one_way" && marker.role === "entrance") {
+      return "outbound";
+    }
+    return "unknown";
+  }
+
   function portalTargetsById(snapshot) {
     const targets = new Map();
     (snapshot.portal_targets || []).forEach((target) => {
@@ -1579,6 +1598,89 @@
     canvasContext.stroke();
   }
 
+  function portalSymbolStrokeWidth(radius) {
+    return clamp(radius * 0.2, 2, 4);
+  }
+
+  function drawPortalOutboundSymbol(screen, radius) {
+    canvasContext.beginPath();
+    canvasContext.moveTo(screen.x - radius * 0.48, screen.y);
+    canvasContext.lineTo(screen.x + radius * 0.48, screen.y);
+    canvasContext.moveTo(screen.x + radius * 0.2, screen.y - radius * 0.32);
+    canvasContext.lineTo(screen.x + radius * 0.48, screen.y);
+    canvasContext.lineTo(screen.x + radius * 0.2, screen.y + radius * 0.32);
+    canvasContext.stroke();
+  }
+
+  function drawPortalExitOnlySymbol(screen, radius) {
+    canvasContext.beginPath();
+    canvasContext.moveTo(screen.x + radius * 0.32, screen.y - radius * 0.54);
+    canvasContext.lineTo(screen.x + radius * 0.32, screen.y + radius * 0.54);
+    canvasContext.moveTo(screen.x - radius * 0.36, screen.y - radius * 0.34);
+    canvasContext.lineTo(screen.x + radius * 0.02, screen.y);
+    canvasContext.lineTo(screen.x - radius * 0.36, screen.y + radius * 0.34);
+    canvasContext.stroke();
+  }
+
+  function drawPortalBidirectionalSymbol(screen, radius) {
+    canvasContext.beginPath();
+    canvasContext.moveTo(screen.x - radius * 0.5, screen.y);
+    canvasContext.lineTo(screen.x + radius * 0.5, screen.y);
+    canvasContext.moveTo(screen.x + radius * 0.22, screen.y - radius * 0.3);
+    canvasContext.lineTo(screen.x + radius * 0.5, screen.y);
+    canvasContext.lineTo(screen.x + radius * 0.22, screen.y + radius * 0.3);
+    canvasContext.moveTo(screen.x - radius * 0.22, screen.y - radius * 0.3);
+    canvasContext.lineTo(screen.x - radius * 0.5, screen.y);
+    canvasContext.lineTo(screen.x - radius * 0.22, screen.y + radius * 0.3);
+    canvasContext.stroke();
+  }
+
+  function drawPortalStairsSymbol(screen, radius) {
+    const left = screen.x - radius * 0.45;
+    const top = screen.y - radius * 0.34;
+    const stepWidth = radius * 0.34;
+    const stepHeight = radius * 0.28;
+    canvasContext.beginPath();
+    canvasContext.moveTo(left, top);
+    canvasContext.lineTo(left + stepWidth, top);
+    canvasContext.moveTo(left + stepWidth, top + stepHeight);
+    canvasContext.lineTo(left + stepWidth * 2, top + stepHeight);
+    canvasContext.moveTo(left + stepWidth * 2, top + stepHeight * 2);
+    canvasContext.lineTo(left + stepWidth * 3, top + stepHeight * 2);
+    canvasContext.stroke();
+  }
+
+  function drawPortalUnknownSymbol(screen, radius) {
+    canvasContext.beginPath();
+    canvasContext.moveTo(screen.x, screen.y - radius * 0.46);
+    canvasContext.lineTo(screen.x + radius * 0.38, screen.y);
+    canvasContext.lineTo(screen.x, screen.y + radius * 0.46);
+    canvasContext.lineTo(screen.x - radius * 0.38, screen.y);
+    canvasContext.closePath();
+    canvasContext.stroke();
+  }
+
+  function drawPortalMarkerSymbol(marker, screen, radius) {
+    canvasContext.save();
+    canvasContext.strokeStyle = "#f8fafc";
+    canvasContext.lineWidth = portalSymbolStrokeWidth(radius);
+    canvasContext.lineCap = "round";
+    canvasContext.lineJoin = "round";
+    const symbolKind = portalMarkerSymbolKind(marker);
+    if (symbolKind === "outbound") {
+      drawPortalOutboundSymbol(screen, radius);
+    } else if (symbolKind === "exit_only") {
+      drawPortalExitOnlySymbol(screen, radius);
+    } else if (symbolKind === "bidirectional") {
+      drawPortalBidirectionalSymbol(screen, radius);
+    } else if (symbolKind === "stairs") {
+      drawPortalStairsSymbol(screen, radius);
+    } else {
+      drawPortalUnknownSymbol(screen, radius);
+    }
+    canvasContext.restore();
+  }
+
   function drawMarkers() {
     mapView.markers.forEach((marker) => {
       const screen = worldToScreen(marker.world, mapView);
@@ -1658,13 +1760,7 @@
           radius * 1.64,
           radius * 1.64
         );
-        canvasContext.fillStyle = "#f8fafc";
-        canvasContext.fillRect(
-          screen.x - radius * 0.28,
-          screen.y - radius * 0.92,
-          radius * 0.56,
-          radius * 1.84
-        );
+        drawPortalMarkerSymbol(marker, screen, radius);
       } else {
         canvasContext.beginPath();
         canvasContext.fillStyle = marker.hidden
@@ -4454,6 +4550,8 @@
     pathSegmentTypeLabel,
     portalRelationForSource,
     portalDestinationText,
+    portalMarkerSymbolKind,
+    drawPortalMarkerSymbol,
     portalMarkerLabel,
     portalTypeLabel,
     resetHeroSkills,
