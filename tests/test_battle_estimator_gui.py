@@ -278,6 +278,13 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "showHiddenInFlight",
             "showRouteOverlay",
             "showPortalLinks",
+            "dualLevelControl",
+            "dualLevelToggle",
+            "dualLevel",
+            "supportsDualLevelView",
+            "setDualLevelView",
+            "mapLaneGeometry",
+            "positionForCanvasPointInView",
             "ROUTE_OVERLAY_STYLES",
             "drawRouteOverlay",
             "drawPortalRelationOverlay",
@@ -363,6 +370,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="hero-ranking-list"',
             'id="hero-ranking-close-button"',
             'id="map-level-control"',
+            'id="dual-level-control"',
+            'id="dual-level-toggle"',
             'id="show-removed-toggle"',
             'id="show-hidden-toggle"',
             'id="show-route-overlay-toggle"',
@@ -371,6 +380,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="target-filter-control"',
             'Route Overlay',
             'Portal Links',
+            'Dual level',
             'Path Mode',
             'id="map-stage"',
             'id="map-tooltip"',
@@ -1500,6 +1510,7 @@ assert.deepStrictEqual(
   {{
     selectedHeroId: "hero:1",
     preserveView: true,
+    dualLevel: false,
     level: 1,
     zoom: 1.7,
     pan: {{ x: 22, y: -9 }}
@@ -1519,6 +1530,7 @@ assert.deepStrictEqual(
   {{
     selectedHeroId: "hero:0",
     preserveView: false,
+    dualLevel: false,
     level: 0,
     zoom: 1.7,
     pan: {{ x: 22, y: -9 }}
@@ -1699,6 +1711,69 @@ assert.strictEqual(elements["path-mode-toggle"].disabled, false);
 assert.strictEqual(elements["path-mode-toggle"].checked, false);
 assert.strictEqual(renderedView.pathMode, false);
 assert.strictEqual(elements["path-state"].textContent, "No path requested.");
+assert.strictEqual(elements["dual-level-toggle"].disabled, false);
+assert.strictEqual(elements["dual-level-toggle"].checked, false);
+assert.strictEqual(renderedView.dualLevel, false);
+assert.strictEqual(helpers.supportsDualLevelView(markerSnapshot), true);
+assert.strictEqual(helpers.supportsDualLevelView({{ map: {{ width: 4, height: 4, levels: 1 }} }}), false);
+assert.strictEqual(helpers.supportsDualLevelView({{ map: {{ width: 4, height: 4, levels: 3 }} }}), false);
+const singleLanes = helpers.mapLaneGeometry(markerSnapshot, renderedView);
+assert.strictEqual(singleLanes.length, 1);
+assert.strictEqual(singleLanes[0].level, 0);
+elements["dual-level-toggle"].checked = true;
+elements["dual-level-toggle"].dispatch("change", {{}});
+const dualView = helpers.currentMapViewForTest();
+assert.strictEqual(dualView.dualLevel, true);
+assert.strictEqual(dualView.level, renderedView.level);
+assert.strictEqual(elements["dual-level-toggle"].checked, true);
+assert.ok(elements["map-summary"].textContent.includes("Dual level"));
+const dualLanes = helpers.mapLaneGeometry(markerSnapshot, dualView);
+assert.strictEqual(dualLanes.length, 2);
+assert.deepStrictEqual(dualLanes.map((lane) => lane.level), [0, 1]);
+assert.strictEqual(dualLanes[0].tileSize, dualLanes[1].tileSize);
+assert.strictEqual(dualLanes[1].originWorld.x, dualLanes[0].widthWorld + dualLanes[0].gapWorld);
+assert.strictEqual(dualLanes[1].originWorld.y, 0);
+const laneOneScreen = helpers.worldToScreenInLane(
+  {{ x: dualLanes[1].tileSize * 2.5, y: dualLanes[1].tileSize * 1.5 }},
+  dualLanes[1],
+  dualView
+);
+const laneOneHit = helpers.screenToLaneWorld(laneOneScreen, dualLanes, dualView);
+assert.strictEqual(laneOneHit.lane.level, 1);
+assert.strictEqual(Math.floor(laneOneHit.world.x / laneOneHit.lane.tileSize), 2);
+assert.strictEqual(Math.floor(laneOneHit.world.y / laneOneHit.lane.tileSize), 1);
+const laneGapScreen = helpers.worldToScreen(
+  {{
+    x: dualLanes[0].widthWorld + (dualLanes[0].gapWorld / 2),
+    y: dualLanes[0].tileSize
+  }},
+  dualView
+);
+assert.strictEqual(helpers.screenToLaneWorld(laneGapScreen, dualLanes, dualView), null);
+assert.strictEqual(helpers.positionForCanvasPointInView(laneGapScreen, markerSnapshot, dualView), null);
+assert.deepStrictEqual(
+  helpers.positionForCanvasPointInView(laneOneScreen, markerSnapshot, dualView),
+  {{ x: 2, y: 1, z: 1 }}
+);
+assert.deepStrictEqual(
+  helpers.tilePositionForCanvasPoint(mapTileScreenPoint(2, 1, dualView), markerSnapshot, dualView),
+  {{ x: 2, y: 1, z: 0 }}
+);
+elements["dual-level-toggle"].checked = false;
+elements["dual-level-toggle"].dispatch("change", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().dualLevel, false);
+assert.strictEqual(elements["dual-level-toggle"].checked, false);
+assert.ok(elements["map-summary"].textContent.includes("Level 0"));
+elements["dual-level-toggle"].checked = true;
+elements["dual-level-toggle"].dispatch("change", {{}});
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: true }});
+assert.strictEqual(helpers.currentMapViewForTest().dualLevel, true);
+helpers.renderSnapshot({{ ...markerSnapshot, map: {{ width: 4, height: 4, levels: 3 }} }}, {{ preserveView: true }});
+assert.strictEqual(elements["dual-level-toggle"].disabled, true);
+assert.strictEqual(elements["dual-level-toggle"].checked, false);
+assert.strictEqual(helpers.currentMapViewForTest().dualLevel, false);
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+assert.strictEqual(helpers.currentMapViewForTest().dualLevel, false);
 const symbolSnapshot = {{
   map: {{ width: 8, height: 2, levels: 1 }},
   route_layers: [["LLLLLLLL", "LLLLLLLL"]],
@@ -1745,6 +1820,10 @@ const symbolSnapshot = {{
 drawOperations.length = 0;
 helpers.renderSnapshot(symbolSnapshot, {{ preserveView: false }});
 const symbolView = helpers.currentMapViewForTest();
+assert.strictEqual(symbolView.dualLevel, false);
+assert.strictEqual(elements["dual-level-toggle"].disabled, true);
+assert.strictEqual(elements["dual-level-toggle"].checked, false);
+assert.strictEqual(helpers.mapLaneGeometry(symbolSnapshot, symbolView).length, 1);
 const symbolMarkers = new Map(symbolView.markers.map((marker) => [marker.id, marker]));
 assert.strictEqual(helpers.portalMarkerSymbolKind(symbolMarkers.get("portal:entrance")), "outbound");
 assert.strictEqual(helpers.portalMarkerSymbolKind(symbolMarkers.get("portal:exit")), "exit_only");

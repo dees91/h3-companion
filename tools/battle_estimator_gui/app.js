@@ -22,6 +22,8 @@
     mapSummary: document.getElementById("map-summary"),
     objectCount: document.getElementById("object-count"),
     mapLevelControl: document.getElementById("map-level-control"),
+    dualLevelControl: document.getElementById("dual-level-control"),
+    dualLevelToggle: document.getElementById("dual-level-toggle"),
     targetFilterControl: document.getElementById("target-filter-control"),
     showRemovedToggle: document.getElementById("show-removed-toggle"),
     showHiddenToggle: document.getElementById("show-hidden-toggle"),
@@ -87,6 +89,7 @@
     showHiddenNeutrals: false,
     showRouteOverlay: true,
     showPortalLinks: true,
+    dualLevel: false,
     pathMode: false,
     targetFilter: "both",
     markers: [],
@@ -346,6 +349,32 @@
     };
   }
 
+  function worldToScreenInLane(world, lane, view) {
+    const origin = lane && lane.originWorld ? lane.originWorld : { x: 0, y: 0 };
+    return worldToScreen({
+      x: origin.x + world.x,
+      y: origin.y + world.y
+    }, view);
+  }
+
+  function screenToLaneWorld(point, lanes, view) {
+    const globalWorld = screenToWorld(point, view);
+    const candidates = Array.isArray(lanes) ? lanes : [];
+    for (let index = 0; index < candidates.length; index += 1) {
+      const lane = candidates[index];
+      const origin = lane.originWorld || { x: 0, y: 0 };
+      const x = globalWorld.x - origin.x;
+      const y = globalWorld.y - origin.y;
+      if (x >= 0 && y >= 0 && x < lane.widthWorld && y < lane.heightWorld) {
+        return {
+          lane,
+          world: { x, y }
+        };
+      }
+    }
+    return null;
+  }
+
   function tileSizeForMap(map) {
     const width = Math.max(1, map && map.width ? map.width : 1);
     const height = Math.max(1, map && map.height ? map.height : width);
@@ -358,6 +387,10 @@
       ? Number(snapshot.map.levels)
       : 1;
     return Math.max(1, Number.isInteger(levels) ? levels : 1);
+  }
+
+  function supportsDualLevelView(snapshot) {
+    return mapLevelCount(snapshot) === 2;
   }
 
   function positionLevel(position) {
@@ -1131,6 +1164,69 @@
     };
   }
 
+  function singleLevelLaneGeometry(snapshot, level) {
+    const worldSize = mapWorldSize(snapshot);
+    return [{
+      level: normalizeLevelForSnapshot(level, snapshot),
+      index: 0,
+      originWorld: { x: 0, y: 0 },
+      widthWorld: worldSize.width,
+      heightWorld: worldSize.height,
+      tileSize: worldSize.tileSize,
+      gapWorld: 0
+    }];
+  }
+
+  function dualLevelLaneGeometry(snapshot) {
+    const worldSize = mapWorldSize(snapshot);
+    const gapWorld = worldSize.tileSize * 2;
+    return [0, 1].map((level, index) => ({
+      level,
+      index,
+      originWorld: {
+        x: index * (worldSize.width + gapWorld),
+        y: 0
+      },
+      widthWorld: worldSize.width,
+      heightWorld: worldSize.height,
+      tileSize: worldSize.tileSize,
+      gapWorld
+    }));
+  }
+
+  function mapLaneGeometry(snapshot, view) {
+    const current = snapshot || mapView.snapshot;
+    const activeView = view || mapView;
+    if (activeView.dualLevel && supportsDualLevelView(current)) {
+      return dualLevelLaneGeometry(current);
+    }
+    return singleLevelLaneGeometry(current, activeView.level);
+  }
+
+  function positionForCanvasPointInView(point, snapshot, view) {
+    const current = snapshot || mapView.snapshot;
+    const activeView = view || mapView;
+    if (!current || !current.map) {
+      return null;
+    }
+    const hit = screenToLaneWorld(point, mapLaneGeometry(current, activeView), activeView);
+    if (!hit) {
+      return null;
+    }
+    const x = Math.floor(hit.world.x / hit.lane.tileSize);
+    const y = Math.floor(hit.world.y / hit.lane.tileSize);
+    const width = Math.max(1, current.map.width || 1);
+    const height = Math.max(1, current.map.height || width);
+    if (x < 0 || y < 0 || x >= width || y >= height) {
+      return null;
+    }
+    return {
+      x,
+      y,
+      z: hit.lane.level
+    };
+  }
+
   function fitMapToCanvas(snapshot) {
     if (!snapshot) {
       return;
@@ -1192,7 +1288,8 @@
     const current = snapshot || mapView.snapshot;
     const counts = markerCounts(mapView.markers);
     const dimensions = snapshotDimensions(current);
-    setText(elements.mapSummary, `${dimensions} | Level ${mapView.level}`);
+    const viewLabel = mapView.dualLevel ? "Dual level" : `Level ${mapView.level}`;
+    setText(elements.mapSummary, `${dimensions} | ${viewLabel}`);
     setText(
       elements.objectCount,
       `${counts.neutrals} targets | ${counts.towns} towns | ${counts.portals} portals`
@@ -1200,14 +1297,41 @@
     setText(elements.mapOverlayTitle, dimensions);
     setText(
       elements.mapOverlayDetail,
-      `Level ${mapView.level} | ${counts.heroes} heroes | ${counts.neutrals} neutrals | ${counts.towns} towns | ${counts.portals} portals`
+      `${viewLabel} | ${counts.heroes} heroes | ${counts.neutrals} neutrals | ${counts.towns} towns | ${counts.portals} portals`
     );
+  }
+
+  function syncDualLevelControl(snapshot) {
+    const current = snapshot || mapView.snapshot;
+    const supported = supportsDualLevelView(current);
+    if (!supported) {
+      mapView.dualLevel = false;
+    }
+    elements.dualLevelToggle.checked = Boolean(mapView.dualLevel && supported);
+    elements.dualLevelToggle.disabled = !supported;
+    elements.dualLevelToggle.title = supported
+      ? "Show surface and underground side by side"
+      : "Dual level requires exactly two map levels";
+    elements.dualLevelControl.title = elements.dualLevelToggle.title;
+  }
+
+  function setDualLevelView(enabled) {
+    const nextValue = Boolean(enabled && supportsDualLevelView(mapView.snapshot));
+    if (nextValue === mapView.dualLevel) {
+      syncDualLevelControl(mapView.snapshot);
+      return;
+    }
+    mapView.dualLevel = nextValue;
+    syncDualLevelControl(mapView.snapshot);
+    updateMapMetrics(mapView.snapshot);
+    drawMap();
   }
 
   function updateLevelControls(snapshot) {
     const current = snapshot || mapView.snapshot;
     clearNode(elements.mapLevelControl);
     if (!current || !current.map) {
+      syncDualLevelControl(current);
       return;
     }
 
@@ -1220,6 +1344,7 @@
       button.addEventListener("click", () => setMapLevel(level));
       elements.mapLevelControl.appendChild(button);
     }
+    syncDualLevelControl(current);
   }
 
   function renderTargetFilterControl() {
@@ -2437,6 +2562,7 @@
       zoom: mapView.zoom,
       pan: { x: mapView.pan.x, y: mapView.pan.y },
       level: mapView.level,
+      dualLevel: mapView.dualLevel,
       pathMode: mapView.pathMode,
       activeMarkerId: mapView.activeMarkerId,
       hoveredMarkerId: mapView.hoveredMarkerId,
@@ -4388,9 +4514,15 @@
     const level = selectedHeroId
       ? defaultLevelForSnapshot(snapshot, selectedHeroId)
       : (preserveView ? normalizeLevelForSnapshot(previous.level, snapshot) : 0);
+    const dualLevel = Boolean(
+      previous.dualLevel
+      && preserveView
+      && supportsDualLevelView(snapshot)
+    );
     return {
       selectedHeroId,
       preserveView,
+      dualLevel,
       level,
       zoom: clampZoom(previous.zoom, previous.minZoom, previous.maxZoom),
       pan: {
@@ -4481,6 +4613,7 @@
       maxZoom: mapView.maxZoom,
       pan: mapView.pan,
       level: mapView.level,
+      dualLevel: mapView.dualLevel,
       selectedHeroId: heroState.selectedHeroId,
       preserveView: !options || options.preserveView !== false
     });
@@ -4506,6 +4639,7 @@
     renderHeroes();
     mapView.snapshot = snapshot;
     mapView.level = nextViewState.level;
+    mapView.dualLevel = nextViewState.dualLevel;
     mapView.showHiddenNeutrals = Boolean(snapshot.show_hidden);
     elements.showHiddenToggle.checked = mapView.showHiddenNeutrals;
     elements.showHiddenToggle.disabled = false;
@@ -4564,6 +4698,7 @@
     mapView.snapshot = null;
     mapView.markers = [];
     mapView.level = 0;
+    mapView.dualLevel = false;
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
     clearPortalRelationState();
@@ -4573,6 +4708,7 @@
     elements.portalLinksToggle.checked = mapView.showPortalLinks;
     elements.portalLinksToggle.disabled = true;
     mapView.pathMode = false;
+    syncDualLevelControl(null);
     updatePathModeControl();
     hideMapTooltip();
     hideTargetContextMenu();
@@ -4766,6 +4902,10 @@
   elements.routeOverlayToggle.addEventListener("change", () => {
     mapView.showRouteOverlay = elements.routeOverlayToggle.checked;
     drawMap();
+  });
+
+  elements.dualLevelToggle.addEventListener("change", () => {
+    setDualLevelView(elements.dualLevelToggle.checked);
   });
 
   elements.portalLinksToggle.addEventListener("change", () => {
@@ -4973,6 +5113,7 @@
     sameMapGeometry,
     sortedScanResults,
     screenToWorld,
+    screenToLaneWorld,
     centerOnHero,
     centerOnMarkerId,
     centerOnWorldPoint,
@@ -4981,6 +5122,9 @@
     currentPortalGhostMarkers,
     currentPortalRelation,
     currentPortalRelationStateForTest,
+    dualLevelLaneGeometry,
+    mapLaneGeometry,
+    positionForCanvasPointInView,
     compareHeroSkillOffers,
     focusPathSegment,
     focusPortalDestination,
@@ -5008,11 +5152,15 @@
     portalTypeLabel,
     resetHeroSkills,
     saveHeroSkills,
+    setDualLevelView,
     setPathMode,
     showHeroSkillsDialog,
     simulationClickDecision,
+    singleLevelLaneGeometry,
+    supportsDualLevelView,
     tilePositionForCanvasPoint,
     verdictForWinPct,
+    worldToScreenInLane,
     worldToScreen,
     zoomAtPoint
   };
@@ -5023,6 +5171,7 @@
   elements.routeOverlayToggle.checked = mapView.showRouteOverlay;
   elements.portalLinksToggle.checked = mapView.showPortalLinks;
   elements.portalLinksToggle.disabled = true;
+  syncDualLevelControl(null);
   updatePathModeControl();
   renderTargetFilterControl();
   renderScanSortControl();

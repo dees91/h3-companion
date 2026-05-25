@@ -561,7 +561,18 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for M04. Added a compact `Dual level` toolbar toggle that is
+  enabled only for exactly two-level maps and disabled with a diagnostic title
+  for one-level or three-plus-level maps. Single-level view remains the default,
+  and the existing level segmented control and route/path behavior are
+  unchanged. Added dual-level lane geometry helpers for side-by-side lanes with
+  shared tile scale, zoom, and pan, plus conversion helpers for
+  canvas-to-lane-world and canvas-to-position mapping. Frontend helper tests
+  cover supported/unsupported maps, default state, toggle on/off, preserving
+  state across same-geometry refresh, lane gap misses, two-lane coordinate
+  conversion, and unchanged active-level tile path semantics. Verified with
+  `node --check tools/battle_estimator_gui/app.js`,
+  `python3 -m unittest tests.test_battle_estimator_gui`, and `git diff --check`.
 
 ---
 
@@ -1644,8 +1655,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | M01 | Lower Monster Marker Priority | done | -- | priority-map-ux | Parallel | S | GUI | `tools/battle_estimator_gui/app.js`, GUI tests |
 | M02 | Subterranean Gate Click Level Toggle | done | -- | priority-map-ux | Parallel | S | GUI | `tools/battle_estimator_gui/app.js`, GUI tests |
 | M03 | Cross-Level Ghost Portal Destinations | done | M02 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
-| M04 | Dual-Level View State And Geometry | todo | -- | priority-map-ux | Main | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
-| M05 | Render Dual-Level Map And Markers | blocked | M04 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
+| M04 | Dual-Level View State And Geometry | done | -- | priority-map-ux | Main | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
+| M05 | Render Dual-Level Map And Markers | todo | M04 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M06 | Dual-Level Interactions And Portal Links | blocked | M03, M05 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M07 | Map UX Follow-Up Verification | blocked | M01, M02, M03, M04, M05, M06 | priority-map-ux | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, planning doc |
 | T01 | Collect Local Save Evidence | todo | -- | research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
