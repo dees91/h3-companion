@@ -4295,10 +4295,28 @@ assert.ok(pathSegmentButtons().length >= 4);
                 self.assertEqual(town["initial_owner_color_name"], "tan")
                 self.assertEqual(town["custom_name"], "Castle Keep")
                 self.assertTrue(town["has_garrison"])
+                self.assertIsNone(town["current_owner_color_id"])
+                self.assertIsNone(town["current_owner_color_name"])
+                self.assertEqual(
+                    town["ownership_status"],
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                )
+                self.assertIsNone(town["ownership_source"])
+                self.assertEqual(
+                    town["ownership_confidence"],
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                )
+                self.assertEqual(
+                    town["ownership_reason"],
+                    h3_save_parser.TOWN_OWNERSHIP_REASON_NO_VISIBLE_HERO,
+                )
+                self.assertEqual(town["ownership_matching_hero_count"], 0)
+                self.assertEqual(town["ownership_matching_hero_names"], [])
+                self.assertEqual(town["ownership_matching_hero_source_offsets"], [])
 
             self._with_server(check, app_state=app_state)
 
-    def test_state_endpoint_has_synthetic_town_proxy_fixture_inputs(self):
+    def test_state_endpoint_includes_current_town_owner_proxy(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             game_dir = temp_path / "game"
@@ -4336,10 +4354,131 @@ assert.ok(pathSegmentButtons().length >= 4);
                 self.assertEqual(town["initial_owner"], 0)
                 self.assertEqual(town["initial_owner_color_name"], "red")
                 self.assertEqual(town["position"], {"x": 6, "y": 5, "z": 0})
+                self.assertEqual(town["current_owner_color_id"], 2)
+                self.assertEqual(town["current_owner_color_name"], "tan")
+                self.assertEqual(
+                    town["ownership_status"],
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY,
+                )
+                self.assertEqual(
+                    town["ownership_source"],
+                    h3_save_parser.TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY,
+                )
+                self.assertEqual(
+                    town["ownership_confidence"],
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY,
+                )
+                self.assertIsNone(town["ownership_reason"])
+                self.assertEqual(town["ownership_matching_hero_count"], 1)
+                self.assertEqual(town["ownership_matching_hero_names"], ["Marius"])
+                self.assertEqual(town["ownership_matching_hero_source_offsets"], [256])
                 self.assertEqual(hero["owner_color_id"], 2)
                 self.assertEqual(hero["owner_color_name"], "tan")
                 self.assertEqual(hero["position"], town["position"])
-                self.assertNotEqual(town["initial_owner"], hero["owner_color_id"])
+                self.assertNotEqual(town["initial_owner"], town["current_owner_color_id"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_path_marker_town_target_includes_current_ownership(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 256,
+                        "position": (6, 5, 0),
+                        "owner_color_id": 2,
+                    },
+                ),
+            )
+            map_path = _write_h3m_map_with_town(
+                temp_path / "town-map.h3m",
+                owner=0,
+            )
+
+            snapshot = battle_estimator_gui.build_domain_snapshot(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+            target = battle_estimator_gui._path_marker_target_by_id(
+                snapshot,
+                "town:0",
+            )
+
+        self.assertEqual(target["id"], "town:0")
+        self.assertEqual(target["initial_owner"], 0)
+        self.assertEqual(target["current_owner_color_id"], 2)
+        self.assertEqual(target["current_owner_color_name"], "tan")
+        self.assertEqual(
+            target["ownership_status"],
+            h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY,
+        )
+        self.assertEqual(target["ownership_matching_hero_names"], ["Marius"])
+
+    def test_state_endpoint_keeps_ambiguous_town_ownership_unavailable(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 256,
+                        "position": (6, 5, 0),
+                        "owner_color_id": 2,
+                    },
+                    {
+                        "hero_name": "Dace",
+                        "name_offset": 512,
+                        "position": (6, 5, 0),
+                        "owner_color_id": 2,
+                    },
+                ),
+            )
+            map_path = _write_h3m_map_with_town(
+                temp_path / "town-map.h3m",
+                owner=0,
+            )
+            config_path = temp_path / "config.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                town = payload["town_targets"][0]
+                self.assertEqual(town["initial_owner"], 0)
+                self.assertIsNone(town["current_owner_color_id"])
+                self.assertEqual(
+                    town["ownership_status"],
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                )
+                self.assertEqual(
+                    town["ownership_reason"],
+                    h3_save_parser.TOWN_OWNERSHIP_REASON_AMBIGUOUS_VISIBLE_HEROES,
+                )
+                self.assertEqual(town["ownership_matching_hero_count"], 2)
+                self.assertEqual(
+                    town["ownership_matching_hero_names"],
+                    ["Marius", "Dace"],
+                )
+                self.assertEqual(
+                    town["ownership_matching_hero_source_offsets"],
+                    [256, 512],
+                )
 
             self._with_server(check, app_state=app_state)
 

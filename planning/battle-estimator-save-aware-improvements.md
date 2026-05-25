@@ -962,7 +962,15 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T05. Domain snapshots now build
+  `town_ownership_by_id` from `infer_current_town_ownership()` using raw
+  detected heroes, keyed by the existing `town:<object_index>` UI id. Town
+  serializers preserve `initial_owner` and append explicit save-derived
+  `current_owner_*` fields plus `ownership_*` status, source, confidence,
+  reason, and matching-hero details. `/api/state` and internal town marker
+  lookup now serialize the same enriched town shape. Tests cover unavailable
+  ownership, proxy current owner differing from initial owner, ambiguous
+  multi-hero ownership, and path-marker town lookup.
 
 ---
 
@@ -1747,7 +1755,7 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T02 | Document Save Ownership Hypothesis | done | T01 | research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T03 | Synthetic Current Town Ownership Fixtures | done | T02 | parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
 | T04 | Parse Current Town Ownership | done | T03 | parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
-| T05 | Join Save Ownership To H3M Town Targets | todo | T04 | backend | Main | M | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
+| T05 | Join Save Ownership To H3M Town Targets | done | T04 | backend | Main | M | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
 | T06 | Persist My Color And Alert Radius | todo | -- | backend | Parallel | S | Config | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
 | T07 | Build Threat Alert Service | blocked | T05, T06 | backend | Main | M | Core/API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
 | T08 | Expose Snapshot Contract | blocked | T07 | backend | Main | S | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |

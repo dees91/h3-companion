@@ -144,6 +144,7 @@ class DomainSnapshot:
     visible_neutral_targets: tuple
     neutral_by_id: dict
     town_targets: tuple
+    town_ownership_by_id: dict
     portal_targets: tuple
     portal_edges: tuple
     removed_records: tuple
@@ -1174,6 +1175,13 @@ def _build_domain_snapshot_from_source(
     _ensure_unchanged(resolved_map_file, map_fingerprint)
 
     hero_entries = _hero_entries(heroes)
+    town_ownership_by_id = _town_ownership_by_id(
+        loaded_map.town_targets,
+        h3_save_parser.infer_current_town_ownership(
+            loaded_map.town_targets,
+            detected_heroes,
+        ),
+    )
     state = {
         "mode": mode,
         "autosave_dir": str(save_context.game_dir),
@@ -1204,7 +1212,10 @@ def _build_domain_snapshot_from_source(
             for target in neutral_targets
         ],
         "town_targets": [
-            _serialize_town_target(target)
+            _serialize_town_target(
+                target,
+                town_ownership_by_id.get(_town_target_id(target)),
+            )
             for target in loaded_map.town_targets
         ],
         "portal_targets": [
@@ -1231,6 +1242,7 @@ def _build_domain_snapshot_from_source(
             for target in neutral_targets
         },
         town_targets=loaded_map.town_targets,
+        town_ownership_by_id=town_ownership_by_id,
         portal_targets=loaded_map.portal_targets,
         portal_edges=loaded_map.portal_edges,
         removed_records=removed_records,
@@ -1346,6 +1358,17 @@ def _team_by_color(players) -> dict[int, int]:
         player.player_index: player.team_id
         for player in players
         if player.enabled and player.team_id is not None
+    }
+
+
+def _town_ownership_by_id(town_targets, ownership_observations) -> dict:
+    towns = tuple(town_targets)
+    observations = tuple(ownership_observations)
+    if len(towns) != len(observations):
+        raise ValueError("town ownership observations must match town targets")
+    return {
+        _town_target_id(town): observation
+        for town, observation in zip(towns, observations)
     }
 
 
@@ -2003,7 +2026,10 @@ def _path_marker_target_by_id(
 
     for town in domain_snapshot.town_targets:
         if _town_target_id(town) == target_id:
-            return _serialize_town_target(town)
+            return _serialize_town_target(
+                town,
+                domain_snapshot.town_ownership_by_id.get(target_id),
+            )
 
     for portal in domain_snapshot.portal_targets:
         if _portal_target_id(portal) == target_id:
@@ -2174,8 +2200,8 @@ def _serialize_neutral_target(target, hidden: bool = False) -> dict:
     }
 
 
-def _serialize_town_target(target) -> dict:
-    return {
+def _serialize_town_target(target, ownership=None) -> dict:
+    serialized = {
         "id": _town_target_id(target),
         "object_index": target.object_index,
         "position": {
@@ -2195,6 +2221,39 @@ def _serialize_town_target(target) -> dict:
         "initial_owner_color_name": _initial_owner_color_name(target.initial_owner),
         "custom_name": target.custom_name,
         "has_garrison": target.has_garrison,
+    }
+    serialized.update(_serialize_town_ownership(ownership))
+    return serialized
+
+
+def _serialize_town_ownership(ownership) -> dict:
+    if ownership is None:
+        return {
+            "current_owner_color_id": None,
+            "current_owner_color_name": None,
+            "ownership_status": h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+            "ownership_source": None,
+            "ownership_confidence": (
+                h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE
+            ),
+            "ownership_reason": None,
+            "ownership_matching_hero_count": 0,
+            "ownership_matching_hero_names": [],
+            "ownership_matching_hero_source_offsets": [],
+        }
+
+    return {
+        "current_owner_color_id": ownership.current_owner_color_id,
+        "current_owner_color_name": ownership.current_owner_color_name,
+        "ownership_status": ownership.ownership_status,
+        "ownership_source": ownership.ownership_source,
+        "ownership_confidence": ownership.ownership_confidence,
+        "ownership_reason": ownership.reason,
+        "ownership_matching_hero_count": ownership.matching_hero_count,
+        "ownership_matching_hero_names": list(ownership.matching_hero_names),
+        "ownership_matching_hero_source_offsets": list(
+            ownership.matching_hero_source_offsets
+        ),
     }
 
 
