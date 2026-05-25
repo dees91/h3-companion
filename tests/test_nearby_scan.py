@@ -77,6 +77,13 @@ def _combat_context(
     )
 
 
+def _component_by_id(components, component_id):
+    for component in components:
+        if component.id == component_id:
+            return component
+    raise AssertionError(f"missing combat model component: {component_id}")
+
+
 def _neutral_target(
     object_index,
     position,
@@ -477,7 +484,22 @@ class NearbyScanServiceTests(unittest.TestCase):
         )
         self.assertEqual(estimates[0].note, "")
         self.assertEqual(estimates[1].target_type, "hero")
-        self.assertEqual(estimates[1].note, "army-only")
+        self.assertEqual(estimates[1].note, "")
+        self.assertEqual(
+            estimates[1].combat_model.player.status,
+            battle_estimator.COMBAT_MODEL_STATUS_ARMY_ONLY,
+        )
+        self.assertEqual(
+            estimates[1].combat_model.enemy.status,
+            battle_estimator.COMBAT_MODEL_STATUS_ARMY_ONLY,
+        )
+        self.assertEqual(
+            [
+                component.id
+                for component in estimates[1].combat_model.omitted_model_components
+            ],
+            ["artifacts", "active_spells", "morale_luck", "tactics"],
+        )
         self.assertEqual(estimates[1].enemy_army, (
             (battle_estimator.CREATURES[1], 3),
         ))
@@ -548,6 +570,92 @@ class NearbyScanServiceTests(unittest.TestCase):
         self.assertIs(run_mock.call_args.kwargs["player_combat_context"], selected_context)
         self.assertIs(run_mock.call_args.kwargs["enemy_combat_context"], enemy_context)
 
+    def test_estimate_nearby_scan_targets_reports_combat_model_components(self):
+        selected_context = _combat_context(
+            primary=(8, 6, 4, 5),
+            secondary_skills=(
+                ("offence", "expert"),
+                ("armorer", "advanced"),
+            ),
+        )
+        enemy_context = _combat_context(
+            primary=(3, 9, 1, 1),
+            status=h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_ONLY,
+        )
+        selected = _hero_army("Isra", (39, 69, 1), combat_context=selected_context)
+        hero = _hero_target(
+            "Marius",
+            (39, 71, 1),
+            102,
+            stack_specs=((1, 3),),
+            combat_context=enemy_context,
+        )
+        scan_targets = battle_estimator.build_nearby_scan_targets(
+            selected,
+            hero_targets=(hero,),
+            radius=10,
+            target_type="hero",
+        )
+
+        with patch.object(
+            battle_estimator,
+            "run_simulations",
+            return_value=72.0,
+        ):
+            estimates = battle_estimator.estimate_nearby_scan_targets(
+                selected,
+                scan_targets,
+                simulations=123,
+            )
+
+        combat_model = estimates[0].combat_model
+        self.assertEqual(
+            combat_model.player.status,
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
+        )
+        self.assertEqual(
+            combat_model.enemy.status,
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_ONLY,
+        )
+        self.assertEqual(combat_model.player.modifiers.attack, 8)
+        self.assertEqual(combat_model.player.modifiers.defense, 6)
+        self.assertEqual(combat_model.player.modifiers.offence_melee_pct, 30)
+        self.assertEqual(combat_model.player.modifiers.armorer_all_pct, 10)
+        self.assertEqual(combat_model.player.modifiers.archery_ranged_pct, 0)
+        primary = _component_by_id(
+            combat_model.player.applied,
+            battle_estimator.COMBAT_MODEL_COMPONENT_PRIMARY_ATTACK_DEFENSE,
+        )
+        self.assertEqual(primary.value, {"attack": 8, "defense": 6})
+        self.assertEqual(
+            _component_by_id(
+                combat_model.player.applied,
+                battle_estimator.COMBAT_MODEL_COMPONENT_OFFENCE,
+            ).value,
+            30,
+        )
+        self.assertEqual(
+            _component_by_id(
+                combat_model.player.applied,
+                battle_estimator.COMBAT_MODEL_COMPONENT_ARMORER,
+            ).value,
+            10,
+        )
+        self.assertEqual(
+            _component_by_id(
+                combat_model.player.omitted,
+                battle_estimator.COMBAT_MODEL_COMPONENT_ARCHERY,
+            ).reason,
+            battle_estimator.COMBAT_MODEL_REASON_NOT_PRESENT,
+        )
+        self.assertEqual(
+            _component_by_id(
+                combat_model.enemy.omitted,
+                battle_estimator.COMBAT_MODEL_COMPONENT_OFFENCE,
+            ).reason,
+            battle_estimator.COMBAT_MODEL_REASON_NOT_PARSED,
+        )
+
     def test_estimate_nearby_scan_targets_uses_default_scan_simulations(self):
         selected = _hero_army("Isra", (39, 69, 1))
         neutral = _neutral_target(2393, (39, 70, 1), 98, 37, "Gnoll")
@@ -611,6 +719,15 @@ class NearbyScanServiceTests(unittest.TestCase):
         self.assertTrue(all(estimate.enemy_ai_value == 0 for estimate in estimates))
         self.assertTrue(all(
             estimate.note.startswith("unsupported neutral creature:")
+            for estimate in estimates
+        ))
+        self.assertTrue(all(
+            estimate.combat_model.enemy.status
+            == battle_estimator.COMBAT_MODEL_STATUS_ARMY_ONLY
+            for estimate in estimates
+        ))
+        self.assertTrue(all(
+            "army-only" not in estimate.note
             for estimate in estimates
         ))
 

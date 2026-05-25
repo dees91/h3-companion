@@ -3434,7 +3434,54 @@ def _serialize_scan_estimate(
         "enemy_ai_value": estimate.enemy_ai_value,
         "win_pct": estimate.win_pct,
         "note": estimate.note,
+        "combat_model": _serialize_combat_model(estimate.combat_model),
     }
+
+
+def _serialize_combat_model(model: battle_estimator.CombatModelSummary) -> dict:
+    return {
+        "player": _serialize_combat_side_model(model.player),
+        "enemy": _serialize_combat_side_model(model.enemy),
+        "omitted_model_components": [
+            _serialize_combat_model_component(component)
+            for component in model.omitted_model_components
+        ],
+    }
+
+
+def _serialize_combat_side_model(side: battle_estimator.CombatSideModel) -> dict:
+    return {
+        "status": side.status,
+        "source": side.source,
+        "reason": side.reason,
+        "applied": [
+            _serialize_combat_model_component(component)
+            for component in side.applied
+        ],
+        "omitted": [
+            _serialize_combat_model_component(component)
+            for component in side.omitted
+        ],
+        "modifiers": {
+            "attack": side.modifiers.attack,
+            "defense": side.modifiers.defense,
+            "offence_melee_pct": side.modifiers.offence_melee_pct,
+            "armorer_all_pct": side.modifiers.armorer_all_pct,
+            "archery_ranged_pct": side.modifiers.archery_ranged_pct,
+        },
+    }
+
+
+def _serialize_combat_model_component(
+    component: battle_estimator.CombatModelComponent,
+) -> dict:
+    payload = {
+        "id": component.id,
+        "reason": component.reason,
+    }
+    if component.value is not None:
+        payload["value"] = component.value
+    return payload
 
 
 def _target_id_for_estimate(

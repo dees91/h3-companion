@@ -18,6 +18,10 @@ from tools import h3_map_parser
 from tools import h3_save_parser
 from tests.test_h3_map_parser import _build_minimal_sod_h3m_with_monster
 from tests.test_h3_save_parser import (
+    HERO_COMBAT_ARMORER_INDEX,
+    HERO_COMBAT_LEVEL_ADVANCED,
+    HERO_COMBAT_LEVEL_EXPERT,
+    HERO_COMBAT_OFFENSE_INDEX,
     _build_xor_hero_fixture as _build_parser_hero_fixture,
     _write_hero_combat_fields,
 )
@@ -149,6 +153,8 @@ def _write_combat_save(
     hero_name="Isra",
     position=(39, 69, 1),
     primary_skills=(8, 6, 4, 5),
+    secondary_skills=(),
+    secondary_count=None,
 ):
     game_dir.mkdir(parents=True, exist_ok=True)
     payload, name_offset = _build_parser_hero_fixture(
@@ -165,6 +171,8 @@ def _write_combat_save(
         mutable,
         name_offset,
         primary_skills=primary_skills,
+        secondary_skills=secondary_skills,
+        secondary_count=secondary_count,
         xor_key=0x00,
     )
     save_path = game_dir / name
@@ -510,6 +518,43 @@ class BattleEstimatorCliTests(unittest.TestCase):
             h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
         )
 
+    def test_autosave_hero_mode_prints_combat_model_when_context_used(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            save_path = _write_combat_save(
+                game_dir,
+                "001.GM1",
+                secondary_skills=(
+                    (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+                    (HERO_COMBAT_ARMORER_INDEX, HERO_COMBAT_LEVEL_ADVANCED, 2),
+                ),
+            )
+
+            result = _run_cli([
+                "Isra",
+                "vs",
+                "1 pikeman",
+                "--save-file",
+                str(save_path),
+                "-n",
+                "1",
+            ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("save-derived Attack/Defense", result.stdout)
+        self.assertIn("Combat model:", result.stdout)
+        self.assertIn("Isra: primary+secondary", result.stdout)
+        self.assertIn("primary_attack_defense(A=8,D=6)", result.stdout)
+        self.assertIn("offence=30%", result.stdout)
+        self.assertIn("armorer=10%", result.stdout)
+        self.assertIn("archery:not_present", result.stdout)
+        self.assertIn("Enemy: army-only", result.stdout)
+        self.assertIn(
+            "Not modeled: artifacts, active_spells, morale_luck, tactics",
+            result.stdout,
+        )
+
     def test_scan_nearby_filters_markerless_removed_neutral_records(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -652,6 +697,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("Enemy: 1x Pikeman", result.stdout)
         self.assertIn("Save file:", result.stdout)
         self.assertIn("save-derived Attack/Defense", result.stdout)
+        self.assertNotIn("Combat model:", result.stdout)
 
     def test_explicit_hero_flag_accepts_empty_left_side(self):
         with tempfile.TemporaryDirectory() as temp_dir:

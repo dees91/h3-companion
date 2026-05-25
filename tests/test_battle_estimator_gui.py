@@ -6269,6 +6269,7 @@ assert.ok(pathSegmentButtons().length >= 4);
                 game_dir,
                 "001.GM1",
                 primary_skills=(8, 6, 4, 5),
+                secondary_count=0,
             )
             map_path = _write_h3m_map(temp_path / "map.h3m", position=(39, 70, 1))
             app_state = battle_estimator_gui.GuiAppState(
@@ -6294,6 +6295,42 @@ assert.ok(pathSegmentButtons().length >= 4);
 
                 self.assertEqual(status, 200)
                 self.assertEqual(payload["estimate"]["win_pct"], 91.5)
+                combat_model = payload["estimate"]["combat_model"]
+                self.assertEqual(combat_model["player"]["status"], "primary+secondary")
+                self.assertEqual(combat_model["player"]["source"], "save")
+                applied = {
+                    component["id"]: component
+                    for component in combat_model["player"]["applied"]
+                }
+                omitted = {
+                    component["id"]: component
+                    for component in combat_model["player"]["omitted"]
+                }
+                self.assertEqual(
+                    applied["primary_attack_defense"]["value"],
+                    {"attack": 8, "defense": 6},
+                )
+                self.assertEqual(
+                    applied["primary_attack_defense"]["reason"],
+                    "parsed",
+                )
+                self.assertEqual(omitted["archery"]["reason"], "not_present")
+                self.assertEqual(
+                    combat_model["player"]["modifiers"]["attack"],
+                    8,
+                )
+                self.assertEqual(
+                    combat_model["player"]["modifiers"]["defense"],
+                    6,
+                )
+                self.assertEqual(combat_model["enemy"]["status"], "army-only")
+                self.assertEqual(
+                    [
+                        component["id"]
+                        for component in combat_model["omitted_model_components"]
+                    ],
+                    ["artifacts", "active_spells", "morale_luck", "tactics"],
+                )
                 context = run_mock.call_args.kwargs["player_combat_context"]
                 self.assertEqual(context.source, h3_save_parser.HERO_COMBAT_SOURCE_SAVE)
                 self.assertEqual(
@@ -6662,7 +6699,15 @@ assert.ok(pathSegmentButtons().length >= 4);
                 self.assertEqual(payload["estimate"]["target"]["name"], "Marius")
                 self.assertEqual(payload["estimate"]["enemy_army"][0]["creature_name"], "Skeleton Warrior")
                 self.assertEqual(payload["estimate"]["win_pct"], 72.0)
-                self.assertEqual(payload["estimate"]["note"], "army-only")
+                self.assertEqual(payload["estimate"]["note"], "")
+                self.assertEqual(
+                    payload["estimate"]["combat_model"]["player"]["status"],
+                    "army-only",
+                )
+                self.assertEqual(
+                    payload["estimate"]["combat_model"]["enemy"]["status"],
+                    "army-only",
+                )
 
             self._with_server(check, app_state=app_state)
 

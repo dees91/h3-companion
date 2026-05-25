@@ -408,6 +408,50 @@ class CombatSideModifiers:
     archery_ranged_pct: int = 0
 
 
+COMBAT_MODEL_STATUS_ARMY_ONLY = "army-only"
+COMBAT_MODEL_COMPONENT_PRIMARY_ATTACK_DEFENSE = "primary_attack_defense"
+COMBAT_MODEL_COMPONENT_OFFENCE = "offence"
+COMBAT_MODEL_COMPONENT_ARMORER = "armorer"
+COMBAT_MODEL_COMPONENT_ARCHERY = "archery"
+COMBAT_MODEL_REASON_PARSED = "parsed"
+COMBAT_MODEL_REASON_NOT_APPLICABLE = "not_applicable"
+COMBAT_MODEL_REASON_NOT_MODELED = "not_modeled"
+COMBAT_MODEL_REASON_NOT_PARSED = "not_parsed"
+COMBAT_MODEL_REASON_NOT_PRESENT = "not_present"
+
+
+@dataclass(frozen=True)
+class CombatModelComponent:
+    id: str
+    reason: str
+    value: Any = None
+
+
+@dataclass(frozen=True)
+class CombatSideModel:
+    status: str
+    source: Optional[str]
+    reason: Optional[str]
+    applied: Tuple[CombatModelComponent, ...]
+    omitted: Tuple[CombatModelComponent, ...]
+    modifiers: CombatSideModifiers
+
+
+@dataclass(frozen=True)
+class CombatModelSummary:
+    player: CombatSideModel
+    enemy: CombatSideModel
+    omitted_model_components: Tuple[CombatModelComponent, ...]
+
+
+COMBAT_MODEL_ALWAYS_OMITTED_COMPONENTS = (
+    CombatModelComponent("artifacts", COMBAT_MODEL_REASON_NOT_MODELED),
+    CombatModelComponent("active_spells", COMBAT_MODEL_REASON_NOT_MODELED),
+    CombatModelComponent("morale_luck", COMBAT_MODEL_REASON_NOT_MODELED),
+    CombatModelComponent("tactics", COMBAT_MODEL_REASON_NOT_MODELED),
+)
+
+
 VALID_SCAN_TARGET_TYPES = ("all", "neutral", "hero")
 DEFAULT_SCAN_SIMULATIONS = 500
 _SCAN_RESULT_TYPE_ORDER = {
@@ -435,6 +479,7 @@ class NearbyScanEstimate:
     scan_target: NearbyScanTarget
     enemy_army: Tuple[Tuple[Creature, int], ...]
     enemy_ai_value: int
+    combat_model: CombatModelSummary
     win_pct: Optional[float] = None
     note: str = ""
 
@@ -719,6 +764,123 @@ def _simulation_context_kwargs(
     return kwargs
 
 
+def build_combat_model_summary(
+    player_combat_context=None,
+    enemy_combat_context=None,
+) -> CombatModelSummary:
+    return CombatModelSummary(
+        player=_combat_side_model_from_context(player_combat_context),
+        enemy=_combat_side_model_from_context(enemy_combat_context),
+        omitted_model_components=COMBAT_MODEL_ALWAYS_OMITTED_COMPONENTS,
+    )
+
+
+def _combat_side_model_from_context(context) -> CombatSideModel:
+    if not _combat_context_has_save_data(context):
+        omitted_reason = (
+            COMBAT_MODEL_REASON_NOT_APPLICABLE
+            if context is None
+            else COMBAT_MODEL_REASON_NOT_PARSED
+        )
+        return CombatSideModel(
+            status=COMBAT_MODEL_STATUS_ARMY_ONLY,
+            source=None,
+            reason=None if context is None else getattr(context, "reason", None),
+            applied=(),
+            omitted=_combat_model_omitted_components(omitted_reason),
+            modifiers=CombatSideModifiers(),
+        )
+
+    primary = getattr(context, "primary_skills", None)
+    modifiers = _combat_modifiers_from_context(context)
+    applied = []
+    omitted = []
+
+    if primary is None:
+        omitted.append(
+            CombatModelComponent(
+                COMBAT_MODEL_COMPONENT_PRIMARY_ATTACK_DEFENSE,
+                COMBAT_MODEL_REASON_NOT_PARSED,
+            )
+        )
+    else:
+        applied.append(
+            CombatModelComponent(
+                COMBAT_MODEL_COMPONENT_PRIMARY_ATTACK_DEFENSE,
+                COMBAT_MODEL_REASON_PARSED,
+                {
+                    "attack": primary.attack,
+                    "defense": primary.defense,
+                },
+            )
+        )
+
+    secondary_reason = _combat_model_secondary_omitted_reason(context)
+    for component_id, value in (
+        (COMBAT_MODEL_COMPONENT_OFFENCE, modifiers.offence_melee_pct),
+        (COMBAT_MODEL_COMPONENT_ARMORER, modifiers.armorer_all_pct),
+        (COMBAT_MODEL_COMPONENT_ARCHERY, modifiers.archery_ranged_pct),
+    ):
+        if value:
+            applied.append(
+                CombatModelComponent(
+                    component_id,
+                    COMBAT_MODEL_REASON_PARSED,
+                    value,
+                )
+            )
+        else:
+            omitted.append(CombatModelComponent(component_id, secondary_reason))
+
+    return CombatSideModel(
+        status=getattr(context, "status", COMBAT_MODEL_STATUS_ARMY_ONLY),
+        source=getattr(context, "source", None),
+        reason=getattr(context, "reason", None),
+        applied=tuple(applied),
+        omitted=tuple(omitted),
+        modifiers=modifiers,
+    )
+
+
+def _combat_context_has_save_data(context) -> bool:
+    if context is None:
+        return False
+    if getattr(context, "source", None) != h3_save_parser.HERO_COMBAT_SOURCE_SAVE:
+        return False
+    return (
+        getattr(context, "primary_skills", None) is not None
+        or bool(getattr(context, "secondary_skills", ()))
+    )
+
+
+def _combat_model_omitted_components(reason: str) -> Tuple[CombatModelComponent, ...]:
+    return (
+        CombatModelComponent(COMBAT_MODEL_COMPONENT_PRIMARY_ATTACK_DEFENSE, reason),
+        CombatModelComponent(COMBAT_MODEL_COMPONENT_OFFENCE, reason),
+        CombatModelComponent(COMBAT_MODEL_COMPONENT_ARMORER, reason),
+        CombatModelComponent(COMBAT_MODEL_COMPONENT_ARCHERY, reason),
+    )
+
+
+def _combat_model_secondary_omitted_reason(context) -> str:
+    status = getattr(context, "status", None)
+    if status == h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY:
+        return COMBAT_MODEL_REASON_NOT_PRESENT
+    if (
+        status == h3_save_parser.HERO_COMBAT_STATUS_PARTIAL
+        and getattr(context, "secondary_skills", ())
+    ):
+        return COMBAT_MODEL_REASON_NOT_PRESENT
+    return COMBAT_MODEL_REASON_NOT_PARSED
+
+
+def _combat_model_uses_save_context(model: CombatModelSummary) -> bool:
+    return any(
+        side.source == h3_save_parser.HERO_COMBAT_SOURCE_SAVE and side.applied
+        for side in (model.player, model.enemy)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Display
 # ---------------------------------------------------------------------------
@@ -805,9 +967,15 @@ def estimate_nearby_scan_targets(
     player_combat_context = _save_combat_context_or_none(
         selected_hero.combat_context,
     )
+    player_model_context = selected_hero.combat_context
 
     estimates = []
     for scan_target in scan_targets:
+        enemy_model_context = _scan_target_enemy_model_context(scan_target)
+        combat_model = build_combat_model_summary(
+            player_model_context,
+            enemy_model_context,
+        )
         try:
             enemy_army, note = _scan_target_enemy_army(scan_target)
         except Exception as exc:
@@ -816,6 +984,7 @@ def estimate_nearby_scan_targets(
                     scan_target=scan_target,
                     enemy_army=(),
                     enemy_ai_value=0,
+                    combat_model=combat_model,
                     win_pct=None,
                     note=f"estimation failed: {exc}",
                 )
@@ -829,6 +998,7 @@ def estimate_nearby_scan_targets(
                     scan_target=scan_target,
                     enemy_army=(),
                     enemy_ai_value=enemy_ai_value,
+                    combat_model=combat_model,
                     win_pct=None,
                     note=note,
                 )
@@ -838,8 +1008,8 @@ def estimate_nearby_scan_targets(
         try:
             context_kwargs = _simulation_context_kwargs(
                 player_combat_context=player_combat_context,
-                enemy_combat_context=_scan_target_enemy_combat_context(
-                    scan_target,
+                enemy_combat_context=_save_combat_context_or_none(
+                    enemy_model_context,
                 ),
             )
             win_pct = run_simulations(
@@ -855,6 +1025,7 @@ def estimate_nearby_scan_targets(
                     scan_target=scan_target,
                     enemy_army=enemy_army,
                     enemy_ai_value=enemy_ai_value,
+                    combat_model=combat_model,
                     win_pct=None,
                     note=f"estimation failed: {exc}",
                 )
@@ -866,6 +1037,7 @@ def estimate_nearby_scan_targets(
                 scan_target=scan_target,
                 enemy_army=enemy_army,
                 enemy_ai_value=enemy_ai_value,
+                combat_model=combat_model,
                 win_pct=win_pct,
                 note=note,
             )
@@ -894,10 +1066,13 @@ def _scan_target_enemy_army(
     return (), f"unsupported scan target type: {scan_target.target_type}"
 
 
-def _scan_target_enemy_combat_context(scan_target: NearbyScanTarget):
+def _scan_target_enemy_model_context(scan_target: NearbyScanTarget):
     if scan_target.target_type != "hero":
         return None
-    return _save_combat_context_or_none(scan_target.target.army.combat_context)
+    try:
+        return scan_target.target.army.combat_context
+    except AttributeError:
+        return None
 
 
 def _neutral_scan_target_enemy_army(
@@ -932,8 +1107,6 @@ def _hero_scan_target_enemy_army(
 
 def _scan_target_base_note(scan_target: NearbyScanTarget) -> str:
     notes = []
-    if scan_target.target_type == "hero":
-        notes.append("army-only")
     if scan_target.target_type == "neutral" and scan_target.target.removed:
         notes.append("removed/debug")
         if scan_target.target.removal_note:
@@ -1561,11 +1734,13 @@ def _print_nearby_scan_results(
 
     print(
         f"  {'d':>3}  {'type':<7}  {'pos':<11}  "
-        f"{'target/army':<32}  {'enemy_ai':>8}  {'win%':>7}  note"
+        f"{'target/army':<32}  {'enemy_ai':>8}  {'win%':>7}  "
+        f"{'model':<31}  note"
     )
     print(
         f"  {'-' * 3}  {'-' * 7}  {'-' * 11}  "
-        f"{'-' * 32}  {'-' * 8}  {'-' * 7}  {'-' * 16}"
+        f"{'-' * 32}  {'-' * 8}  {'-' * 7}  "
+        f"{'-' * 31}  {'-' * 16}"
     )
     for estimate in estimates:
         print(
@@ -1575,6 +1750,7 @@ def _print_nearby_scan_results(
             f"{_format_scan_target_label(estimate):<32}  "
             f"{_format_scan_enemy_ai(estimate):>8}  "
             f"{_format_scan_win_pct(estimate):>7}  "
+            f"{_format_scan_combat_model(estimate):<31}  "
             f"{estimate.note}"
         )
 
@@ -1622,6 +1798,68 @@ def _format_scan_win_pct(estimate: NearbyScanEstimate) -> str:
     if estimate.win_pct is None:
         return "--"
     return f"{estimate.win_pct:.1f}"
+
+
+def _format_scan_combat_model(estimate: NearbyScanEstimate) -> str:
+    model = estimate.combat_model
+    return f"P:{model.player.status} E:{model.enemy.status}"
+
+
+def _print_combat_model_summary(
+    model: CombatModelSummary,
+    player_label: str,
+    enemy_label: str,
+) -> None:
+    print("  Combat model:")
+    print(f"    {_format_combat_model_side(player_label, model.player)}")
+    print(f"    {_format_combat_model_side(enemy_label, model.enemy)}")
+    omitted = ", ".join(
+        component.id
+        for component in model.omitted_model_components
+    )
+    if omitted:
+        print(f"    Not modeled: {omitted}")
+
+
+def _format_combat_model_side(label: str, side: CombatSideModel) -> str:
+    parts = [f"{label}: {side.status}"]
+    if side.reason:
+        parts.append(f"reason={side.reason}")
+    applied = _format_combat_model_components(side.applied, include_reason=False)
+    omitted = _format_combat_model_components(side.omitted, include_reason=True)
+    parts.append(f"applied {applied if applied else 'none'}")
+    if omitted:
+        parts.append(f"omitted {omitted}")
+    return "; ".join(parts)
+
+
+def _format_combat_model_components(
+    components: Tuple[CombatModelComponent, ...],
+    include_reason: bool,
+) -> str:
+    return ", ".join(
+        _format_combat_model_component(component, include_reason)
+        for component in components
+    )
+
+
+def _format_combat_model_component(
+    component: CombatModelComponent,
+    include_reason: bool,
+) -> str:
+    suffix = ""
+    if include_reason:
+        suffix = f":{component.reason}"
+    if component.id == COMBAT_MODEL_COMPONENT_PRIMARY_ATTACK_DEFENSE:
+        value = component.value
+        if isinstance(value, dict):
+            return (
+                f"{component.id}(A={value.get('attack', 0)},"
+                f"D={value.get('defense', 0)}){suffix}"
+            )
+    elif isinstance(component.value, int):
+        return f"{component.id}={component.value}%{suffix}"
+    return f"{component.id}{suffix}"
 
 
 def _run_wizard(args: argparse.Namespace) -> int:
@@ -1681,6 +1919,10 @@ def run_analysis(
 ):
     has_ranges = any(r is not None for _, _, r in player_parsed) or \
                  any(r is not None for _, _, r in enemy_parsed)
+    combat_model = build_combat_model_summary(
+        player_combat_context,
+        enemy_combat_context,
+    )
 
     print("=" * 65)
     print("  H3 Battle Estimator")
@@ -1692,6 +1934,8 @@ def run_analysis(
         if map_file is not None:
             print(f"  Map file:     {map_file}")
         print(f"  {AUTOSAVE_MODELING_LIMITATION}")
+        if _combat_model_uses_save_context(combat_model):
+            _print_combat_model_summary(combat_model, player_label, enemy_label)
     print("=" * 65)
 
     if not has_ranges:

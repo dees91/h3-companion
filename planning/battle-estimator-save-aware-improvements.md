@@ -1681,7 +1681,21 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Added an estimator-facing `combat_model` contract with per-side
+  `status`, `source`, `reason`, structured `applied` and `omitted`
+  components, numeric modifiers, and global not-modeled components.
+- Moved hero-target `army-only` information out of target `note` and into
+  `combat_model`, leaving `note` for unsupported/target-specific scan notes.
+- GUI estimate payloads now serialize `combat_model` for both single-target
+  simulation and radius scan responses.
+- CLI autosave estimates keep the existing modeling limitation note and print
+  a compact combat model summary only when save-derived context is actually
+  applied.
+- Added near-scan, CLI, and GUI regressions for per-side statuses, applied and
+  omitted component details, note separation, and unavailable/army-only cases.
+- Verified with `python3 -m unittest tests.test_nearby_scan
+  tests.test_battle_estimator_cli tests.test_battle_estimator_gui` and
+  `python3 -m unittest`.
 
 ---
 
@@ -1917,6 +1931,6 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T17 | Parse Hero Secondary Skills | done | T16 | hero-combat-parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
 | T18 | Build Combat Context Contract | done | T17 | hero-combat-backend | Main | M | API/Core | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
 | T19 | Apply Passive Combat Modifiers | done | T18 | hero-combat-estimator | Main | M | Core | `tools/battle_estimator.py`, estimator tests |
-| T20 | Expose Combat Model Notes | todo | T19 | hero-combat-api | Main | S | API/CLI | `tools/battle_estimator.py`, `tools/battle_estimator_gui.py`, tests |
-| T21 | Render Estimate Model Details | blocked | T20 | hero-combat-frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
+| T20 | Expose Combat Model Notes | done | T19 | hero-combat-api | Main | S | API/CLI | `tools/battle_estimator.py`, `tools/battle_estimator_gui.py`, tests |
+| T21 | Render Estimate Model Details | todo | T20 | hero-combat-frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
 | T22 | Hero Combat Docs And Verification | blocked | T21 | hero-combat-quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint doc |
