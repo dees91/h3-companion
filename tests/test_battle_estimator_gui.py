@@ -446,6 +446,23 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
         self.assertNotIn("Portals only", index_html)
         self.assertNotIn("Portals only", app_js)
 
+    def test_frontend_snapshot_changed_tracks_alert_contract_fields(self):
+        app_js = (
+            Path("tools") / "battle_estimator_gui" / "app.js"
+        ).read_text(encoding="utf-8")
+        snapshot_changed_body = app_js[
+            app_js.index("function snapshotChanged("):
+            app_js.index("function positionText(")
+        ]
+
+        for expected in (
+            "alert_settings",
+            "castle_alerts_status",
+            "castle_alerts_status_detail",
+            "castle_alerts",
+        ):
+            self.assertIn(expected, snapshot_changed_body)
+
     def test_frontend_estimate_helpers_cover_click_and_stale_edges(self):
         node = shutil.which("node")
         if node is None:
@@ -1220,6 +1237,77 @@ const markerSnapshot = {{
     }}
   ]
 }};
+const alertSnapshot = {{
+  mode: "follow_latest",
+  save_file: "/tmp/001.GM2",
+  map_file: "/tmp/map.h3m",
+  selected_hero_id: "hero:0",
+  show_hidden: false,
+  hidden_hero_target_ids: [],
+  alert_settings: {{
+    my_color_id: 0,
+    my_color_name: "red",
+    my_team_id: null,
+    alert_radius: 10
+  }},
+  castle_alerts_status: "ok",
+  castle_alerts_status_detail: null,
+  castle_alerts: [
+    {{
+      id: "castle-threat:hero:1",
+      enemy_hero_id: "hero:1",
+      enemy_hero_name: "Fafner",
+      enemy_color_id: 2,
+      enemy_color_name: "tan",
+      town_id: "town:0",
+      town_name: "Castle Keep",
+      distance: 4,
+      other_towns_in_radius: 0,
+      enemy_position: {{ x: 2, y: 3, z: 1 }},
+      town_position: {{ x: 0, y: 0, z: 1 }}
+    }}
+  ]
+}};
+assert.strictEqual(
+  helpers.snapshotChanged(alertSnapshot, JSON.parse(JSON.stringify(alertSnapshot))),
+  false
+);
+assert.strictEqual(
+  helpers.snapshotChanged(
+    alertSnapshot,
+    {{
+      ...alertSnapshot,
+      alert_settings: {{ ...alertSnapshot.alert_settings, alert_radius: 12 }}
+    }}
+  ),
+  true
+);
+assert.strictEqual(
+  helpers.snapshotChanged(
+    alertSnapshot,
+    {{ ...alertSnapshot, castle_alerts_status: "no_threats" }}
+  ),
+  true
+);
+assert.strictEqual(
+  helpers.snapshotChanged(
+    alertSnapshot,
+    {{ ...alertSnapshot, castle_alerts_status_detail: "ownership unavailable" }}
+  ),
+  true
+);
+assert.strictEqual(
+  helpers.snapshotChanged(
+    alertSnapshot,
+    {{
+      ...alertSnapshot,
+      castle_alerts: [
+        {{ ...alertSnapshot.castle_alerts[0], distance: 5 }}
+      ]
+    }}
+  ),
+  true
+);
 const level0Markers = helpers.buildMarkerCache(markerSnapshot, 10, 0, false);
 assert.deepStrictEqual(level0Markers.map((marker) => marker.id), [
   "neutral:0",
@@ -4261,6 +4349,21 @@ assert.ok(pathSegmentButtons().length >= 4);
                 self.assertEqual(payload["town_targets"], [])
                 self.assertEqual(payload["portal_targets"], [])
                 self.assertEqual(payload["portal_edges"], [])
+                self.assertEqual(
+                    payload["alert_settings"],
+                    {
+                        "my_color_id": None,
+                        "my_color_name": None,
+                        "my_team_id": None,
+                        "alert_radius": h3_save_parser.DEFAULT_ALERT_RADIUS,
+                    },
+                )
+                self.assertEqual(
+                    payload["castle_alerts_status"],
+                    battle_estimator_gui.CASTLE_ALERT_STATUS_UNCONFIGURED,
+                )
+                self.assertIsNone(payload["castle_alerts_status_detail"])
+                self.assertEqual(payload["castle_alerts"], [])
 
             self._with_server(check, app_state=app_state)
 
@@ -4377,6 +4480,78 @@ assert.ok(pathSegmentButtons().length >= 4);
                 self.assertEqual(hero["owner_color_name"], "tan")
                 self.assertEqual(hero["position"], town["position"])
                 self.assertNotEqual(town["initial_owner"], town["current_owner_color_id"])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_state_endpoint_includes_castle_alert_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {
+                        "hero_name": "Christian",
+                        "name_offset": 256,
+                        "position": (6, 5, 0),
+                        "owner_color_id": 0,
+                    },
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 512,
+                        "position": (8, 5, 0),
+                        "owner_color_id": 2,
+                    },
+                ),
+            )
+            map_path = _write_h3m_map_with_town(
+                temp_path / "town-map.h3m",
+                owner=2,
+            )
+            config_path = temp_path / "config.json"
+            config_path.write_text(
+                json.dumps({"my_color_id": 0, "alert_radius": 2}) + "\n",
+                encoding="utf-8",
+            )
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    payload["alert_settings"],
+                    {
+                        "my_color_id": 0,
+                        "my_color_name": "red",
+                        "my_team_id": None,
+                        "alert_radius": 2,
+                    },
+                )
+                self.assertEqual(
+                    payload["castle_alerts_status"],
+                    battle_estimator_gui.CASTLE_ALERT_STATUS_OK,
+                )
+                self.assertIsNone(payload["castle_alerts_status_detail"])
+                self.assertEqual(len(payload["castle_alerts"]), 1)
+                alert = payload["castle_alerts"][0]
+                self.assertEqual(alert["id"], "castle-threat:hero:512")
+                self.assertEqual(alert["enemy_hero_id"], "hero:512")
+                self.assertEqual(alert["enemy_hero_name"], "Marius")
+                self.assertEqual(alert["enemy_color_id"], 2)
+                self.assertEqual(alert["enemy_color_name"], "tan")
+                self.assertEqual(alert["town_id"], "town:0")
+                self.assertEqual(alert["town_name"], "Castle Keep")
+                self.assertEqual(alert["distance"], 2)
+                self.assertEqual(alert["other_towns_in_radius"], 0)
+                self.assertEqual(alert["enemy_position"], {"x": 8, "y": 5, "z": 0})
+                self.assertEqual(alert["town_position"], {"x": 6, "y": 5, "z": 0})
 
             self._with_server(check, app_state=app_state)
 
@@ -5081,6 +5256,7 @@ assert.ok(pathSegmentButtons().length >= 4);
                 self.assertEqual(content_type, "application/json")
                 self.assertEqual(payload["my_color_id"], 2)
                 self.assertEqual(payload["my_color_name"], "tan")
+                self.assertNotIn("my_team_id", payload)
                 self.assertEqual(payload["alert_radius"], 15)
                 self.assertEqual(config.my_color_id, 2)
                 self.assertEqual(config.alert_radius, 15)
@@ -5112,6 +5288,60 @@ assert.ok(pathSegmentButtons().length >= 4);
                 self.assertEqual(
                     config.alert_radius,
                     h3_save_parser.DEFAULT_ALERT_RADIUS,
+                )
+
+            self._with_server(check, app_state=app_state)
+
+    def test_state_endpoint_reflects_alert_setting_changes_with_cached_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_save(game_dir, "001.GM2", hero_name="Isra")
+            map_path = _write_h3m_map(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, first = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                self.assertIsNone(first["alert_settings"]["my_color_id"])
+                self.assertEqual(
+                    first["castle_alerts_status"],
+                    battle_estimator_gui.CASTLE_ALERT_STATUS_UNCONFIGURED,
+                )
+
+                status, _, _ = self._post_json(
+                    base_url,
+                    "/api/alert-settings",
+                    {
+                        "my_color_id": 2,
+                        "alert_radius": 15,
+                    },
+                )
+                self.assertEqual(status, 200)
+                status, second = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                self.assertEqual(second["save_fingerprint"], first["save_fingerprint"])
+                self.assertEqual(second["map_fingerprint"], first["map_fingerprint"])
+                self.assertEqual(
+                    second["alert_settings"],
+                    {
+                        "my_color_id": 2,
+                        "my_color_name": "tan",
+                        "my_team_id": None,
+                        "alert_radius": 15,
+                    },
+                )
+                self.assertEqual(
+                    second["castle_alerts_status"],
+                    battle_estimator_gui.CASTLE_ALERT_STATUS_NO_OWNED_TOWNS,
                 )
 
             self._with_server(check, app_state=app_state)
@@ -6782,6 +7012,34 @@ assert.ok(pathSegmentButtons().length >= 4);
 
 
 class BattleEstimatorGuiCastleAlertTests(unittest.TestCase):
+    def test_state_payload_alert_settings_include_my_team_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    my_color_id=0,
+                    alert_radius=12,
+                ),
+                config_path,
+            )
+            app_state = battle_estimator_gui.GuiAppState(config_path=config_path)
+            snapshot = _alert_snapshot(team_by_color={0: 4})
+
+            payload = battle_estimator_gui._state_payload_for_app(
+                app_state,
+                snapshot,
+            )
+
+            self.assertEqual(
+                payload["alert_settings"],
+                {
+                    "my_color_id": 0,
+                    "my_color_name": "red",
+                    "my_team_id": 4,
+                    "alert_radius": 12,
+                },
+            )
+
     def test_castle_alerts_require_configured_player_color(self):
         town, ownership = _alert_town(1, (5, 5, 0), owner_color_id=0)
         enemy = _alert_hero("Marius", (7, 5, 0), owner_color_id=2)

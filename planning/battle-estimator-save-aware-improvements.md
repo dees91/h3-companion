@@ -1099,7 +1099,16 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T08. `/api/state` now includes `alert_settings`
+  (`my_color_id`, `my_color_name`, state-only `my_team_id`, `alert_radius`),
+  `castle_alerts_status`, `castle_alerts_status_detail`, and serialized
+  `castle_alerts`. Alert calculation remains config-dependent in
+  `_state_payload_for_app`, outside `DomainSnapshot.state` and the snapshot
+  cache key, so config changes are reflected without reparsing unchanged
+  save/map files. `POST /api/alert-settings` keeps its previous response shape.
+  The frontend still renders no alert UI, but `snapshotChanged` now compares
+  the alert contract fields so future alert setting/payload changes are
+  detected.
 
 ---
 
@@ -1776,9 +1785,9 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T05 | Join Save Ownership To H3M Town Targets | done | T04 | backend | Main | M | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
 | T06 | Persist My Color And Alert Radius | done | -- | backend | Parallel | S | Config | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
 | T07 | Build Threat Alert Service | done | T05, T06 | backend | Main | M | Core/API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
-| T08 | Expose Snapshot Contract | todo | T07 | backend | Main | S | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
-| T09 | Render My Color And Alert Radius Controls | blocked | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
-| T10 | Render Alerts Sidebar Section | blocked | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
+| T08 | Expose Snapshot Contract | done | T07 | backend | Main | S | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
+| T09 | Render My Color And Alert Radius Controls | todo | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
+| T10 | Render Alerts Sidebar Section | todo | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | T11 | Center And Activate Alert Target | blocked | T10 | frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
 | T12 | Docs And Verification Pass | blocked | T08, T09, T10, T11 | quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md` |
 | T13 | Research Save Hero Combat Data | todo | -- | hero-combat-research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |

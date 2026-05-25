@@ -301,6 +301,10 @@
       || current.selected_hero_id !== next.selected_hero_id
       || current.show_hidden !== next.show_hidden
       || JSON.stringify(current.hidden_hero_target_ids || []) !== JSON.stringify(next.hidden_hero_target_ids || [])
+      || JSON.stringify(current.alert_settings || null) !== JSON.stringify(next.alert_settings || null)
+      || current.castle_alerts_status !== next.castle_alerts_status
+      || current.castle_alerts_status_detail !== next.castle_alerts_status_detail
+      || JSON.stringify(current.castle_alerts || []) !== JSON.stringify(next.castle_alerts || [])
     );
   }
 
@@ -5315,6 +5319,7 @@
     scanResultLookup,
     sameMapGeometry,
     sortedScanResults,
+    snapshotChanged,
     screenToWorld,
     screenToLaneWorld,
     centerOnHero,

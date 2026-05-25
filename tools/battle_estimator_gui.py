@@ -2521,6 +2521,46 @@ def _serialize_alert_settings(config: h3_save_parser.BattleEstimatorConfig) -> d
     }
 
 
+def _serialize_state_alert_settings(
+    config: h3_save_parser.BattleEstimatorConfig,
+    team_by_color: dict[int, int],
+) -> dict:
+    payload = _serialize_alert_settings(config)
+    payload["my_team_id"] = (
+        None
+        if config.my_color_id is None
+        else team_by_color.get(config.my_color_id)
+    )
+    return payload
+
+
+def _serialize_castle_alert_result(result: CastleAlertResult) -> dict:
+    return {
+        "castle_alerts_status": result.status,
+        "castle_alerts_status_detail": result.status_detail,
+        "castle_alerts": [
+            _serialize_castle_alert(alert)
+            for alert in result.alerts
+        ],
+    }
+
+
+def _serialize_castle_alert(alert: CastleAlert) -> dict:
+    return {
+        "id": alert.id,
+        "enemy_hero_id": alert.enemy_hero_id,
+        "enemy_hero_name": alert.enemy_hero_name,
+        "enemy_color_id": alert.enemy_color_id,
+        "enemy_color_name": alert.enemy_color_name,
+        "town_id": alert.town_id,
+        "town_name": alert.town_name,
+        "distance": alert.distance,
+        "other_towns_in_radius": alert.other_towns_in_radius,
+        "enemy_position": _serialize_position(alert.enemy_position),
+        "town_position": _serialize_position(alert.town_position),
+    }
+
+
 def _snapshot_kwargs_for_state(app_state: GuiAppState) -> dict:
     with app_state.lock:
         return {
@@ -2565,6 +2605,12 @@ def _state_payload_for_app(
     payload["show_hidden"] = show_hidden
     payload["hidden_neutral_target_ids"] = list(hidden_ids)
     payload["hidden_hero_target_ids"] = list(hidden_hero_ids)
+    payload["alert_settings"] = _serialize_state_alert_settings(
+        config,
+        domain_snapshot.team_by_color,
+    )
+    alert_result = build_castle_alerts(domain_snapshot, config)
+    payload.update(_serialize_castle_alert_result(alert_result))
     return payload
 
 
