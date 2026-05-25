@@ -788,6 +788,32 @@
     return true;
   }
 
+  function pairedSubterraneanGateDestination(marker) {
+    if (!marker || marker.type !== "portal" || marker.portalType !== "subterranean_gate") {
+      return null;
+    }
+    const relation = portalRelationForSource(mapView.snapshot, marker.id);
+    if (
+      !relation
+      || relation.outgoingEdgeCount !== 1
+      || relation.unresolvedDestinationCount !== 0
+      || relation.destinations.length !== 1
+    ) {
+      return null;
+    }
+    const destination = relation.destinations[0];
+    if (
+      !destination
+      || destination.id === marker.id
+      || destination.portalType !== "subterranean_gate"
+      || !destination.position
+      || positionLevel(destination.position) === positionLevel(relation.sourcePosition)
+    ) {
+      return null;
+    }
+    return destination;
+  }
+
   function portalDestinationsForTarget(snapshot, portal, targetsById) {
     if (!snapshot || !portal || !portal.id) {
       return [];
@@ -4689,6 +4715,13 @@
     setTargetDetails(marker);
     if (mapView.pathMode) {
       requestPath(marker, point);
+      drawMap();
+      return;
+    }
+    const pairedGateDestination = pairedSubterraneanGateDestination(marker);
+    if (pairedGateDestination) {
+      focusPortalDestinationFromPanel(marker.id, pairedGateDestination.id);
+      return;
     } else {
       simulateTarget(marker);
     }

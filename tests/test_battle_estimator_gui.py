@@ -2101,6 +2101,165 @@ assert.ok(portalDetailText.includes("portal portal:broken-ui"));
 assert.ok(portalDetailText.includes("No resolved destinations"));
 assert.ok(portalDetailText.includes("1 unresolved edge"));
 assert.strictEqual(targetDestinationButtons().length, 0);
+const subterraneanToggleSnapshot = {{
+  map: {{ width: 5, height: 4, levels: 2 }},
+  route_layers: [
+    ["LLLLL", "LLLLL", "LLLLL", "LLLLL"],
+    ["LLLLL", "LLLLL", "LLLLL", "LLLLL"]
+  ],
+  selected_hero_id: "hero:toggle",
+  heroes: [
+    {{
+      id: "hero:toggle",
+      name: "Gate Tester",
+      position: {{ x: 0, y: 0, z: 0 }},
+      owner_color_id: 0,
+      owner_color_name: "red",
+      team_id: 0,
+      total_creatures: 1,
+      ai_value: 1,
+      army_summary: "1x Pikeman"
+    }}
+  ],
+  neutral_targets: [],
+  town_targets: [],
+  portal_targets: [
+    {{
+      id: "portal:gate-surface",
+      object_index: 200,
+      position: {{ x: 1, y: 1, z: 0 }},
+      portal_type: "subterranean_gate",
+      role: "both",
+      channel_key: "subterranean:200:201"
+    }},
+    {{
+      id: "portal:gate-underground",
+      object_index: 201,
+      position: {{ x: 2, y: 1, z: 1 }},
+      portal_type: "subterranean_gate",
+      role: "both",
+      channel_key: "subterranean:200:201"
+    }},
+    {{
+      id: "portal:gate-no-edge",
+      object_index: 202,
+      position: {{ x: 3, y: 1, z: 0 }},
+      portal_type: "subterranean_gate",
+      role: "both",
+      channel_key: "subterranean:202"
+    }},
+    {{
+      id: "portal:gate-unresolved",
+      object_index: 203,
+      position: {{ x: 4, y: 1, z: 0 }},
+      portal_type: "subterranean_gate",
+      role: "both",
+      channel_key: "subterranean:203"
+    }}
+  ],
+  portal_edges: [
+    {{ source_id: "portal:gate-surface", destination_id: "portal:gate-underground" }},
+    {{ source_id: "portal:gate-underground", destination_id: "portal:gate-surface" }},
+    {{ source_id: "portal:gate-unresolved", destination_id: "portal:gate-missing" }}
+  ]
+}};
+helpers.renderSnapshot(subterraneanToggleSnapshot, {{ preserveView: false }});
+let subterraneanView = helpers.currentMapViewForTest();
+let surfaceGate = subterraneanView.markers.find((marker) => marker.id === "portal:gate-surface");
+let surfaceGatePoint = helpers.worldToScreen(surfaceGate.world, subterraneanView);
+const subterraneanToggleStart = fetchRequests.length;
+dispatchCanvasPointer("pointerdown", surfaceGatePoint, 706);
+dispatchCanvasPointer("pointerup", surfaceGatePoint, 706);
+let toggledGateView = helpers.currentMapViewForTest();
+assert.strictEqual(toggledGateView.level, 1);
+assert.strictEqual(toggledGateView.activeMarkerId, "portal:gate-underground");
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, null);
+assert.strictEqual(relationState.pinnedSourceId, "portal:gate-surface");
+assert.strictEqual(relationState.activeSourceId, "portal:gate-surface");
+assert.strictEqual(pathRequestsSince(subterraneanToggleStart).length, 0);
+assert.strictEqual(simulateRequestsSince(subterraneanToggleStart).length, 0);
+assert.ok(targetStateText().includes("portal portal:gate-underground"));
+const undergroundGate = toggledGateView.markers.find((marker) => marker.id === "portal:gate-underground");
+const undergroundGatePoint = helpers.worldToScreen(undergroundGate.world, toggledGateView);
+const canvasRect = elements["battle-map"].getBoundingClientRect();
+assert.ok(Math.abs(undergroundGatePoint.x - (canvasRect.width / 2)) < 0.001);
+assert.ok(Math.abs(undergroundGatePoint.y - (canvasRect.height / 2)) < 0.001);
+const reverseToggleStart = fetchRequests.length;
+dispatchCanvasPointer("pointerdown", undergroundGatePoint, 710);
+dispatchCanvasPointer("pointerup", undergroundGatePoint, 710);
+let reverseToggledGateView = helpers.currentMapViewForTest();
+assert.strictEqual(reverseToggledGateView.level, 0);
+assert.strictEqual(reverseToggledGateView.activeMarkerId, "portal:gate-surface");
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, null);
+assert.strictEqual(relationState.pinnedSourceId, "portal:gate-underground");
+assert.strictEqual(relationState.activeSourceId, "portal:gate-underground");
+assert.strictEqual(pathRequestsSince(reverseToggleStart).length, 0);
+assert.strictEqual(simulateRequestsSince(reverseToggleStart).length, 0);
+
+helpers.renderSnapshot(subterraneanToggleSnapshot, {{ preserveView: false }});
+subterraneanView = helpers.currentMapViewForTest();
+const noEdgeGate = subterraneanView.markers.find((marker) => marker.id === "portal:gate-no-edge");
+let noEdgeGatePoint = helpers.worldToScreen(noEdgeGate.world, subterraneanView);
+const noEdgeStart = fetchRequests.length;
+dispatchCanvasPointer("pointerdown", noEdgeGatePoint, 707);
+dispatchCanvasPointer("pointerup", noEdgeGatePoint, 707);
+let noEdgeView = helpers.currentMapViewForTest();
+assert.strictEqual(noEdgeView.level, 0);
+assert.strictEqual(noEdgeView.activeMarkerId, "portal:gate-no-edge");
+assert.ok(targetStateText().includes("portal portal:gate-no-edge"));
+assert.ok(targetStateText().includes("No known destinations"));
+assert.strictEqual(targetDestinationButtons().length, 0);
+assert.strictEqual(pathRequestsSince(noEdgeStart).length, 0);
+assert.strictEqual(simulateRequestsSince(noEdgeStart).length, 0);
+assert.ok(elements["estimate-state"].textContent.includes("Portal target"));
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, "portal:gate-no-edge");
+assert.strictEqual(relationState.pinnedSourceId, "portal:gate-no-edge");
+assert.strictEqual(relationState.activeSourceId, "portal:gate-no-edge");
+
+const unresolvedGate = noEdgeView.markers.find((marker) => marker.id === "portal:gate-unresolved");
+const unresolvedGatePoint = helpers.worldToScreen(unresolvedGate.world, noEdgeView);
+dispatchCanvasPointer("pointerdown", unresolvedGatePoint, 708);
+dispatchCanvasPointer("pointerup", unresolvedGatePoint, 708);
+let unresolvedView = helpers.currentMapViewForTest();
+assert.strictEqual(unresolvedView.level, 0);
+assert.strictEqual(unresolvedView.activeMarkerId, "portal:gate-unresolved");
+assert.ok(targetStateText().includes("portal portal:gate-unresolved"));
+assert.ok(targetStateText().includes("No resolved destinations"));
+assert.ok(targetStateText().includes("1 unresolved edge"));
+assert.strictEqual(targetDestinationButtons().length, 0);
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, "portal:gate-unresolved");
+assert.strictEqual(relationState.pinnedSourceId, "portal:gate-unresolved");
+assert.strictEqual(relationState.activeSourceId, "portal:gate-unresolved");
+
+helpers.renderSnapshot(subterraneanToggleSnapshot, {{ preserveView: false }});
+elements["path-mode-toggle"].checked = true;
+elements["path-mode-toggle"].dispatch("change", {{}});
+subterraneanView = helpers.currentMapViewForTest();
+surfaceGate = subterraneanView.markers.find((marker) => marker.id === "portal:gate-surface");
+surfaceGatePoint = helpers.worldToScreen(surfaceGate.world, subterraneanView);
+const pathSubterraneanStart = fetchRequests.length;
+dispatchCanvasPointer("pointerdown", surfaceGatePoint, 709);
+dispatchCanvasPointer("pointerup", surfaceGatePoint, 709);
+await flushPromises();
+const pathSubterraneanRequests = pathRequestsSince(pathSubterraneanStart);
+assert.strictEqual(pathSubterraneanRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(pathSubterraneanRequests[0].options.body), {{
+  hero_id: "hero:toggle",
+  target_id: "portal:gate-surface"
+}});
+assert.strictEqual(simulateRequestsSince(pathSubterraneanStart).length, 0);
+let pathSubterraneanView = helpers.currentMapViewForTest();
+assert.strictEqual(pathSubterraneanView.level, 0);
+assert.strictEqual(pathSubterraneanView.activeMarkerId, "portal:gate-surface");
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, "portal:gate-surface");
+assert.strictEqual(relationState.pinnedSourceId, null);
+elements["path-mode-toggle"].checked = false;
+elements["path-mode-toggle"].dispatch("change", {{}});
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 const noSelectedSkillsSnapshot = {{
   ...markerSnapshot,
