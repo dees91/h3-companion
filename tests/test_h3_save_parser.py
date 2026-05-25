@@ -2438,7 +2438,7 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(hero.hero_name, "Isra")
         self.assertEqual(
             hero.combat_context.status,
-            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_ONLY,
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
         )
         self.assertIsNone(hero.combat_context.reason)
         self.assertEqual(
@@ -2450,6 +2450,7 @@ class H3SaveParserContractTests(unittest.TestCase):
                 knowledge=5,
             ),
         )
+        self.assertEqual(hero.secondary_skills, ())
 
     def test_load_hero_armies_from_gm1_round_trips_primary_variants(self):
         cases = (
@@ -2474,12 +2475,221 @@ class H3SaveParserContractTests(unittest.TestCase):
 
                     self.assertEqual(
                         hero.combat_context.status,
-                        h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_ONLY,
+                        h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
                     )
                     self.assertEqual(
                         hero.primary_skills,
                         h3_save_parser.HeroPrimarySkills(*primary_skills),
                     )
+                    self.assertEqual(hero.secondary_skills, ())
+
+    def test_load_hero_armies_from_gm1_reads_secondary_combat_context(self):
+        secondary_skills = (
+            (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 2),
+            (HERO_COMBAT_ARMORER_INDEX, HERO_COMBAT_LEVEL_ADVANCED, 3),
+            (HERO_COMBAT_ARCHERY_INDEX, HERO_COMBAT_LEVEL_BASIC, 1),
+        )
+        data, _ = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            secondary_skills=secondary_skills,
+            xor_key=0x00,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "001.GM1"
+            _write_gzip_save(save_path, data)
+
+            hero = h3_save_parser.load_hero_armies_from_save(save_path)[0]
+
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
+        )
+        self.assertIsNone(hero.combat_context.reason)
+        self.assertEqual(
+            hero.secondary_skills,
+            (
+                hero_skill_recommender.CurrentSkill("archery", "basic"),
+                hero_skill_recommender.CurrentSkill("offence", "expert"),
+                hero_skill_recommender.CurrentSkill("armorer", "advanced"),
+            ),
+        )
+
+    def test_secondary_combat_context_failures_keep_primary_only_context(self):
+        levels_with_invalid_level = [0] * HERO_COMBAT_SECONDARY_SKILL_COUNT
+        slots_with_invalid_level = [0] * HERO_COMBAT_SECONDARY_SKILL_COUNT
+        levels_with_invalid_level[HERO_COMBAT_OFFENSE_INDEX] = 4
+        slots_with_invalid_level[HERO_COMBAT_OFFENSE_INDEX] = 1
+        levels_with_mismatch = [0] * HERO_COMBAT_SECONDARY_SKILL_COUNT
+        slots_with_mismatch = [0] * HERO_COMBAT_SECONDARY_SKILL_COUNT
+        levels_with_mismatch[HERO_COMBAT_OFFENSE_INDEX] = HERO_COMBAT_LEVEL_EXPERT
+        levels_count_mismatch = [0] * HERO_COMBAT_SECONDARY_SKILL_COUNT
+        slots_count_mismatch = [0] * HERO_COMBAT_SECONDARY_SKILL_COUNT
+        levels_count_mismatch[HERO_COMBAT_OFFENSE_INDEX] = HERO_COMBAT_LEVEL_EXPERT
+        slots_count_mismatch[HERO_COMBAT_OFFENSE_INDEX] = 1
+        cases = (
+            (
+                "invalid_secondary_count",
+                {
+                    "secondary_count": 9,
+                    "secondary_skills": (
+                        (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+                    ),
+                },
+                h3_save_parser.HERO_COMBAT_REASON_INVALID_SECONDARY_COUNT,
+            ),
+            (
+                "duplicate_secondary_slot",
+                {
+                    "secondary_count": 2,
+                    "secondary_skills": (
+                        (HERO_COMBAT_ARCHERY_INDEX, HERO_COMBAT_LEVEL_BASIC, 1),
+                        (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+                    ),
+                },
+                h3_save_parser.HERO_COMBAT_REASON_INVALID_SECONDARY_SLOT,
+            ),
+            (
+                "out_of_range_secondary_slot",
+                {
+                    "secondary_count": 1,
+                    "secondary_skills": (
+                        (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 2),
+                    ),
+                },
+                h3_save_parser.HERO_COMBAT_REASON_INVALID_SECONDARY_SLOT,
+            ),
+            (
+                "invalid_secondary_level",
+                {
+                    "secondary_count": 1,
+                    "secondary_levels": levels_with_invalid_level,
+                    "secondary_slots": slots_with_invalid_level,
+                },
+                h3_save_parser.HERO_COMBAT_REASON_INVALID_SECONDARY_LEVEL,
+            ),
+            (
+                "secondary_level_slot_mismatch",
+                {
+                    "secondary_count": 1,
+                    "secondary_levels": levels_with_mismatch,
+                    "secondary_slots": slots_with_mismatch,
+                },
+                h3_save_parser.HERO_COMBAT_REASON_SECONDARY_LEVEL_SLOT_MISMATCH,
+            ),
+            (
+                "active_count_mismatch",
+                {
+                    "secondary_count": 2,
+                    "secondary_levels": levels_count_mismatch,
+                    "secondary_slots": slots_count_mismatch,
+                },
+                h3_save_parser.HERO_COMBAT_REASON_INVALID_SECONDARY_COUNT,
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            for index, (name, fixture_kwargs, expected_reason) in enumerate(
+                cases,
+                start=1,
+            ):
+                with self.subTest(name=name):
+                    data, _ = _build_hero_combat_fixture(
+                        primary_skills=(8, 6, 4, 5),
+                        xor_key=0x00,
+                        **fixture_kwargs,
+                    )
+                    save_path = temp_path / f"{index:03}.GM1"
+                    _write_gzip_save(save_path, data)
+
+                    hero = h3_save_parser.load_hero_armies_from_save(save_path)[0]
+
+                    self.assertEqual(
+                        hero.combat_context.status,
+                        h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_ONLY,
+                    )
+                    self.assertEqual(
+                        hero.primary_skills,
+                        h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
+                    )
+                    self.assertEqual(hero.secondary_skills, ())
+                    self.assertEqual(hero.combat_context.reason, expected_reason)
+
+    def test_secondary_decode_reports_truncated_vectors(self):
+        data, name_offset = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            secondary_skills=(
+                (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+            ),
+            xor_key=0x00,
+        )
+        truncated = data[:name_offset + HERO_COMBAT_SECONDARY_SLOTS_FROM_NAME_OFFSET + 3]
+
+        with self.assertRaises(
+            h3_save_parser.HeroSecondarySkillDecodeError,
+        ) as raised:
+            h3_save_parser.decode_hero_secondary_skills(
+                truncated,
+                name_offset,
+                key=0x00,
+            )
+
+        self.assertEqual(
+            raised.exception.reason,
+            h3_save_parser.HERO_COMBAT_REASON_TRUNCATED_SECONDARY,
+        )
+
+    def test_secondary_decode_validates_skill_metadata_mapping(self):
+        secondary_skills = (
+            (HERO_COMBAT_ARCHERY_INDEX, HERO_COMBAT_LEVEL_BASIC, 1),
+            (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 2),
+        )
+        data, name_offset = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            secondary_skills=secondary_skills,
+            xor_key=0x00,
+        )
+        cases = (
+            "missing_active_index",
+            "duplicate_skill_id",
+            "unknown_skill_id",
+        )
+
+        for case in cases:
+            with self.subTest(case=case):
+                if case == "missing_active_index":
+                    skill_id_by_index = {
+                        HERO_COMBAT_ARCHERY_INDEX: "archery",
+                    }
+                else:
+                    skill_id_by_index = {
+                        HERO_COMBAT_ARCHERY_INDEX: "archery",
+                        HERO_COMBAT_OFFENSE_INDEX: (
+                            "archery"
+                            if case == "duplicate_skill_id"
+                            else "notARealSkill"
+                        ),
+                    }
+
+                hero = h3_save_parser.parse_hero_at(
+                    data,
+                    name_offset,
+                    key=0x00,
+                    combat_context_supported=True,
+                    hero_skill_id_by_index=skill_id_by_index,
+                )
+
+                self.assertIsNotNone(hero)
+                self.assertEqual(
+                    hero.combat_context.status,
+                    h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_ONLY,
+                )
+                self.assertEqual(
+                    hero.combat_context.reason,
+                    h3_save_parser.HERO_COMBAT_REASON_UNKNOWN_SECONDARY_SKILL,
+                )
+                self.assertEqual(hero.secondary_skills, ())
 
     def test_gm2_primary_combat_context_is_unavailable(self):
         data, _ = _build_hero_combat_fixture(

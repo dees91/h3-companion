@@ -105,12 +105,31 @@ MAX_HERO_POSITION_COORD = 255
 MAX_HERO_POSITION_LEVEL = 1
 HERO_COMBAT_SUPPORTED_SAVE_EXTENSION = ".GM1"
 HERO_COMBAT_SUPPORTED_XOR_KEY = 0x00
+HERO_COMBAT_SECONDARY_COUNT_FROM_NAME_OFFSET = -126
+HERO_COMBAT_SECONDARY_LEVELS_FROM_NAME_OFFSET = 13
+HERO_COMBAT_SECONDARY_SLOTS_FROM_NAME_OFFSET = 41
+HERO_COMBAT_SECONDARY_VECTOR_SIZE = 28
+HERO_COMBAT_MAX_SECONDARY_SKILLS = 8
 HERO_COMBAT_PRIMARY_FROM_NAME_OFFSET = 69
 HERO_COMBAT_PRIMARY_SIZE = 4
 HERO_COMBAT_STATUS_UNAVAILABLE = "unavailable"
 HERO_COMBAT_STATUS_PRIMARY_ONLY = "primary-only"
+HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY = "primary+secondary"
 HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE = "unsupported_save_structure"
 HERO_COMBAT_REASON_TRUNCATED_PRIMARY = "truncated_primary"
+HERO_COMBAT_REASON_TRUNCATED_SECONDARY = "truncated_secondary"
+HERO_COMBAT_REASON_INVALID_SECONDARY_COUNT = "invalid_secondary_count"
+HERO_COMBAT_REASON_INVALID_SECONDARY_LEVEL = "invalid_secondary_level"
+HERO_COMBAT_REASON_INVALID_SECONDARY_SLOT = "invalid_secondary_slot"
+HERO_COMBAT_REASON_SECONDARY_LEVEL_SLOT_MISMATCH = (
+    "secondary_level_slot_mismatch"
+)
+HERO_COMBAT_REASON_UNKNOWN_SECONDARY_SKILL = "unknown_secondary_skill"
+HERO_COMBAT_SECONDARY_LEVEL_BY_ID = {
+    1: "basic",
+    2: "advanced",
+    3: "expert",
+}
 H3M_TOWN_OBJECT_ID = 98
 TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY = "hero_on_town_tile_proxy"
 TOWN_OWNERSHIP_STATUS_PROXY = "proxy"
@@ -366,24 +385,40 @@ class HeroCombatContext:
 
     status: str = HERO_COMBAT_STATUS_UNAVAILABLE
     primary_skills: HeroPrimarySkills | None = None
+    secondary_skills: tuple["CurrentSkill", ...] = ()
     reason: str | None = HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "secondary_skills", tuple(self.secondary_skills))
         if self.status not in (
             HERO_COMBAT_STATUS_UNAVAILABLE,
             HERO_COMBAT_STATUS_PRIMARY_ONLY,
+            HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
         ):
             raise ValueError(f"unknown hero combat context status: {self.status!r}")
         if self.status == HERO_COMBAT_STATUS_UNAVAILABLE:
             if self.primary_skills is not None:
                 raise ValueError("unavailable combat context cannot include primary skills")
+            if self.secondary_skills:
+                raise ValueError("unavailable combat context cannot include secondary skills")
             if self.reason is None:
                 raise ValueError("unavailable combat context requires a reason")
         if self.status == HERO_COMBAT_STATUS_PRIMARY_ONLY:
             if self.primary_skills is None:
                 raise ValueError("primary-only combat context requires primary skills")
+            if self.secondary_skills:
+                raise ValueError("primary-only combat context cannot include secondary skills")
+            if self.reason is None:
+                raise ValueError("primary-only combat context requires a reason")
+        if self.status == HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY:
+            if self.primary_skills is None:
+                raise ValueError(
+                    "primary+secondary combat context requires primary skills"
+                )
             if self.reason is not None:
-                raise ValueError("primary-only combat context must not include a reason")
+                raise ValueError(
+                    "primary+secondary combat context must not include a reason"
+                )
 
 
 @dataclass(frozen=True)
@@ -423,6 +458,10 @@ class HeroArmy:
     @property
     def primary_skills(self) -> HeroPrimarySkills | None:
         return self.combat_context.primary_skills
+
+    @property
+    def secondary_skills(self) -> tuple["CurrentSkill", ...]:
+        return self.combat_context.secondary_skills
 
     @property
     def x(self) -> int | None:
@@ -930,15 +969,21 @@ def load_hero_armies_from_save(path: str | Path) -> tuple[HeroArmy, ...]:
 def scan_hero_armies_from_loaded_save(loaded_save: LoadedSave) -> tuple[HeroArmy, ...]:
     """Scan a loaded save with save-level context for bounded hero combat fields."""
 
+    combat_context_supported = _loaded_save_supports_hero_combat_context(
+        loaded_save,
+    )
     return scan_xor01_hero_armies(
         loaded_save.data,
-        combat_context_supported=_loaded_save_supports_primary_combat_context(
-            loaded_save,
+        combat_context_supported=combat_context_supported,
+        hero_skill_id_by_index=(
+            _hero_skill_id_by_index()
+            if combat_context_supported
+            else None
         ),
     )
 
 
-def _loaded_save_supports_primary_combat_context(loaded_save: LoadedSave) -> bool:
+def _loaded_save_supports_hero_combat_context(loaded_save: LoadedSave) -> bool:
     return (
         loaded_save.path.suffix.upper() == HERO_COMBAT_SUPPORTED_SAVE_EXTENSION
         and loaded_save.h3svg_offset == 0
@@ -1669,11 +1714,159 @@ def decode_hero_primary_skills(
     )
 
 
+class HeroSecondarySkillDecodeError(ValueError):
+    """Raised when secondary-skill vectors are present but invalid."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def decode_hero_secondary_skills(
+    data: bytes,
+    name_offset: int,
+    key: int = HERO_COMBAT_SUPPORTED_XOR_KEY,
+    skill_id_by_index: dict[int, str] | None = None,
+) -> tuple["CurrentSkill", ...]:
+    """Decode validated current secondary skills from a hero record."""
+
+    try:
+        count = xor_decode_bytes(
+            data,
+            name_offset + HERO_COMBAT_SECONDARY_COUNT_FROM_NAME_OFFSET,
+            1,
+            key,
+        )[0]
+        levels = xor_decode_bytes(
+            data,
+            name_offset + HERO_COMBAT_SECONDARY_LEVELS_FROM_NAME_OFFSET,
+            HERO_COMBAT_SECONDARY_VECTOR_SIZE,
+            key,
+        )
+        slots = xor_decode_bytes(
+            data,
+            name_offset + HERO_COMBAT_SECONDARY_SLOTS_FROM_NAME_OFFSET,
+            HERO_COMBAT_SECONDARY_VECTOR_SIZE,
+            key,
+        )
+    except ValueError as exc:
+        raise HeroSecondarySkillDecodeError(
+            HERO_COMBAT_REASON_TRUNCATED_SECONDARY
+        ) from exc
+
+    skill_id_by_index = (
+        _hero_skill_id_by_index()
+        if skill_id_by_index is None
+        else skill_id_by_index
+    )
+    return _validated_hero_secondary_skills(
+        count,
+        levels,
+        slots,
+        skill_id_by_index,
+    )
+
+
+def _validated_hero_secondary_skills(
+    count: int,
+    levels: bytes,
+    slots: bytes,
+    skill_id_by_index: dict[int, str],
+) -> tuple["CurrentSkill", ...]:
+    if count > HERO_COMBAT_MAX_SECONDARY_SKILLS:
+        raise HeroSecondarySkillDecodeError(
+            HERO_COMBAT_REASON_INVALID_SECONDARY_COUNT
+        )
+    if len(levels) != HERO_COMBAT_SECONDARY_VECTOR_SIZE:
+        raise HeroSecondarySkillDecodeError(
+            HERO_COMBAT_REASON_TRUNCATED_SECONDARY
+        )
+    if len(slots) != HERO_COMBAT_SECONDARY_VECTOR_SIZE:
+        raise HeroSecondarySkillDecodeError(
+            HERO_COMBAT_REASON_TRUNCATED_SECONDARY
+        )
+
+    active = []
+    for skill_index, (level_id, slot) in enumerate(zip(levels, slots)):
+        if level_id == 0 and slot == 0:
+            continue
+        if level_id == 0 or slot == 0:
+            raise HeroSecondarySkillDecodeError(
+                HERO_COMBAT_REASON_SECONDARY_LEVEL_SLOT_MISMATCH
+            )
+        level = HERO_COMBAT_SECONDARY_LEVEL_BY_ID.get(level_id)
+        if level is None:
+            raise HeroSecondarySkillDecodeError(
+                HERO_COMBAT_REASON_INVALID_SECONDARY_LEVEL
+            )
+        if slot > count:
+            raise HeroSecondarySkillDecodeError(
+                HERO_COMBAT_REASON_INVALID_SECONDARY_SLOT
+            )
+        skill_id = skill_id_by_index.get(skill_index)
+        if skill_id is None:
+            raise HeroSecondarySkillDecodeError(
+                HERO_COMBAT_REASON_UNKNOWN_SECONDARY_SKILL
+            )
+        active.append((slot, skill_id, level))
+
+    if len(active) != count:
+        raise HeroSecondarySkillDecodeError(
+            HERO_COMBAT_REASON_INVALID_SECONDARY_COUNT
+        )
+    sorted_slots = sorted(slot for slot, _, _ in active)
+    if sorted_slots != list(range(1, count + 1)):
+        raise HeroSecondarySkillDecodeError(
+            HERO_COMBAT_REASON_INVALID_SECONDARY_SLOT
+        )
+
+    recommender = _hero_skill_recommender_module()
+    metadata = _hero_skill_metadata()
+    if any(skill_id not in metadata.skills for _, skill_id, _ in active):
+        raise HeroSecondarySkillDecodeError(
+            HERO_COMBAT_REASON_UNKNOWN_SECONDARY_SKILL
+        )
+    try:
+        return recommender.validate_current_skills(
+            recommender.CurrentSkill(skill_id, level)
+            for slot, skill_id, level in sorted(active)
+        )
+    except Exception as exc:
+        error_type = getattr(recommender, "HeroSkillRecommendationError", ValueError)
+        if isinstance(exc, error_type):
+            raise HeroSecondarySkillDecodeError(
+                HERO_COMBAT_REASON_UNKNOWN_SECONDARY_SKILL
+            ) from exc
+        raise
+
+
+def _hero_skill_id_by_index() -> dict[int, str]:
+    metadata = _hero_skill_metadata()
+    by_index = {}
+    duplicates = set()
+    for skill_id, skill in metadata.skills.items():
+        index = skill.index
+        if not isinstance(index, int):
+            continue
+        if index in by_index:
+            duplicates.add(index)
+            continue
+        by_index[index] = skill_id
+    if duplicates:
+        return {
+            index: skill_id
+            for index, skill_id in by_index.items()
+            if index not in duplicates
+        }
+    return by_index
+
+
 def _hero_combat_context_for_record(
     data: bytes,
     name_offset: int,
     key: int,
     combat_context_supported: bool,
+    hero_skill_id_by_index: dict[int, str] | None,
 ) -> HeroCombatContext:
     if (
         not combat_context_supported
@@ -1688,9 +1881,23 @@ def _hero_combat_context_for_record(
         return HeroCombatContext(
             reason=HERO_COMBAT_REASON_TRUNCATED_PRIMARY,
         )
+    try:
+        secondary_skills = decode_hero_secondary_skills(
+            data,
+            name_offset,
+            key,
+            hero_skill_id_by_index,
+        )
+    except HeroSecondarySkillDecodeError as exc:
+        return HeroCombatContext(
+            status=HERO_COMBAT_STATUS_PRIMARY_ONLY,
+            primary_skills=primary_skills,
+            reason=exc.reason,
+        )
     return HeroCombatContext(
-        status=HERO_COMBAT_STATUS_PRIMARY_ONLY,
+        status=HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
         primary_skills=primary_skills,
+        secondary_skills=secondary_skills,
         reason=None,
     )
 
@@ -1701,6 +1908,7 @@ def parse_hero_at(
     key: int = HERO_ARMY_XOR_KEY,
     *,
     combat_context_supported: bool = False,
+    hero_skill_id_by_index: dict[int, str] | None = None,
 ) -> HeroArmy | None:
     """Parse one hero-army candidate by hero-name offset and XOR key."""
 
@@ -1750,6 +1958,7 @@ def parse_hero_at(
             name_offset,
             key,
             combat_context_supported,
+            hero_skill_id_by_index,
         ),
     )
 
@@ -1759,6 +1968,7 @@ def parse_xor01_hero_at(
     name_offset: int,
     *,
     combat_context_supported: bool = False,
+    hero_skill_id_by_index: dict[int, str] | None = None,
 ) -> HeroArmy | None:
     """Parse one XOR 0x01 hero-army candidate by hero-name offset."""
 
@@ -1767,6 +1977,7 @@ def parse_xor01_hero_at(
         name_offset,
         HERO_ARMY_XOR_KEY,
         combat_context_supported=combat_context_supported,
+        hero_skill_id_by_index=hero_skill_id_by_index,
     )
 
 
@@ -1774,6 +1985,7 @@ def scan_xor01_hero_armies(
     data: bytes,
     *,
     combat_context_supported: bool = False,
+    hero_skill_id_by_index: dict[int, str] | None = None,
 ) -> tuple[HeroArmy, ...]:
     """Scan decompressed save bytes for encoded and hotseat hero armies."""
 
@@ -1789,6 +2001,7 @@ def scan_xor01_hero_armies(
                 name_offset,
                 key,
                 combat_context_supported=combat_context_supported,
+                hero_skill_id_by_index=hero_skill_id_by_index,
             )
             if hero_army is not None:
                 heroes.append(hero_army)

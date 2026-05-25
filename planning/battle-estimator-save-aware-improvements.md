@@ -1524,7 +1524,19 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Added validated secondary-skill decoding for the same bounded
+  `.GM1`/`H3SVG=0`/raw `0x00` hero combat structure as T16.
+- Complete secondary vectors now produce `primary+secondary` context with
+  save-derived `CurrentSkill` values sorted by hero-screen slot. Zero secondary
+  skills are represented as an empty tuple, not as VCMI starting-skill fallback.
+- Invalid secondary count, slot, level, level/slot mismatch, metadata mapping,
+  and truncation cases degrade to `primary-only` with explicit reasons while
+  preserving parsed primary skills.
+- Documented the T17 parser behavior in
+  `tools/battle_estimator_save_parsing_checkpoint.md`.
+- Verified with
+  `python3 -m unittest tests.test_h3_save_parser tests.test_hero_skill_recommender`
+  and `git diff --check`.
 
 ---
 
@@ -1877,8 +1889,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T14 | Document Hero Combat Data Hypothesis | done | T13 | hero-combat-research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T15 | Synthetic Hero Combat Fixtures | done | T14 | hero-combat-parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
 | T16 | Parse Hero Primary Skills | done | T15 | hero-combat-parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
-| T17 | Parse Hero Secondary Skills | todo | T16 | hero-combat-parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
-| T18 | Build Combat Context Contract | blocked | T17 | hero-combat-backend | Main | M | API/Core | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
+| T17 | Parse Hero Secondary Skills | done | T16 | hero-combat-parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
+| T18 | Build Combat Context Contract | todo | T17 | hero-combat-backend | Main | M | API/Core | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
 | T19 | Apply Passive Combat Modifiers | blocked | T18 | hero-combat-estimator | Main | M | Core | `tools/battle_estimator.py`, estimator tests |
 | T20 | Expose Combat Model Notes | blocked | T19 | hero-combat-api | Main | S | API/CLI | `tools/battle_estimator.py`, `tools/battle_estimator_gui.py`, tests |
 | T21 | Render Estimate Model Details | blocked | T20 | hero-combat-frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |

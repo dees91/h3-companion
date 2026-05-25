@@ -797,10 +797,11 @@ stats from hero class, level, VCMI starting data, or artifact guesses.
 
 Implemented on 2026-05-25.
 
-The parser now exposes a `HeroCombatContext` on each parsed `HeroArmy`. The
-first supported status is `primary-only`, with current/effective
+The parser now exposes a `HeroCombatContext` on each parsed `HeroArmy`. T16's
+first supported status was `primary-only`, with current/effective
 Attack/Defense/Spell Power/Knowledge values decoded from the bounded primary
-window above.
+window above. T17 extended the same context with validated secondary skills and
+the `primary+secondary` status.
 
 The support gate is intentionally narrow:
 
@@ -815,8 +816,9 @@ Unsupported cases return `status = unavailable` with
 byte scans without loaded-save metadata also remain unavailable by default, so
 the parser does not silently infer combat stats from loose byte patterns.
 
-Secondary skills are not parsed yet. Until T17 validates the 28-byte secondary
-vectors, a supported primary decode intentionally reports `primary-only`.
+When secondary vectors validate, supported saves now report
+`primary+secondary`. When primary validates but secondary vectors do not,
+supported saves report `primary-only` with the secondary failure reason.
 
 ### Secondary Skill Decode
 
@@ -843,6 +845,32 @@ Slot ids are one-based hero-screen ordering. For complete secondary context:
 If primary skills validate but secondary skills fail any rule above, return a
 `primary-only` combat context. Do not fall back to VCMI starting skills or the
 manually maintained recommendation state as if they were current save skills.
+
+### T17 Secondary Parser Implementation
+
+Implemented on 2026-05-25.
+
+The parser now decodes the secondary skill count, 28 skill-level bytes, and
+28 display-slot bytes for the same bounded `.GM1`/`H3SVG=0`/raw `0x00`
+structure supported by T16.
+
+Complete secondary context returns:
+
+- `status = primary+secondary`,
+- save-derived current/effective primary skills,
+- save-derived current secondary skills in hero-screen slot order.
+
+Skill ids are normalized through the vendored VCMI skill metadata index map, so
+the standard H3 Offense index returns the project skill id `offence`, while
+Armorer and Archery return `armorer` and `archery`.
+
+Invalid secondary vectors keep the accepted primary skills and return
+`status = primary-only` with an explicit reason such as
+`invalid_secondary_count`, `invalid_secondary_slot`,
+`invalid_secondary_level`, `secondary_level_slot_mismatch`,
+`unknown_secondary_skill`, or `truncated_secondary`. Unsupported save layouts
+still return `unavailable`, and no parser path falls back to VCMI starting
+skills or manually maintained recommendation state.
 
 Experience, level, and mana are supporting fields. They can help validate a
 fixture or explain a parsed context, but they should not be hard gates for
