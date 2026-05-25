@@ -1,9 +1,10 @@
 # Battle Estimator Map Improvements - Task Breakdown
 
-> **Source**: research and planning discussion on 2026-05-20.
+> **Source**: research and planning discussion on 2026-05-20, extended with
+> portal-readability planning on 2026-05-25.
 > This plan extends the local battle-estimator GUI with richer static map
 > visualization: route-oriented terrain passability, town markers, portal
-> markers, and portal destinations.
+> markers, portal destinations, and faster visual inspection of portal links.
 >
 > **Related**:
 > [Battle Estimator Autosave Brief](./battle-estimator-autosave-brief.md),
@@ -45,6 +46,7 @@ across the map:
 - show towns as unique markers,
 - show portals and subterranean gates as unique markers,
 - show portal/gate destination information,
+- make portal/gate links quick to inspect without a separate portal browser,
 - make target visibility and scan controls easier to use during play,
 - find strategic land routes from the selected hero to clicked map tiles using
   portals and subterranean gates.
@@ -69,6 +71,23 @@ data for heroes and neutral-monster removal where already available.
 - Portals are unique markers with destination information. Portal movement is
   represented by special edges, not by pretending the map is physically
   connected.
+- Portal readability should be improved with contextual relation previews:
+  hover gives a temporary preview, click pins the selected portal relation, and
+  clicking empty map or another marker clears or replaces the pinned relation.
+- A lightweight `Portal links` map toggle may control whether pinned/hovered
+  portal relation overlays are drawn. There should be no separate `Portals only`
+  map filter in this iteration.
+- Portal markers should not rely on color alone. Use shape/symbol differences
+  for one-way entrance, one-way exit, two-way monolith, and subterranean gate.
+- Same-level portal destinations can be shown with lines/arrows. Cross-level
+  destinations should use badges and destination actions rather than drawing a
+  misleading line to a level that is not visible.
+- Multi-exit portals must show every possible destination and label the result
+  as possible/non-deterministic. The UI must not imply the player can choose a
+  deterministic exit when the game mechanics do not allow it.
+- In Path mode, portal hover previews should still work, but normal left-click
+  behavior remains pathfinding. Portal pinning should not steal Path mode
+  clicks from route requests.
 - Water is not a hard barrier. It is shown as a separate route state so sailing
   routes can be visually distinguished from land routes.
 - The map target filter and the scan target filter are one control:
@@ -206,6 +225,46 @@ Rules:
 Whirlpools (`111`) are known as a related water teleport object, but they are
 not required in this iteration unless encountered during implementation and
 cheap to expose with the same portal model.
+
+### Portal Readability UI
+
+The current backend already exposes enough static portal data for the first
+readability pass:
+
+- `portal_targets` gives marker identity, position, type, role, channel key, and
+  H3M subid,
+- `portal_edges` gives directed source/destination relationships,
+- existing path segments already mark non-deterministic portal traversal.
+
+The first portal-readability iteration should therefore be frontend-first. Do
+not add a backend endpoint unless implementation finds that the current
+snapshot lacks data needed for a specific accepted behavior.
+
+Recommended interaction model:
+
+- hover a portal: preview its outgoing relation without changing persistent
+  map state,
+- click a portal outside Path mode: pin the relation and update `Target`,
+- click a portal in Path mode: keep current route-request semantics,
+- click a destination action: switch level and center the destination while
+  preserving the original pinned relation context,
+- click the destination marker itself if the user wants to inspect that
+  destination as a new source portal,
+- click empty map or another marker outside the relation flow: clear or replace
+  the pinned relation.
+
+Recommended visual model:
+
+- one-way entrance: outbound arrow symbol,
+- one-way exit: exit-only/inbound symbol and no outgoing-link affordance unless
+  outgoing edges actually exist,
+- two-way monolith: bidirectional arrow symbol,
+- subterranean gate: distinct level-transfer/stairs symbol,
+- known same-level destinations: restrained directional line or arrow,
+- known cross-level destinations: destination count and target-level badge,
+- multi-exit links: dashed or otherwise marked as possible exits,
+- no known destination: visible diagnostic in the marker/details, not only a
+  tooltip.
 
 ### Target Visibility And Scan Workflow
 
@@ -1402,6 +1461,200 @@ monoliths when available.
 
 **Estimated scope:** Small
 
+## Task 26: Add Portal Relation View State
+
+**Description:** Add frontend state and helpers for the currently previewed or
+pinned portal relation. The relation should be derived from existing
+`portal_targets` and `portal_edges`, with no backend/API change unless the
+current snapshot proves insufficient during implementation.
+
+**Acceptance criteria:**
+- [ ] Hovered portal relation can be derived without mutating active target
+      state.
+- [ ] Pinned portal relation can be set by clicking a portal outside Path mode.
+- [ ] Relation data distinguishes same-level destinations, cross-level
+      destinations, multi-exit possible destinations, and no-known-destination
+      cases.
+- [ ] Pinned relation clears or is replaced predictably when the user clicks
+      empty map or another marker.
+
+**Verification:**
+- [ ] Add frontend helper tests in `tests/test_battle_estimator_gui.py`.
+- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 8
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/app.js`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Small
+
+## Task 27: Redesign Portal Marker Symbols
+
+**Description:** Make portal markers visually distinguishable by type and role,
+using simple canvas-drawn symbols in addition to existing colors.
+
+**Acceptance criteria:**
+- [ ] One-way monolith entrance has an outbound direction symbol.
+- [ ] One-way monolith exit is visibly exit-only and does not look like a
+      normal usable entrance.
+- [ ] Two-way monolith has a bidirectional symbol.
+- [ ] Subterranean gate has a distinct level-transfer/stairs-style symbol.
+- [ ] Marker identity remains readable with route overlays, scan rings, hover
+      rings, active rings, and compact zoom levels.
+
+**Verification:**
+- [ ] Add or update canvas drawing smoke tests.
+- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [ ] Manual GUI check on a map with one-way, two-way, and subterranean
+      portals.
+
+**Dependencies:** Task 26
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Small
+
+## Task 28: Render Portal Relation Overlay
+
+**Description:** Draw contextual portal relation overlays for the hovered or
+pinned portal. Same-level destinations should be connected visually; cross-level
+destinations should be represented with clear target-level badges and
+destination counts.
+
+**Acceptance criteria:**
+- [ ] Hovering a portal previews its outgoing destinations without moving the
+      map.
+- [ ] Clicking a portal outside Path mode pins the relation until cleared or
+      replaced.
+- [ ] Same-level destinations render with restrained lines or arrows from
+      source to destination.
+- [ ] Cross-level destinations show target-level badges/counts instead of a
+      misleading off-level line.
+- [ ] Multi-exit destinations are visually marked as possible/non-deterministic
+      exits, for example with dashed links.
+- [ ] The user can disable relation drawing with a compact `Portal links`
+      toggle.
+
+**Verification:**
+- [ ] Add frontend tests for hover, pinning, cross-level, same-level, and
+      multi-exit overlay behavior.
+- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [ ] Manual GUI check that overlays do not obscure hero, town, neutral, and
+      route information.
+
+**Dependencies:** Tasks 26, 27
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/index.html`
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 29: Expand Portal Target Details And Navigation
+
+**Description:** Improve the existing `Target` panel for portal markers so the
+user can quickly inspect type, role, channel, destination count, possible-exit
+status, and destination actions without adding a permanent portal list.
+
+**Acceptance criteria:**
+- [ ] Portal target details show type, role, channel/subid, and outgoing
+      destination status.
+- [ ] Destination rows are clickable and can switch level plus center the
+      destination marker.
+- [ ] After following a destination action, the original source relation remains
+      visible until the user explicitly inspects another portal.
+- [ ] No-known-destination and exit-only cases are clearly labeled in the panel.
+- [ ] There is no new global `Portals only` filter or permanent all-portals
+      sidebar in this iteration.
+
+**Verification:**
+- [ ] Add GUI tests for target details and destination navigation.
+- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [ ] Manual GUI check for same-level and cross-level destination actions.
+
+**Dependencies:** Task 28
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Medium
+
+## Task 30: Preserve Path Mode Portal Semantics
+
+**Description:** Integrate portal relation previews with Path mode without
+stealing existing route-request clicks. Path mode should keep left-click
+pathfinding semantics, while hover and panel/context actions remain useful for
+portal inspection.
+
+**Acceptance criteria:**
+- [ ] Hovering portals in Path mode still shows relation preview when portal
+      links are enabled.
+- [ ] Left-clicking a portal in Path mode still requests a route to that portal
+      target.
+- [ ] Portal pinning by ordinary left-click is limited to non-Path mode.
+- [ ] Existing path segment list navigation and portal segment metadata still
+      work.
+- [ ] Existing normal-mode click-to-simulate behavior for heroes/neutrals is
+      unchanged.
+
+**Verification:**
+- [ ] Add tests covering portal clicks in normal mode and Path mode.
+- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
+- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Dependencies:** Task 29
+
+**Files likely touched:**
+- `tools/battle_estimator_gui/app.js`
+- `tests/test_battle_estimator_gui.py`
+
+**Estimated scope:** Small
+
+## Task 31: End-To-End Portal Readability Verification
+
+**Description:** Verify the complete portal-readability workflow on a real map
+with one-way monoliths, two-way monoliths, multi-exit portals, and
+subterranean gates.
+
+**Acceptance criteria:**
+- [ ] Portal marker symbols are visually distinguishable at normal gameplay
+      zoom.
+- [ ] Hover preview is fast and does not move the map.
+- [ ] Pinned portal relation remains understandable after switching levels to a
+      destination.
+- [ ] Multi-exit portals clearly show possible exits and non-deterministic
+      status.
+- [ ] Exit-only or no-known-destination portals are visibly diagnostic rather
+      than looking like usable entrances.
+- [ ] Path mode and normal click-to-simulate workflows still work after the
+      portal changes.
+
+**Verification:**
+- [ ] Run `python3 -m unittest`.
+- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
+- [ ] Start the GUI and manually verify portal readability on at least one
+      current Diamond save/map.
+
+**Dependencies:** Tasks 26, 27, 28, 29, 30
+
+**Files likely touched:**
+- No production files expected unless verification finds issues.
+
+**Estimated scope:** Small
+
 ## Checkpoints
 
 ### Checkpoint: Route Foundation
@@ -1443,9 +1696,21 @@ After Tasks 18-25:
 - [x] Path mode does not interfere with normal click-to-simulate behavior.
 - [x] Cross-level paths can be inspected through the segment list.
 
+### Checkpoint: Portal Readability
+
+After Tasks 26-31:
+
+- [ ] Portal markers are distinguishable by type/role without relying only on
+      color.
+- [ ] Hover and pinned portal relation previews make same-level and cross-level
+      destinations easy to inspect.
+- [ ] Multi-exit portals are clearly labeled as possible/non-deterministic.
+- [ ] Exit-only and no-known-destination portals are visibly diagnostic.
+- [ ] Path mode still treats portal clicks as route requests.
+
 ### Checkpoint: Complete
 
-After Tasks 9, 17, and 25:
+After Tasks 9, 17, 25, and 31:
 
 - [x] `python3 -m unittest` passes.
 - [x] Route overlay, water, towns, portals, heroes, and neutrals are all
@@ -1455,6 +1720,8 @@ After Tasks 9, 17, and 25:
 - [x] Target hiding, map filtering, scan sorting, scan hover, scan click, auto
       refresh, and scan rings work together in the GUI.
 - [x] Path mode can find and display same-level and cross-level land routes.
+- [ ] Portal relation preview makes portal destinations understandable without
+      opening a separate portal list.
 
 ## Risks And Mitigations
 
@@ -1474,6 +1741,11 @@ After Tasks 9, 17, and 25:
 | Portal with multiple exits produces misleading route certainty. | Medium | Mark path segments through multi-exit portals as non-deterministic. |
 | Blocked target fallback hides that the clicked tile itself is unreachable. | Low | Return both requested and resolved target plus a visible fallback note. |
 | Path mode conflicts with simulation clicks. | Medium | Gate route requests behind an explicit Path mode toggle and leave normal mode behavior unchanged. |
+| Portal-link overlays clutter dense maps. | Medium | Draw overlays only for hovered/pinned portals and provide a compact `Portal links` toggle. |
+| Portal symbols become unreadable at low zoom. | Medium | Use simple high-contrast canvas symbols and keep color as a secondary cue. |
+| Cross-level destination lines imply physical same-level connection. | Medium | Use level badges and destination actions for off-level destinations instead of drawing off-level lines. |
+| Pinned portal context becomes confusing after destination navigation. | Medium | Preserve the source relation until the user explicitly inspects another portal, and label source/destination roles in details. |
+| Portal preview steals Path mode clicks. | High | Keep left-click route semantics in Path mode and limit click-to-pin to normal map mode. |
 
 ## Parallelization Opportunities
 
@@ -1494,6 +1766,13 @@ After Tasks 9, 17, and 25:
   after Task 22 defines the endpoint contract.
 - Tasks 9, 17, and 25 are verification tasks and should run after their
   respective feature groups are complete.
+- Task 27 can start after Task 26 defines relation state, while Task 28 should
+  wait for marker symbol decisions so overlay priority is clear.
+- Task 29 should wait for Task 28 because target details need the final
+  relation states and destination statuses.
+- Task 30 should wait for Tasks 28 and 29 so Path mode preserves the final
+  preview and navigation behavior.
+- Task 31 is a verification task and should run after Tasks 26-30 are complete.
 
 ## Summary Table
 
@@ -1524,3 +1803,9 @@ After Tasks 9, 17, and 25:
 | 23 | Add Path Mode UI And Route Rendering | done | 22 |
 | 24 | Add Path Segment List And Cross-Level Navigation | done | 23 |
 | 25 | End-To-End Pathfinding Verification | done | 18, 19, 20, 21, 22, 23, 24 |
+| 26 | Add Portal Relation View State | todo | 8 |
+| 27 | Redesign Portal Marker Symbols | blocked | 26 |
+| 28 | Render Portal Relation Overlay | blocked | 26, 27 |
+| 29 | Expand Portal Target Details And Navigation | blocked | 28 |
+| 30 | Preserve Path Mode Portal Semantics | blocked | 29 |
+| 31 | End-To-End Portal Readability Verification | blocked | 26, 27, 28, 29, 30 |
