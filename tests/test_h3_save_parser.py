@@ -20,10 +20,112 @@ ISRA_CREATURE_IDS = (57, 59, 63, 65, 67, 56, 69)
 ISRA_MOVED_CREATURE_IDS = (59, 57, 63, 65, 67, 56, 69)
 ISRA_COUNTS = (731, 181, 59, 47, 19, 316, 8)
 ISRA_MOVED_COUNTS = (181, 731, 59, 47, 19, 316, 8)
+HERO_COMBAT_SECONDARY_COUNT_FROM_NAME_OFFSET = -126
+HERO_COMBAT_SECONDARY_LEVELS_FROM_NAME_OFFSET = 13
+HERO_COMBAT_SECONDARY_SLOTS_FROM_NAME_OFFSET = 41
+HERO_COMBAT_PRIMARY_FROM_NAME_OFFSET = 69
+HERO_COMBAT_SECONDARY_SKILL_COUNT = 28
+HERO_COMBAT_LEVEL_BASIC = 1
+HERO_COMBAT_LEVEL_ADVANCED = 2
+HERO_COMBAT_LEVEL_EXPERT = 3
+# Standard H3 save-vector indices. Project-facing IDs may normalize names later
+# (for example Offense becomes the VCMI-style "offence").
+HERO_COMBAT_ARCHERY_INDEX = 1
+HERO_COMBAT_OFFENSE_INDEX = 22
+HERO_COMBAT_ARMORER_INDEX = 23
 
 
 def _xor_encode(raw: bytes, key=h3_save_parser.HERO_ARMY_XOR_KEY) -> bytes:
     return bytes(byte ^ key for byte in raw)
+
+
+def _ensure_data_size(data: bytearray, size: int):
+    if size > len(data):
+        data.extend(b"\x00" * (size - len(data)))
+
+
+def _write_encoded_test_bytes(
+    data: bytearray,
+    offset: int,
+    raw: bytes,
+    xor_key: int,
+):
+    _ensure_data_size(data, offset + len(raw))
+    data[offset:offset + len(raw)] = _xor_encode(raw, xor_key)
+
+
+def _write_hero_combat_fields(
+    data: bytearray,
+    name_offset: int,
+    primary_skills=None,
+    secondary_skills=(),
+    secondary_count=None,
+    secondary_levels=None,
+    secondary_slots=None,
+    xor_key=0x00,
+):
+    if primary_skills is not None:
+        if len(primary_skills) != 4:
+            raise ValueError("primary_skills must contain four values")
+        _write_encoded_test_bytes(
+            data,
+            name_offset + HERO_COMBAT_PRIMARY_FROM_NAME_OFFSET,
+            bytes(int(value) for value in primary_skills),
+            xor_key,
+        )
+
+    if (
+        secondary_skills
+        or secondary_count is not None
+        or secondary_levels is not None
+        or secondary_slots is not None
+    ):
+        levels = (
+            [0] * HERO_COMBAT_SECONDARY_SKILL_COUNT
+            if secondary_levels is None
+            else list(secondary_levels)
+        )
+        slots = (
+            [0] * HERO_COMBAT_SECONDARY_SKILL_COUNT
+            if secondary_slots is None
+            else list(secondary_slots)
+        )
+        if len(levels) != HERO_COMBAT_SECONDARY_SKILL_COUNT:
+            raise ValueError("secondary_levels must contain 28 values")
+        if len(slots) != HERO_COMBAT_SECONDARY_SKILL_COUNT:
+            raise ValueError("secondary_slots must contain 28 values")
+
+        for skill_index, level, slot in secondary_skills:
+            if not 0 <= skill_index < HERO_COMBAT_SECONDARY_SKILL_COUNT:
+                raise ValueError(f"skill index out of range: {skill_index}")
+            levels[skill_index] = int(level)
+            slots[skill_index] = int(slot)
+
+        if secondary_count is None:
+            secondary_count = sum(
+                1
+                for level, slot in zip(levels, slots)
+                if level or slot
+            )
+
+        _write_encoded_test_bytes(
+            data,
+            name_offset + HERO_COMBAT_SECONDARY_COUNT_FROM_NAME_OFFSET,
+            bytes([int(secondary_count)]),
+            xor_key,
+        )
+        _write_encoded_test_bytes(
+            data,
+            name_offset + HERO_COMBAT_SECONDARY_LEVELS_FROM_NAME_OFFSET,
+            bytes(levels),
+            xor_key,
+        )
+        _write_encoded_test_bytes(
+            data,
+            name_offset + HERO_COMBAT_SECONDARY_SLOTS_FROM_NAME_OFFSET,
+            bytes(slots),
+            xor_key,
+        )
 
 
 def _removed_neutral_record_bytes(
@@ -117,6 +219,127 @@ def _build_xor_hero_fixture(
             xor_key,
         )
     return bytes(data), name_offset
+
+
+def _build_hero_combat_fixture(
+    hero_name="Isra",
+    primary_skills=(8, 6, 4, 5),
+    secondary_skills=(),
+    secondary_count=None,
+    secondary_levels=None,
+    secondary_slots=None,
+    name_offset=256,
+    xor_key=0x00,
+    include_h3svg_signature=True,
+):
+    data, name_offset = _build_xor_hero_fixture(
+        hero_name=hero_name,
+        name_offset=name_offset,
+        xor_key=xor_key,
+    )
+    mutable = bytearray(data)
+    if include_h3svg_signature:
+        mutable[0:len(h3_save_parser.H3SVG_SIGNATURE)] = (
+            h3_save_parser.H3SVG_SIGNATURE
+        )
+    _write_hero_combat_fields(
+        mutable,
+        name_offset,
+        primary_skills=primary_skills,
+        secondary_skills=secondary_skills,
+        secondary_count=secondary_count,
+        secondary_levels=secondary_levels,
+        secondary_slots=secondary_slots,
+        xor_key=xor_key,
+    )
+    return bytes(mutable), name_offset
+
+
+def _decode_test_hero_combat_window(
+    data: bytes,
+    name_offset: int,
+    relative_offset: int,
+    length: int,
+    xor_key=0x00,
+):
+    return h3_save_parser.xor_decode_bytes(
+        data,
+        name_offset + relative_offset,
+        length,
+        xor_key,
+    )
+
+
+def _decode_test_hero_combat_primary(data: bytes, name_offset: int, xor_key=0x00):
+    return tuple(
+        _decode_test_hero_combat_window(
+            data,
+            name_offset,
+            HERO_COMBAT_PRIMARY_FROM_NAME_OFFSET,
+            4,
+            xor_key,
+        )
+    )
+
+
+def _decode_test_hero_combat_secondary_count(
+    data: bytes,
+    name_offset: int,
+    xor_key=0x00,
+):
+    return _decode_test_hero_combat_window(
+        data,
+        name_offset,
+        HERO_COMBAT_SECONDARY_COUNT_FROM_NAME_OFFSET,
+        1,
+        xor_key,
+    )[0]
+
+
+def _decode_test_hero_combat_secondary_vectors(
+    data: bytes,
+    name_offset: int,
+    xor_key=0x00,
+):
+    levels = tuple(
+        _decode_test_hero_combat_window(
+            data,
+            name_offset,
+            HERO_COMBAT_SECONDARY_LEVELS_FROM_NAME_OFFSET,
+            HERO_COMBAT_SECONDARY_SKILL_COUNT,
+            xor_key,
+        )
+    )
+    slots = tuple(
+        _decode_test_hero_combat_window(
+            data,
+            name_offset,
+            HERO_COMBAT_SECONDARY_SLOTS_FROM_NAME_OFFSET,
+            HERO_COMBAT_SECONDARY_SKILL_COUNT,
+            xor_key,
+        )
+    )
+    return levels, slots
+
+
+def _decode_test_hero_combat_active_secondaries(
+    data: bytes,
+    name_offset: int,
+    xor_key=0x00,
+):
+    levels, slots = _decode_test_hero_combat_secondary_vectors(
+        data,
+        name_offset,
+        xor_key,
+    )
+    active = []
+    for skill_index, (level, slot) in enumerate(zip(levels, slots)):
+        if level or slot:
+            active.append((slot, skill_index, level))
+    return tuple(
+        (skill_index, level, slot)
+        for slot, skill_index, level in sorted(active)
+    )
 
 
 def _write_gzip_save(path: Path, payload: bytes):
@@ -2030,6 +2253,173 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertIsNotNone(hero)
         self.assertIsNone(hero.owner_color_id)
         self.assertIsNone(hero.owner_color_name)
+
+    def test_synthetic_hero_combat_fixture_encodes_primary_in_gm1_shape(self):
+        data, name_offset = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            xor_key=0x00,
+        )
+
+        hero = h3_save_parser.parse_hero_at(data, name_offset, key=0x00)
+
+        self.assertEqual(
+            data[:len(h3_save_parser.H3SVG_SIGNATURE)],
+            h3_save_parser.H3SVG_SIGNATURE,
+        )
+        self.assertIsNotNone(hero)
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertEqual(hero.source_offset, name_offset)
+        self.assertEqual(
+            _decode_test_hero_combat_primary(data, name_offset, xor_key=0x00),
+            (8, 6, 4, 5),
+        )
+
+    def test_synthetic_hero_combat_fixture_encodes_secondary_combat_skills(self):
+        secondary_skills = (
+            (HERO_COMBAT_ARCHERY_INDEX, HERO_COMBAT_LEVEL_BASIC, 1),
+            (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 2),
+            (HERO_COMBAT_ARMORER_INDEX, HERO_COMBAT_LEVEL_ADVANCED, 3),
+        )
+        data, name_offset = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            secondary_skills=secondary_skills,
+            xor_key=0x00,
+        )
+
+        levels, slots = _decode_test_hero_combat_secondary_vectors(
+            data,
+            name_offset,
+            xor_key=0x00,
+        )
+
+        self.assertEqual(
+            _decode_test_hero_combat_secondary_count(
+                data,
+                name_offset,
+                xor_key=0x00,
+            ),
+            3,
+        )
+        self.assertEqual(levels[HERO_COMBAT_ARCHERY_INDEX], HERO_COMBAT_LEVEL_BASIC)
+        self.assertEqual(levels[HERO_COMBAT_OFFENSE_INDEX], HERO_COMBAT_LEVEL_EXPERT)
+        self.assertEqual(levels[HERO_COMBAT_ARMORER_INDEX], HERO_COMBAT_LEVEL_ADVANCED)
+        self.assertEqual(slots[HERO_COMBAT_ARCHERY_INDEX], 1)
+        self.assertEqual(slots[HERO_COMBAT_OFFENSE_INDEX], 2)
+        self.assertEqual(slots[HERO_COMBAT_ARMORER_INDEX], 3)
+        self.assertEqual(
+            _decode_test_hero_combat_active_secondaries(
+                data,
+                name_offset,
+                xor_key=0x00,
+            ),
+            secondary_skills,
+        )
+
+    def test_synthetic_hero_combat_fixtures_cover_partial_secondary_failures(self):
+        cases = (
+            (
+                "invalid_secondary_count",
+                {
+                    "secondary_count": 9,
+                    "secondary_skills": (
+                        (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+                    ),
+                },
+                9,
+                (
+                    (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+                ),
+            ),
+            (
+                "duplicate_secondary_slot",
+                {
+                    "secondary_count": 2,
+                    "secondary_skills": (
+                        (HERO_COMBAT_ARCHERY_INDEX, HERO_COMBAT_LEVEL_BASIC, 1),
+                        (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+                    ),
+                },
+                2,
+                (
+                    (HERO_COMBAT_ARCHERY_INDEX, HERO_COMBAT_LEVEL_BASIC, 1),
+                    (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+                ),
+            ),
+        )
+
+        for name, fixture_kwargs, expected_count, expected_active in cases:
+            with self.subTest(name=name):
+                data, name_offset = _build_hero_combat_fixture(
+                    primary_skills=(8, 6, 4, 5),
+                    xor_key=0x00,
+                    **fixture_kwargs,
+                )
+
+                self.assertEqual(
+                    _decode_test_hero_combat_primary(
+                        data,
+                        name_offset,
+                        xor_key=0x00,
+                    ),
+                    (8, 6, 4, 5),
+                )
+                self.assertEqual(
+                    _decode_test_hero_combat_secondary_count(
+                        data,
+                        name_offset,
+                        xor_key=0x00,
+                    ),
+                    expected_count,
+                )
+                self.assertEqual(
+                    _decode_test_hero_combat_active_secondaries(
+                        data,
+                        name_offset,
+                        xor_key=0x00,
+                    ),
+                    expected_active,
+                )
+
+    def test_synthetic_hero_combat_fixture_covers_unsupported_xor01_shape(self):
+        data, name_offset = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            secondary_skills=(
+                (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+            ),
+            xor_key=h3_save_parser.HERO_ARMY_XOR_KEY,
+        )
+        primary_offset = name_offset + HERO_COMBAT_PRIMARY_FROM_NAME_OFFSET
+
+        self.assertEqual(
+            _decode_test_hero_combat_primary(
+                data,
+                name_offset,
+                xor_key=h3_save_parser.HERO_ARMY_XOR_KEY,
+            ),
+            (8, 6, 4, 5),
+        )
+        self.assertNotEqual(
+            data[primary_offset:primary_offset + 4],
+            bytes((8, 6, 4, 5)),
+        )
+
+    def test_synthetic_hero_combat_fixture_covers_truncated_primary_window(self):
+        data, name_offset = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            xor_key=0x00,
+        )
+        truncated = data[:name_offset + HERO_COMBAT_PRIMARY_FROM_NAME_OFFSET + 3]
+
+        self.assertLess(
+            len(truncated),
+            name_offset + HERO_COMBAT_PRIMARY_FROM_NAME_OFFSET + 4,
+        )
+        with self.assertRaises(ValueError):
+            _decode_test_hero_combat_primary(
+                truncated,
+                name_offset,
+                xor_key=0x00,
+            )
 
     def test_detect_current_town_ownership_uses_bounded_proxy_cases(self):
         cases = (

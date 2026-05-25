@@ -21,6 +21,17 @@ from tests.test_battle_estimator_cli import (
     _write_h3m_map,
     _write_xor_hero_window,
 )
+from tests.test_h3_save_parser import (
+    HERO_COMBAT_ARCHERY_INDEX,
+    HERO_COMBAT_ARMORER_INDEX,
+    HERO_COMBAT_LEVEL_ADVANCED,
+    HERO_COMBAT_LEVEL_BASIC,
+    HERO_COMBAT_LEVEL_EXPERT,
+    HERO_COMBAT_OFFENSE_INDEX,
+    _build_hero_combat_fixture,
+    _decode_test_hero_combat_active_secondaries,
+    _decode_test_hero_combat_primary,
+)
 from tests.test_h3_map_parser import (
     _minimal_h3m_with_templates_and_objects,
     _object_bytes,
@@ -8634,6 +8645,41 @@ class BattleEstimatorGuiSnapshotTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, expected_message):
                     battle_estimator_gui._serialize_route_layers(header, route_tiles)
 
+    def test_gui_combat_save_fixture_writes_gm1_combat_windows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            game_dir = Path(temp_dir) / "game"
+            game_dir.mkdir()
+            secondary_skills = (
+                (HERO_COMBAT_ARCHERY_INDEX, HERO_COMBAT_LEVEL_BASIC, 1),
+                (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 2),
+                (HERO_COMBAT_ARMORER_INDEX, HERO_COMBAT_LEVEL_ADVANCED, 3),
+            )
+            save_path, name_offset = _write_gui_combat_save(
+                game_dir,
+                "001.GM1",
+                primary_skills=(8, 6, 4, 5),
+                secondary_skills=secondary_skills,
+            )
+
+            payload = gzip.decompress(save_path.read_bytes())
+
+        self.assertEqual(
+            payload[:len(h3_save_parser.H3SVG_SIGNATURE)],
+            h3_save_parser.H3SVG_SIGNATURE,
+        )
+        self.assertEqual(
+            _decode_test_hero_combat_primary(payload, name_offset, xor_key=0x00),
+            (8, 6, 4, 5),
+        )
+        self.assertEqual(
+            _decode_test_hero_combat_active_secondaries(
+                payload,
+                name_offset,
+                xor_key=0x00,
+            ),
+            secondary_skills,
+        )
+
     def test_follow_latest_snapshot_uses_latest_numeric_save_and_marks_removed_neutrals(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -8895,6 +8941,27 @@ def _write_gui_save(
     save_path = game_dir / name
     save_path.write_bytes(gzip.compress(payload))
     return save_path
+
+
+def _write_gui_combat_save(
+    game_dir: Path,
+    name: str,
+    hero_name="Isra",
+    primary_skills=(8, 6, 4, 5),
+    secondary_skills=(),
+    name_offset=256,
+    xor_key=0x00,
+) -> tuple[Path, int]:
+    payload, name_offset = _build_hero_combat_fixture(
+        hero_name=hero_name,
+        primary_skills=primary_skills,
+        secondary_skills=secondary_skills,
+        name_offset=name_offset,
+        xor_key=xor_key,
+    )
+    save_path = game_dir / name
+    save_path.write_bytes(gzip.compress(payload))
+    return save_path, name_offset
 
 
 def _write_h3m_map_with_town(path: Path, owner=2) -> Path:
