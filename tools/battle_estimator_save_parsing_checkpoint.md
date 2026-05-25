@@ -793,6 +793,31 @@ For the parser tasks, primary context is complete only when:
 If primary decoding fails, return combat context `unavailable`; do not infer
 stats from hero class, level, VCMI starting data, or artifact guesses.
 
+### T16 Primary Parser Implementation
+
+Implemented on 2026-05-25.
+
+The parser now exposes a `HeroCombatContext` on each parsed `HeroArmy`. The
+first supported status is `primary-only`, with current/effective
+Attack/Defense/Spell Power/Knowledge values decoded from the bounded primary
+window above.
+
+The support gate is intentionally narrow:
+
+- loaded save path suffix is `.GM1` case-insensitively,
+- `H3SVG` starts at offset `0`,
+- the accepted hero record uses raw `0x00` encoding,
+- the four-byte primary window is in bounds.
+
+Unsupported cases return `status = unavailable` with
+`reason = unsupported_save_structure`. Truncated primary windows return
+`reason = truncated_primary` while preserving the accepted army record. Direct
+byte scans without loaded-save metadata also remain unavailable by default, so
+the parser does not silently infer combat stats from loose byte patterns.
+
+Secondary skills are not parsed yet. Until T17 validates the 28-byte secondary
+vectors, a supported primary decode intentionally reports `primary-only`.
+
 ### Secondary Skill Decode
 
 Secondary skill data is two parallel 28-byte vectors indexed by standard H3

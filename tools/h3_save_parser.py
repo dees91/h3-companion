@@ -103,6 +103,14 @@ HERO_STRUCT_POSITION_FROM_NAME_OFFSET = -194
 HERO_POSITION_SIZE = 5
 MAX_HERO_POSITION_COORD = 255
 MAX_HERO_POSITION_LEVEL = 1
+HERO_COMBAT_SUPPORTED_SAVE_EXTENSION = ".GM1"
+HERO_COMBAT_SUPPORTED_XOR_KEY = 0x00
+HERO_COMBAT_PRIMARY_FROM_NAME_OFFSET = 69
+HERO_COMBAT_PRIMARY_SIZE = 4
+HERO_COMBAT_STATUS_UNAVAILABLE = "unavailable"
+HERO_COMBAT_STATUS_PRIMARY_ONLY = "primary-only"
+HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE = "unsupported_save_structure"
+HERO_COMBAT_REASON_TRUNCATED_PRIMARY = "truncated_primary"
 H3M_TOWN_OBJECT_ID = 98
 TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY = "hero_on_town_tile_proxy"
 TOWN_OWNERSHIP_STATUS_PROXY = "proxy"
@@ -343,6 +351,42 @@ class HeroStack:
 
 
 @dataclass(frozen=True)
+class HeroPrimarySkills:
+    """Current/effective primary skills decoded from a save hero record."""
+
+    attack: int
+    defense: int
+    spell_power: int
+    knowledge: int
+
+
+@dataclass(frozen=True)
+class HeroCombatContext:
+    """Save-derived hero combat fields and their parse confidence status."""
+
+    status: str = HERO_COMBAT_STATUS_UNAVAILABLE
+    primary_skills: HeroPrimarySkills | None = None
+    reason: str | None = HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE
+
+    def __post_init__(self) -> None:
+        if self.status not in (
+            HERO_COMBAT_STATUS_UNAVAILABLE,
+            HERO_COMBAT_STATUS_PRIMARY_ONLY,
+        ):
+            raise ValueError(f"unknown hero combat context status: {self.status!r}")
+        if self.status == HERO_COMBAT_STATUS_UNAVAILABLE:
+            if self.primary_skills is not None:
+                raise ValueError("unavailable combat context cannot include primary skills")
+            if self.reason is None:
+                raise ValueError("unavailable combat context requires a reason")
+        if self.status == HERO_COMBAT_STATUS_PRIMARY_ONLY:
+            if self.primary_skills is None:
+                raise ValueError("primary-only combat context requires primary skills")
+            if self.reason is not None:
+                raise ValueError("primary-only combat context must not include a reason")
+
+
+@dataclass(frozen=True)
 class HeroArmy:
     """Army stacks detected for one hero in a save file."""
 
@@ -351,6 +395,7 @@ class HeroArmy:
     source_offset: int | None = None
     position: HeroPosition | None = None
     owner_color_id: int | None = None
+    combat_context: HeroCombatContext = field(default_factory=HeroCombatContext)
 
     @property
     def total_creatures(self) -> int:
@@ -374,6 +419,10 @@ class HeroArmy:
         if 0 <= self.owner_color_id < len(PLAYER_COLOR_NAMES):
             return PLAYER_COLOR_NAMES[self.owner_color_id]
         return None
+
+    @property
+    def primary_skills(self) -> HeroPrimarySkills | None:
+        return self.combat_context.primary_skills
 
     @property
     def x(self) -> int | None:
@@ -875,7 +924,26 @@ def load_hero_armies_from_save(path: str | Path) -> tuple[HeroArmy, ...]:
     """Load a save file and scan it for detectable hero armies."""
 
     loaded_save = load_save(path)
-    return scan_xor01_hero_armies(loaded_save.data)
+    return scan_hero_armies_from_loaded_save(loaded_save)
+
+
+def scan_hero_armies_from_loaded_save(loaded_save: LoadedSave) -> tuple[HeroArmy, ...]:
+    """Scan a loaded save with save-level context for bounded hero combat fields."""
+
+    return scan_xor01_hero_armies(
+        loaded_save.data,
+        combat_context_supported=_loaded_save_supports_primary_combat_context(
+            loaded_save,
+        ),
+    )
+
+
+def _loaded_save_supports_primary_combat_context(loaded_save: LoadedSave) -> bool:
+    return (
+        loaded_save.path.suffix.upper() == HERO_COMBAT_SUPPORTED_SAVE_EXTENSION
+        and loaded_save.h3svg_offset == 0
+        and loaded_save.data.startswith(H3SVG_SIGNATURE)
+    )
 
 
 def load_removed_neutral_records_from_save(
@@ -1580,10 +1648,59 @@ def decode_hero_owner_color(
     return None
 
 
+def decode_hero_primary_skills(
+    data: bytes,
+    name_offset: int,
+    key: int = HERO_COMBAT_SUPPORTED_XOR_KEY,
+) -> HeroPrimarySkills:
+    """Decode four current/effective primary skills from a hero record."""
+
+    decoded = xor_decode_bytes(
+        data,
+        name_offset + HERO_COMBAT_PRIMARY_FROM_NAME_OFFSET,
+        HERO_COMBAT_PRIMARY_SIZE,
+        key,
+    )
+    return HeroPrimarySkills(
+        attack=decoded[0],
+        defense=decoded[1],
+        spell_power=decoded[2],
+        knowledge=decoded[3],
+    )
+
+
+def _hero_combat_context_for_record(
+    data: bytes,
+    name_offset: int,
+    key: int,
+    combat_context_supported: bool,
+) -> HeroCombatContext:
+    if (
+        not combat_context_supported
+        or key != HERO_COMBAT_SUPPORTED_XOR_KEY
+        or not data.startswith(H3SVG_SIGNATURE)
+    ):
+        return HeroCombatContext()
+
+    try:
+        primary_skills = decode_hero_primary_skills(data, name_offset, key)
+    except ValueError:
+        return HeroCombatContext(
+            reason=HERO_COMBAT_REASON_TRUNCATED_PRIMARY,
+        )
+    return HeroCombatContext(
+        status=HERO_COMBAT_STATUS_PRIMARY_ONLY,
+        primary_skills=primary_skills,
+        reason=None,
+    )
+
+
 def parse_hero_at(
     data: bytes,
     name_offset: int,
     key: int = HERO_ARMY_XOR_KEY,
+    *,
+    combat_context_supported: bool = False,
 ) -> HeroArmy | None:
     """Parse one hero-army candidate by hero-name offset and XOR key."""
 
@@ -1628,16 +1745,36 @@ def parse_hero_at(
         source_offset=name_offset,
         position=position,
         owner_color_id=owner_color_id,
+        combat_context=_hero_combat_context_for_record(
+            data,
+            name_offset,
+            key,
+            combat_context_supported,
+        ),
     )
 
 
-def parse_xor01_hero_at(data: bytes, name_offset: int) -> HeroArmy | None:
+def parse_xor01_hero_at(
+    data: bytes,
+    name_offset: int,
+    *,
+    combat_context_supported: bool = False,
+) -> HeroArmy | None:
     """Parse one XOR 0x01 hero-army candidate by hero-name offset."""
 
-    return parse_hero_at(data, name_offset, HERO_ARMY_XOR_KEY)
+    return parse_hero_at(
+        data,
+        name_offset,
+        HERO_ARMY_XOR_KEY,
+        combat_context_supported=combat_context_supported,
+    )
 
 
-def scan_xor01_hero_armies(data: bytes) -> tuple[HeroArmy, ...]:
+def scan_xor01_hero_armies(
+    data: bytes,
+    *,
+    combat_context_supported: bool = False,
+) -> tuple[HeroArmy, ...]:
     """Scan decompressed save bytes for encoded and hotseat hero armies."""
 
     heroes = []
@@ -1647,7 +1784,12 @@ def scan_xor01_hero_armies(data: bytes) -> tuple[HeroArmy, ...]:
             name_offset = match.start()
             if name_offset < HERO_STRUCT_NAME_OFFSET:
                 continue
-            hero_army = parse_hero_at(data, name_offset, key)
+            hero_army = parse_hero_at(
+                data,
+                name_offset,
+                key,
+                combat_context_supported=combat_context_supported,
+            )
             if hero_army is not None:
                 heroes.append(hero_army)
     return tuple(sorted(heroes, key=lambda hero: hero.source_offset or 0))

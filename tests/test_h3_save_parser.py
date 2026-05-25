@@ -2421,6 +2421,180 @@ class H3SaveParserContractTests(unittest.TestCase):
                 xor_key=0x00,
             )
 
+    def test_load_hero_armies_from_gm1_reads_primary_combat_context(self):
+        data, _ = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            xor_key=0x00,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "001.GM1"
+            _write_gzip_save(save_path, data)
+
+            heroes = h3_save_parser.load_hero_armies_from_save(save_path)
+
+        self.assertEqual(len(heroes), 1)
+        hero = heroes[0]
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_ONLY,
+        )
+        self.assertIsNone(hero.combat_context.reason)
+        self.assertEqual(
+            hero.primary_skills,
+            h3_save_parser.HeroPrimarySkills(
+                attack=8,
+                defense=6,
+                spell_power=4,
+                knowledge=5,
+            ),
+        )
+
+    def test_load_hero_armies_from_gm1_round_trips_primary_variants(self):
+        cases = (
+            ("low_values", (0, 1, 0, 1)),
+            ("changed_values", (4, 2, 4, 5)),
+            ("magic_primary_values", (3, 2, 9, 8)),
+            ("non_starting_current_values", (37, 12, 11, 9)),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            for index, (label, primary_skills) in enumerate(cases, start=1):
+                with self.subTest(label=label):
+                    data, _ = _build_hero_combat_fixture(
+                        primary_skills=primary_skills,
+                        xor_key=0x00,
+                    )
+                    save_path = temp_path / f"{index:03}.gm1"
+                    _write_gzip_save(save_path, data)
+
+                    hero = h3_save_parser.load_hero_armies_from_save(save_path)[0]
+
+                    self.assertEqual(
+                        hero.combat_context.status,
+                        h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_ONLY,
+                    )
+                    self.assertEqual(
+                        hero.primary_skills,
+                        h3_save_parser.HeroPrimarySkills(*primary_skills),
+                    )
+
+    def test_gm2_primary_combat_context_is_unavailable(self):
+        data, _ = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            xor_key=0x00,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "001.GM2"
+            _write_gzip_save(save_path, data)
+
+            hero = h3_save_parser.load_hero_armies_from_save(save_path)[0]
+
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertIsNone(hero.primary_skills)
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_UNAVAILABLE,
+        )
+        self.assertEqual(
+            hero.combat_context.reason,
+            h3_save_parser.HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE,
+        )
+
+    def test_prefixed_h3svg_primary_combat_context_is_unavailable(self):
+        data, _ = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            xor_key=0x00,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "001.GM1"
+            _write_gzip_save(save_path, b"x" * 65 + data)
+
+            hero = h3_save_parser.load_hero_armies_from_save(save_path)[0]
+
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertIsNone(hero.primary_skills)
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_UNAVAILABLE,
+        )
+        self.assertEqual(
+            hero.combat_context.reason,
+            h3_save_parser.HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE,
+        )
+
+    def test_xor01_primary_combat_context_is_unavailable_even_in_gm1(self):
+        data, _ = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            xor_key=h3_save_parser.HERO_ARMY_XOR_KEY,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "001.GM1"
+            _write_gzip_save(save_path, data)
+
+            hero = h3_save_parser.load_hero_armies_from_save(save_path)[0]
+
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertIsNone(hero.primary_skills)
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_UNAVAILABLE,
+        )
+        self.assertEqual(
+            hero.combat_context.reason,
+            h3_save_parser.HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE,
+        )
+
+    def test_default_byte_scan_leaves_primary_combat_context_unavailable(self):
+        data, _ = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            xor_key=0x00,
+        )
+
+        hero = h3_save_parser.scan_xor01_hero_armies(data)[0]
+
+        self.assertIsNone(hero.primary_skills)
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_UNAVAILABLE,
+        )
+        self.assertEqual(
+            hero.combat_context.reason,
+            h3_save_parser.HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE,
+        )
+
+    def test_truncated_primary_context_is_unavailable_but_army_parses(self):
+        data, _ = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            xor_key=0x00,
+        )
+        truncated = data[:256 + HERO_COMBAT_PRIMARY_FROM_NAME_OFFSET + 3]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "001.GM1"
+            _write_gzip_save(save_path, truncated)
+
+            heroes = h3_save_parser.load_hero_armies_from_save(save_path)
+
+        self.assertEqual(len(heroes), 1)
+        hero = heroes[0]
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertEqual([stack.count for stack in hero.stacks], list(ISRA_COUNTS))
+        self.assertIsNone(hero.primary_skills)
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_UNAVAILABLE,
+        )
+        self.assertEqual(
+            hero.combat_context.reason,
+            h3_save_parser.HERO_COMBAT_REASON_TRUNCATED_PRIMARY,
+        )
+
     def test_detect_current_town_ownership_uses_bounded_proxy_cases(self):
         cases = (
             {
