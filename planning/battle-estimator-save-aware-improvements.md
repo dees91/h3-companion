@@ -774,7 +774,19 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T01. Inspected local real saves in place without copying
+  or staging save/map files. Recorded an anonymized current-town-ownership
+  evidence section in `tools/battle_estimator_save_parsing_checkpoint.md`.
+  The evidence uses one same-map save group with stable parsed map geometry
+  (`108`, two levels, `24` town targets) and anonymized save/town labels. Two
+  save pairs show different town-control states through high-confidence
+  owner/position proxy facts: visible XOR `0x01` hero records of different
+  owner colors occupying the same parsed town tile at different save points.
+  Notes record only semantic owner ids, approximate `H3SVG`-relative supporting
+  hero-structure ranges, and negative searches for direct town-owner vectors or
+  coordinate/object-index patterns. No real paths, player names, map names,
+  save filenames, custom town names, raw bytes, `.GM1`, `.GM2`, `.h3m`, or cache
+  files were staged.
 
 ---
 
@@ -1699,8 +1711,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | M05 | Render Dual-Level Map And Markers | done | M04 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M06 | Dual-Level Interactions And Portal Links | done | M03, M05 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M07 | Map UX Follow-Up Verification | done | M01, M02, M03, M04, M05, M06 | priority-map-ux | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, planning doc |
-| T01 | Collect Local Save Evidence | todo | -- | research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
-| T02 | Document Save Ownership Hypothesis | blocked | T01 | research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
+| T01 | Collect Local Save Evidence | done | -- | research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
+| T02 | Document Save Ownership Hypothesis | todo | T01 | research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T03 | Synthetic Current Town Ownership Fixtures | blocked | T02 | parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
 | T04 | Parse Current Town Ownership | blocked | T03 | parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
 | T05 | Join Save Ownership To H3M Town Targets | blocked | T04 | backend | Main | M | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |

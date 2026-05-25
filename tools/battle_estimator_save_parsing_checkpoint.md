@@ -412,6 +412,101 @@ The observed local result printed Isra at `(39,69,1)`, radius `10`, simulation
 count `500`, and distance-sorted rows where supported targets had `win%` values
 and unsupported H3M mappings had an unsupported note.
 
+## Current Town Ownership Evidence, Anonymized
+
+Date: 2026-05-25
+
+This research pass inspected local save files only in place. No real save files,
+map files, cache files, raw bytes, paths, map names, player names, or custom
+town names are recorded here.
+
+### Same-Map Evidence
+
+One anonymized random-map group was used for the strongest observations:
+
+- `Map Group 1`
+  - save series contains many numeric autosaves from one generated map,
+  - resolved H3M map has size `108`, two levels, and `24` parsed town targets,
+  - town target order, coordinates, object indices, object ids, subids, and
+    initial owners are stable for all saves in the group,
+  - inspected saves all have `H3SVG` at offset `65`,
+  - decompressed sizes differ over the series, so absolute offset comparison
+    needs anchoring and cannot assume fixed positions.
+
+The observations below use anonymized save labels and town labels. Owner ids
+use standard Heroes III color ids:
+
+```text
+0 red, 1 blue, 2 tan, 3 green, 4 orange, 5 purple, 6 teal, 7 pink
+```
+
+### Observed Owner Facts
+
+The pass did not yet isolate a direct save-side town-owner field. The facts
+below are high-confidence ownership proxies from game-state rules: a visible
+hero record with owner color `C` occupying a parsed town's visitable tile implies
+that the town is currently controlled by owner `C` or has just been captured by
+that owner. This is useful evidence for locating future direct town-owner
+records, but it should not replace a direct parser once that field is found.
+
+| Map Group | Save Pair | Town | Initial Owner | Observed Earlier | Observed Later | Evidence |
+|---|---|---|---|---|---|---|
+| 1 | A -> B | T0 | 0 red | 2 tan | 0 red | hero owner/position records on the same town tile |
+| 1 | C -> D | T2 | 2 tan | 2 tan | 0 red | hero owner/position records on the same town tile |
+
+Additional same-map observations show neutral towns occupied by non-neutral
+owners later in the series:
+
+- `T7`: observed as `2 tan`, later observed as `1 blue`.
+- `T14`: observed as `0 red`, later observed as `2 tan`.
+
+These facts confirm that at least two same-map saves have different current
+town-control states, even though the direct town-owner byte has not yet been
+identified.
+
+### Byte-Structure Evidence
+
+The owner/position observations above come from already understood XOR `0x01`
+hero structures:
+
+- hero name offset remains the parser's `source_offset`,
+- hero struct start / owner byte is at `source_offset - 169`,
+- hero position is five decoded bytes at `source_offset - 194`,
+- position stores `x`, `y`, and `z`; owner stores the Heroes III color id.
+
+Anonymized supporting ranges relative to the `H3SVG` offset:
+
+| Save | Town | Observed Owner | Supporting Structure Range |
+|---|---|---|---|
+| A | T0 | 2 tan | two hero structures around `H3SVG + 809k` and `H3SVG + 810k` |
+| B | T0 | 0 red | one hero structure around `H3SVG + 784k` |
+| C | T2 | 2 tan | one hero structure around `H3SVG + 811k` |
+| D | T2 | 0 red | one hero structure around `H3SVG + 734k` |
+
+This establishes a reliable way to build anonymized synthetic fixtures for
+"hero occupying parsed town tile" ownership-proxy behavior. A future direct
+town-owner fixture should still target the actual town record once identified.
+
+### Negative Searches
+
+Several simple direct-owner hypotheses did not produce a reliable town-owner
+record:
+
+- no simple contiguous `24`-byte town-owner vector was found using the observed
+  owner subset,
+- no direct town `x/y/z + owner`, `owner + x/y/z`, encoded `x + yz + owner`,
+  or flattened tile-index owner pattern was found in raw or XOR `0x01` form,
+- searching raw and XOR `0x01` town object indices produced many false
+  positives and did not isolate a town-current-owner structure.
+
+The next research/documentation step should therefore distinguish two possible
+approaches:
+
+1. A provisional ownership inference based on visible hero owner + exact town
+   tile occupancy.
+2. A direct current-town-owner parser, still requiring a better save-side
+   structure hypothesis and synthetic fixtures.
+
 ## Important Caveats
 
 - This checkpoint only proves army extraction for the observed Porting Kit /
