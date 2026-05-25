@@ -507,7 +507,19 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for M03. Active portal relations now draw off-level
+  destinations as canvas ghost portal markers at the destination `(x, y)` with
+  alpha `0.5`, a restrained source-to-ghost line, and per-ghost `L<level>`
+  badges while preserving the source summary badge. Ghosts are scoped to the
+  active hovered/pinned relation and respect the `Portal links` toggle. Normal
+  markers keep hit priority over ghosts; normal-mode ghost clicks center and
+  activate the real destination portal through the existing portal-focus path;
+  Path mode treats ghost clicks as tile path requests on the active level.
+  Headless GUI tests cover drawing, badges near the ghost marker, Portal links
+  off, relation scoping, normal-marker priority, destination centering, and Path
+  mode transparency. Verified with
+  `node --check tools/battle_estimator_gui/app.js`,
+  `python3 -m unittest tests.test_battle_estimator_gui`, and `git diff --check`.
 
 ---
 
@@ -1631,7 +1643,7 @@ side-by-side view changes map geometry, rendering, and hit testing.
 |---|---|---|---|---|---|---|---|---|
 | M01 | Lower Monster Marker Priority | done | -- | priority-map-ux | Parallel | S | GUI | `tools/battle_estimator_gui/app.js`, GUI tests |
 | M02 | Subterranean Gate Click Level Toggle | done | -- | priority-map-ux | Parallel | S | GUI | `tools/battle_estimator_gui/app.js`, GUI tests |
-| M03 | Cross-Level Ghost Portal Destinations | todo | M02 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
+| M03 | Cross-Level Ghost Portal Destinations | done | M02 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M04 | Dual-Level View State And Geometry | todo | -- | priority-map-ux | Main | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | M05 | Render Dual-Level Map And Markers | blocked | M04 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M06 | Dual-Level Interactions And Portal Links | blocked | M03, M05 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |

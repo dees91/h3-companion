@@ -869,6 +869,13 @@
       ].filter(Boolean).join(" | ");
     }
     if (marker.type === "portal") {
+      if (marker.ghost) {
+        return [
+          marker.label,
+          `Ghost destination level ${marker.realLevel}`,
+          positionText(marker.position)
+        ].filter(Boolean).join(" | ");
+      }
       return [
         marker.label,
         positionText(marker.position),
@@ -1626,6 +1633,70 @@
       }));
   }
 
+  function portalGhostMarkerId(sourceId, destinationId) {
+    return `portal-ghost:${sourceId || "source"}->${destinationId || "destination"}`;
+  }
+
+  function portalGhostMarkersForRelation(relation, tileSize) {
+    if (
+      !mapView.showPortalLinks
+      || !relation
+      || !relation.sourcePosition
+      || positionLevel(relation.sourcePosition) !== mapView.level
+    ) {
+      return [];
+    }
+    return (relation.crossLevelDestinations || [])
+      .filter((destination) => destination && destination.position)
+      .map((destination) => ({
+        type: "portal",
+        ghost: true,
+        id: portalGhostMarkerId(relation.sourceId, destination.id),
+        sourceId: relation.sourceId,
+        destinationId: destination.id,
+        label: `${destination.label || "Portal"} destination`,
+        position: destination.position,
+        world: pathPointForPosition(destination.position, tileSize),
+        radius: 8,
+        selected: false,
+        removed: false,
+        hidden: false,
+        unsupported: false,
+        h3mSubid: destination.edge && typeof destination.edge.h3m_subid === "number"
+          ? destination.edge.h3m_subid
+          : null,
+        portalType: destination.portalType,
+        role: destination.role,
+        channelKey: destination.edge && destination.edge.channel_key,
+        destinations: [],
+        realLevel: positionLevel(destination.position),
+        edge: destination.edge
+      }));
+  }
+
+  function currentPortalGhostMarkers() {
+    const current = mapView.snapshot || {};
+    const tileSize = tileSizeForMap(current.map || {});
+    return portalGhostMarkersForRelation(currentPortalRelation(), tileSize);
+  }
+
+  function hitTestPortalGhostMarker(screenPoint, view) {
+    if (!mapView.showPortalLinks) {
+      return null;
+    }
+    const markers = currentPortalGhostMarkers();
+    for (let index = markers.length - 1; index >= 0; index -= 1) {
+      const marker = markers[index];
+      const markerScreen = worldToScreen(marker.world, view);
+      const dx = screenPoint.x - markerScreen.x;
+      const dy = screenPoint.y - markerScreen.y;
+      if (markerContainsScreenPoint(marker, dx, dy, view)) {
+        return marker;
+      }
+    }
+    return null;
+  }
+
   function drawPortalRelationArrow(from, to, dashed) {
     const angle = Math.atan2(to.y - from.y, to.x - from.x);
     const headLength = clamp(7 * Math.sqrt(mapView.zoom), 5, 12);
@@ -1687,6 +1758,66 @@
     canvasContext.fillText(label, x + 5, y + 13);
   }
 
+  function drawPortalGhostLine(source, target, dashed) {
+    canvasContext.setLineDash(dashed ? [5, 5] : [3, 5]);
+    canvasContext.strokeStyle = "#2563eb";
+    canvasContext.lineWidth = 1.5;
+    canvasContext.beginPath();
+    canvasContext.moveTo(source.x, source.y);
+    canvasContext.lineTo(target.x, target.y);
+    canvasContext.stroke();
+    canvasContext.setLineDash([]);
+  }
+
+  function drawPortalGhostBadge(marker, screen, radius) {
+    const label = `L${marker.realLevel}`;
+    const width = Math.max(22, label.length * 7 + 10);
+    const height = 16;
+    const x = screen.x + radius * 0.62;
+    const y = screen.y - radius - 14;
+
+    canvasContext.fillStyle = "rgba(255, 255, 255, 0.94)";
+    canvasContext.fillRect(x, y, width, height);
+    canvasContext.strokeStyle = "#2563eb";
+    canvasContext.lineWidth = 1.25;
+    canvasContext.strokeRect(x, y, width, height);
+    canvasContext.fillStyle = "#1e3a8a";
+    canvasContext.font = "11px Arial, Helvetica, sans-serif";
+    canvasContext.fillText(label, x + 5, y + 12);
+  }
+
+  function drawPortalGhostMarker(marker) {
+    const screen = worldToScreen(marker.world, mapView);
+    const radius = markerScreenRadius(marker, mapView) - 3;
+    const portalStyle = portalStyleForType(marker.portalType);
+    const isHover = marker.id === mapView.hoveredMarkerId;
+
+    canvasContext.save();
+    canvasContext.globalAlpha = 0.5;
+    canvasContext.fillStyle = portalStyle.fill;
+    canvasContext.strokeStyle = portalStyle.stroke;
+    canvasContext.lineWidth = 2;
+    canvasContext.fillRect(
+      screen.x - radius * 0.82,
+      screen.y - radius * 0.82,
+      radius * 1.64,
+      radius * 1.64
+    );
+    canvasContext.strokeRect(
+      screen.x - radius * 0.82,
+      screen.y - radius * 0.82,
+      radius * 1.64,
+      radius * 1.64
+    );
+    drawPortalMarkerSymbol(marker, screen, radius);
+    canvasContext.restore();
+
+    if (isHover) {
+      drawMarkerRing(screen, radius + 5, "#4b5563", 2);
+    }
+    drawPortalGhostBadge(marker, screen, radius);
+  }
+
   function drawPortalRelationOverlay(tileSize) {
     if (!mapView.showPortalLinks) {
       return;
@@ -1703,6 +1834,7 @@
     const sameLevelDestinations = (relation.sameLevelDestinations || [])
       .filter((destination) => destination.position)
       .filter((destination) => positionLevel(destination.position) === mapView.level);
+    const ghostMarkers = portalGhostMarkersForRelation(relation, tileSize);
     const dashed = Boolean(relation.isNonDeterministic);
 
     canvasContext.save();
@@ -1712,6 +1844,14 @@
     sameLevelDestinations.forEach((destination) => {
       const target = worldToScreen(pathPointForPosition(destination.position, tileSize), mapView);
       drawPortalRelationArrow(source, target, dashed);
+    });
+    ghostMarkers.forEach((marker) => {
+      const target = worldToScreen(marker.world, mapView);
+      canvasContext.globalAlpha = 0.55;
+      drawPortalGhostLine(source, target, dashed);
+      canvasContext.globalAlpha = 1;
+      drawPortalGhostMarker(marker);
+      canvasContext.globalAlpha = 1;
     });
     drawPortalRelationBadge(source, relation);
     canvasContext.restore();
@@ -4681,17 +4821,25 @@
     }
 
     const marker = hitTestMarker(mapView.markers, point, mapView);
-    setPortalRelationHover(marker);
-    mapView.hoveredMarkerId = marker ? marker.id : null;
-    elements.canvas.classList.toggle("has-marker-hover", Boolean(marker));
+    const ghostMarker = !marker && !mapView.pathMode
+      ? hitTestPortalGhostMarker(point, mapView)
+      : null;
+    const hoverTarget = marker || ghostMarker;
     if (marker) {
-      showMapTooltip(marker, event);
+      setPortalRelationHover(marker);
+    } else if (!ghostMarker) {
+      clearPortalRelationHover();
+    }
+    mapView.hoveredMarkerId = hoverTarget ? hoverTarget.id : null;
+    elements.canvas.classList.toggle("has-marker-hover", Boolean(hoverTarget));
+    if (hoverTarget) {
+      showMapTooltip(hoverTarget, event);
     } else {
       hideMapTooltip();
     }
     if (marker && !mapView.activeMarkerId) {
       setTargetDetails(marker);
-    } else if (!marker && !mapView.activeMarkerId) {
+    } else if (!hoverTarget && !mapView.activeMarkerId) {
       setTargetDetails(null);
     }
     drawMap();
@@ -4709,7 +4857,18 @@
       return;
     }
     const marker = hitTestMarker(mapView.markers, point, mapView);
-    setPortalRelationHover(marker);
+    const ghostMarker = !marker && !mapView.pathMode
+      ? hitTestPortalGhostMarker(point, mapView)
+      : null;
+    if (marker) {
+      setPortalRelationHover(marker);
+    } else if (!ghostMarker) {
+      clearPortalRelationHover();
+    }
+    if (ghostMarker) {
+      focusPortalDestinationFromPanel(ghostMarker.sourceId, ghostMarker.destinationId);
+      return;
+    }
     updatePinnedPortalRelationForClick(marker, mapView.pathMode);
     mapView.activeMarkerId = marker ? marker.id : null;
     setTargetDetails(marker);
@@ -4819,6 +4978,7 @@
     centerOnWorldPoint,
     currentMapViewForTest,
     currentPathStateForTest,
+    currentPortalGhostMarkers,
     currentPortalRelation,
     currentPortalRelationStateForTest,
     compareHeroSkillOffers,

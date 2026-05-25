@@ -1913,6 +1913,36 @@ function portalRelationBadgeTexts() {{
     operation.op === "fillText" && operation.fillStyle === "#1e3a8a"
   ));
 }}
+function portalGhostFillOps() {{
+  return drawOperations.filter((operation) => (
+    operation.op === "fillRect"
+    && portalFillStyles.has(operation.fillStyle)
+    && Math.abs((operation.globalAlpha || 1) - 0.5) < 0.02
+  ));
+}}
+function portalGhostFillOpsNear(point) {{
+  return portalGhostFillOps().filter((operation) => (
+    point.x >= operation.x
+    && point.x <= operation.x + operation.width
+    && point.y >= operation.y
+    && point.y <= operation.y + operation.height
+  ));
+}}
+function portalGhostLineOpsNear(point) {{
+  return drawOperations.filter((operation) => (
+    operation.op === "lineTo"
+    && operation.strokeStyle === "#2563eb"
+    && operation.lineWidth === 1.5
+    && Math.abs(operation.x - point.x) <= 1
+    && Math.abs(operation.y - point.y) <= 1
+  ));
+}}
+function portalGhostBadgeTextsNear(point) {{
+  return portalRelationBadgeTexts().filter((operation) => (
+    Math.abs(operation.x - point.x) <= 40
+    && Math.abs(operation.y - point.y) <= 32
+  ));
+}}
 function dispatchCanvasPointer(type, point, pointerId = 700) {{
   elements["battle-map"].dispatch(type, {{
     button: 0,
@@ -1930,7 +1960,18 @@ const relationOverlaySnapshot = {{
   selected_hero_id: null,
   heroes: [],
   neutral_targets: [],
-  town_targets: [],
+  town_targets: [
+    {{
+      id: "town:ghost-cover",
+      object_index: 40,
+      position: {{ x: 6, y: 3, z: 0 }},
+      object_id: 98,
+      h3m_subid: 3,
+      faction_subid: 3,
+      initial_owner_color_name: "red",
+      custom_name: "Ghost Cover"
+    }}
+  ],
   portal_targets: [
     {{
       id: "portal:source-a",
@@ -1979,13 +2020,30 @@ const relationOverlaySnapshot = {{
       portal_type: "monolith_one_way",
       role: "entrance",
       channel_key: "monolith-one-way:30"
+    }},
+    {{
+      id: "portal:source-c",
+      object_index: 50,
+      position: {{ x: 1, y: 3, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "entrance",
+      channel_key: "monolith-one-way:50"
+    }},
+    {{
+      id: "portal:cross-c",
+      object_index: 51,
+      position: {{ x: 6, y: 3, z: 1 }},
+      portal_type: "monolith_one_way",
+      role: "exit",
+      channel_key: "monolith-one-way:50"
     }}
   ],
   portal_edges: [
     {{ source_id: "portal:source-a", destination_id: "portal:same-a" }},
     {{ source_id: "portal:source-a", destination_id: "portal:cross-a" }},
     {{ source_id: "portal:source-b", destination_id: "portal:same-b" }},
-    {{ source_id: "portal:broken-ui", destination_id: "portal:missing-ui" }}
+    {{ source_id: "portal:broken-ui", destination_id: "portal:missing-ui" }},
+    {{ source_id: "portal:source-c", destination_id: "portal:cross-c" }}
   ]
 }};
 helpers.renderSnapshot(relationOverlaySnapshot, {{ preserveView: false }});
@@ -2014,6 +2072,33 @@ assert.deepStrictEqual(
   helpers.portalCrossLevelSummaries(relationState.relation),
   [{{ level: 1, count: 1, label: "L1" }}]
 );
+const crossAGhostPoint = mapTileScreenPoint(5, 1, helpers.currentMapViewForTest());
+assert.deepStrictEqual(
+  helpers.currentPortalGhostMarkers().map((marker) => marker.destinationId),
+  ["portal:cross-a"]
+);
+assert.ok(portalGhostFillOpsNear(crossAGhostPoint).length > 0);
+assert.ok(portalGhostLineOpsNear(crossAGhostPoint).length > 0);
+assert.ok(portalGhostBadgeTextsNear(crossAGhostPoint).some((operation) => operation.text === "L1"));
+const ghostClickStart = fetchRequests.length;
+dispatchCanvasPointer("pointerdown", crossAGhostPoint, 710);
+dispatchCanvasPointer("pointerup", crossAGhostPoint, 710);
+let ghostDestinationView = helpers.currentMapViewForTest();
+assert.strictEqual(ghostDestinationView.level, 1);
+assert.strictEqual(ghostDestinationView.activeMarkerId, "portal:cross-a");
+const focusedCrossA = ghostDestinationView.markers.find((marker) => marker.id === "portal:cross-a");
+const focusedCrossAPoint = helpers.worldToScreen(focusedCrossA.world, ghostDestinationView);
+let canvasRect = elements["battle-map"].getBoundingClientRect();
+assert.ok(Math.abs(focusedCrossAPoint.x - (canvasRect.width / 2)) < 0.001);
+assert.ok(Math.abs(focusedCrossAPoint.y - (canvasRect.height / 2)) < 0.001);
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, null);
+assert.strictEqual(relationState.pinnedSourceId, "portal:source-a");
+assert.strictEqual(relationState.activeSourceId, "portal:source-a");
+assert.strictEqual(pathRequestsSince(ghostClickStart).length, 0);
+assert.strictEqual(simulateRequestsSince(ghostClickStart).length, 0);
+assert.ok(targetStateText().includes("portal portal:cross-a"));
+helpers.renderSnapshot(relationOverlaySnapshot, {{ preserveView: false }});
 drawOperations.length = 0;
 dispatchCanvasPointer("pointerdown", relationSourceAPoint, 702);
 dispatchCanvasPointer("pointerup", relationSourceAPoint, 702);
@@ -2027,6 +2112,7 @@ elements["portal-links-toggle"].checked = false;
 elements["portal-links-toggle"].dispatch("change", {{}});
 assert.strictEqual(portalRelationStrokeOps().length, 0);
 assert.strictEqual(portalRelationBadgeTexts().length, 0);
+assert.strictEqual(helpers.currentPortalGhostMarkers().length, 0);
 relationState = helpers.currentPortalRelationStateForTest();
 assert.strictEqual(relationState.pinnedSourceId, "portal:source-a");
 assert.strictEqual(relationState.activeSourceId, "portal:source-a");
@@ -2048,6 +2134,8 @@ assert.ok(!portalRelationStrokeOps().some((operation) => (
   operation.lineDash && operation.lineDash.length > 0
 )), "single-exit hovered relation should not inherit pinned dashed style");
 assert.strictEqual(portalRelationBadgeTexts().length, 0);
+assert.strictEqual(helpers.currentPortalGhostMarkers().length, 0);
+assert.strictEqual(portalGhostFillOps().length, 0);
 drawOperations.length = 0;
 elements["battle-map"].dispatch("pointerleave", {{}});
 relationState = helpers.currentPortalRelationStateForTest();
@@ -2101,6 +2189,84 @@ assert.ok(portalDetailText.includes("portal portal:broken-ui"));
 assert.ok(portalDetailText.includes("No resolved destinations"));
 assert.ok(portalDetailText.includes("1 unresolved edge"));
 assert.strictEqual(targetDestinationButtons().length, 0);
+helpers.renderSnapshot(relationOverlaySnapshot, {{ preserveView: false }});
+let relationPriorityView = helpers.currentMapViewForTest();
+const relationSourceC = relationPriorityView.markers.find((marker) => marker.id === "portal:source-c");
+const relationSourceCPoint = helpers.worldToScreen(relationSourceC.world, relationPriorityView);
+drawOperations.length = 0;
+dispatchCanvasPointer("pointermove", relationSourceCPoint, 706);
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, "portal:source-c");
+assert.deepStrictEqual(
+  helpers.currentPortalGhostMarkers().map((marker) => marker.destinationId),
+  ["portal:cross-c"]
+);
+relationPriorityView = helpers.currentMapViewForTest();
+const ghostCoverMarker = relationPriorityView.markers.find((marker) => marker.id === "town:ghost-cover");
+const crossCGhostPoint = helpers.worldToScreen(ghostCoverMarker.world, relationPriorityView);
+assert.strictEqual(
+  helpers.hitTestMarker(relationPriorityView.markers, crossCGhostPoint, relationPriorityView).id,
+  "town:ghost-cover"
+);
+assert.ok(portalGhostFillOpsNear(crossCGhostPoint).length > 0);
+const ghostPriorityStart = fetchRequests.length;
+dispatchCanvasPointer("pointerdown", crossCGhostPoint, 707);
+dispatchCanvasPointer("pointerup", crossCGhostPoint, 707);
+relationPriorityView = helpers.currentMapViewForTest();
+assert.strictEqual(relationPriorityView.level, 0);
+assert.strictEqual(relationPriorityView.activeMarkerId, "town:ghost-cover");
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, null);
+assert.strictEqual(relationState.pinnedSourceId, null);
+assert.strictEqual(pathRequestsSince(ghostPriorityStart).length, 0, "ghost covered by town should not request a path");
+assert.strictEqual(simulateRequestsSince(ghostPriorityStart).length, 0, "ghost covered by town should not simulate");
+assert.ok(targetStateText().includes("town town:ghost-cover"));
+
+const ghostPathSnapshot = {{
+  ...relationOverlaySnapshot,
+  selected_hero_id: "hero:path",
+  heroes: [
+    {{
+      id: "hero:path",
+      name: "Path Hero",
+      position: {{ x: 0, y: 0, z: 0 }},
+      owner_color_id: 0,
+      owner_color_name: "red",
+      team_id: 0,
+      total_creatures: 1,
+      ai_value: 1,
+      army_summary: "1x Pikeman"
+    }}
+  ]
+}};
+helpers.renderSnapshot(ghostPathSnapshot, {{ preserveView: false }});
+let ghostPathView = helpers.currentMapViewForTest();
+const ghostPathSourceA = ghostPathView.markers.find((marker) => marker.id === "portal:source-a");
+const ghostPathSourceAPoint = helpers.worldToScreen(ghostPathSourceA.world, ghostPathView);
+dispatchCanvasPointer("pointermove", ghostPathSourceAPoint, 708);
+const ghostPathPoint = mapTileScreenPoint(5, 1, helpers.currentMapViewForTest());
+elements["path-mode-toggle"].checked = true;
+elements["path-mode-toggle"].dispatch("change", {{}});
+const ghostPathStart = fetchRequests.length;
+dispatchCanvasPointer("pointerdown", ghostPathPoint, 709);
+dispatchCanvasPointer("pointerup", ghostPathPoint, 709);
+await flushPromises();
+const ghostPathRequests = pathRequestsSince(ghostPathStart);
+assert.strictEqual(ghostPathRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(ghostPathRequests[0].options.body), {{
+  hero_id: "hero:path",
+  target_position: {{ x: 5, y: 1, z: 0 }}
+}});
+assert.strictEqual(simulateRequestsSince(ghostPathStart).length, 0, "path-mode ghost tile click should not simulate");
+ghostPathView = helpers.currentMapViewForTest();
+assert.strictEqual(ghostPathView.level, 0);
+assert.strictEqual(ghostPathView.activeMarkerId, null);
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, null);
+assert.strictEqual(relationState.pinnedSourceId, null);
+elements["path-mode-toggle"].checked = false;
+elements["path-mode-toggle"].dispatch("change", {{}});
+
 const subterraneanToggleSnapshot = {{
   map: {{ width: 5, height: 4, levels: 2 }},
   route_layers: [
@@ -2182,7 +2348,7 @@ assert.strictEqual(simulateRequestsSince(subterraneanToggleStart).length, 0);
 assert.ok(targetStateText().includes("portal portal:gate-underground"));
 const undergroundGate = toggledGateView.markers.find((marker) => marker.id === "portal:gate-underground");
 const undergroundGatePoint = helpers.worldToScreen(undergroundGate.world, toggledGateView);
-const canvasRect = elements["battle-map"].getBoundingClientRect();
+canvasRect = elements["battle-map"].getBoundingClientRect();
 assert.ok(Math.abs(undergroundGatePoint.x - (canvasRect.width / 2)) < 0.001);
 assert.ok(Math.abs(undergroundGatePoint.y - (canvasRect.height / 2)) < 0.001);
 const reverseToggleStart = fetchRequests.length;
