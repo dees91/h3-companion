@@ -2175,6 +2175,28 @@ function portalGhostBadgeTextsNear(point) {{
     && Math.abs(operation.y - point.y) <= 32
   ));
 }}
+function pathRouteLineOps() {{
+  return drawOperations.filter((operation) => (
+    (operation.op === "moveTo" || operation.op === "lineTo")
+    && operation.strokeStyle === "#ffffff"
+    && operation.lineWidth === 7
+  ));
+}}
+function screenXInLane(x, lane, view) {{
+  const left = helpers.worldToScreen({{ x: lane.originWorld.x, y: lane.originWorld.y }}, view).x;
+  const right = helpers.worldToScreen(
+    {{ x: lane.originWorld.x + lane.widthWorld, y: lane.originWorld.y }},
+    view
+  ).x;
+  return x >= Math.min(left, right) - 0.001 && x <= Math.max(left, right) + 0.001;
+}}
+function hasPathLineTo(point) {{
+  return pathRouteLineOps().some((operation) => (
+    operation.op === "lineTo"
+    && Math.abs(operation.x - point.x) <= 0.001
+    && Math.abs(operation.y - point.y) <= 0.001
+  ));
+}}
 function dispatchCanvasPointer(type, point, pointerId = 700) {{
   elements["battle-map"].dispatch(type, {{
     button: 0,
@@ -2330,6 +2352,10 @@ assert.strictEqual(relationState.activeSourceId, "portal:source-a");
 assert.strictEqual(pathRequestsSince(ghostClickStart).length, 0);
 assert.strictEqual(simulateRequestsSince(ghostClickStart).length, 0);
 assert.ok(targetStateText().includes("portal portal:cross-a"));
+drawOperations.length = 0;
+helpers.drawPortalRelationOverlay(28);
+assert.strictEqual(portalRelationStrokeOps().length, 0);
+assert.strictEqual(portalGhostFillOps().length, 0);
 helpers.renderSnapshot(relationOverlaySnapshot, {{ preserveView: false }});
 drawOperations.length = 0;
 dispatchCanvasPointer("pointerdown", relationSourceAPoint, 702);
@@ -2656,6 +2682,257 @@ assert.strictEqual(pathSubterraneanView.activeMarkerId, "portal:gate-surface");
 relationState = helpers.currentPortalRelationStateForTest();
 assert.strictEqual(relationState.hoveredSourceId, "portal:gate-surface");
 assert.strictEqual(relationState.pinnedSourceId, null);
+elements["path-mode-toggle"].checked = false;
+elements["path-mode-toggle"].dispatch("change", {{}});
+
+const dualInteractionSnapshot = {{
+  ...relationOverlaySnapshot,
+  selected_hero_id: "hero:dual",
+  heroes: [
+    {{
+      id: "hero:dual",
+      name: "Dual Runner",
+      position: {{ x: 0, y: 0, z: 0 }},
+      owner_color_id: 0,
+      owner_color_name: "red",
+      team_id: 0,
+      total_creatures: 1,
+      ai_value: 1,
+      army_summary: "1x Pikeman"
+    }}
+  ],
+  neutral_targets: [
+    {{
+      id: "neutral:dual-underground",
+      position: {{ x: 4, y: 2, z: 1 }},
+      count: 12,
+      creature_name: "Troglodyte",
+      h3m_subid: 52,
+      estimator_creature_id: 52,
+      removed: false
+    }}
+  ],
+  portal_targets: [
+    ...relationOverlaySnapshot.portal_targets,
+    {{
+      id: "portal:source-d",
+      object_index: 60,
+      position: {{ x: 6, y: 0, z: 1 }},
+      portal_type: "monolith_one_way",
+      role: "entrance",
+      channel_key: "monolith-one-way:60"
+    }},
+    {{
+      id: "portal:cross-d",
+      object_index: 61,
+      position: {{ x: 0, y: 3, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "exit",
+      channel_key: "monolith-one-way:60"
+    }}
+  ],
+  portal_edges: [
+    ...relationOverlaySnapshot.portal_edges,
+    {{ source_id: "portal:source-d", destination_id: "portal:cross-d" }}
+  ]
+}};
+helpers.renderSnapshot(dualInteractionSnapshot, {{ preserveView: false }});
+targetFilterButtons()[0].dispatch("click", {{}});
+elements["dual-level-toggle"].checked = true;
+elements["dual-level-toggle"].dispatch("change", {{}});
+let dualInteractionView = helpers.currentMapViewForTest();
+let dualInteractionLanes = helpers.mapLaneGeometry(dualInteractionSnapshot, dualInteractionView);
+assert.strictEqual(dualInteractionView.dualLevel, true);
+assert.strictEqual(dualInteractionLanes.length, 2);
+const dualSourceA = dualInteractionView.markers.find((marker) => marker.id === "portal:source-a");
+const dualSourceAPoint = helpers.worldToScreen(dualSourceA.world, dualInteractionView);
+drawOperations.length = 0;
+dispatchCanvasPointer("pointermove", dualSourceAPoint, 711);
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, "portal:source-a");
+assert.strictEqual(relationState.activeSourceId, "portal:source-a");
+let dualCrossGhosts = helpers.currentPortalGhostMarkers();
+assert.deepStrictEqual(dualCrossGhosts.map((marker) => marker.destinationId), ["portal:cross-a"]);
+const dualCrossAGhost = dualCrossGhosts[0];
+assert.ok(dualCrossAGhost.world.x > dualInteractionLanes[1].originWorld.x);
+const dualCrossAGhostPoint = helpers.screenPointForPositionInView(
+  {{ x: 5, y: 1, z: 1 }},
+  dualInteractionSnapshot,
+  dualInteractionView
+);
+assert.strictEqual(
+  helpers.hitTestPortalGhostMarker(dualCrossAGhostPoint, dualInteractionView).destinationId,
+  "portal:cross-a"
+);
+assert.ok(portalGhostFillOpsNear(dualCrossAGhostPoint).length > 0);
+assert.ok(portalGhostLineOpsNear(dualCrossAGhostPoint).length > 0);
+const dualSourceD = dualInteractionView.markers.find((marker) => marker.id === "portal:source-d");
+const dualSourceDPoint = helpers.worldToScreen(dualSourceD.world, dualInteractionView);
+drawOperations.length = 0;
+dispatchCanvasPointer("pointermove", dualSourceDPoint, 712);
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, "portal:source-d");
+dualCrossGhosts = helpers.currentPortalGhostMarkers();
+assert.deepStrictEqual(dualCrossGhosts.map((marker) => marker.destinationId), ["portal:cross-d"]);
+assert.ok(dualCrossGhosts[0].world.x < dualInteractionLanes[1].originWorld.x);
+const dualCrossDGhostPoint = helpers.screenPointForPositionInView(
+  {{ x: 0, y: 3, z: 0 }},
+  dualInteractionSnapshot,
+  helpers.currentMapViewForTest()
+);
+assert.strictEqual(
+  helpers.hitTestPortalGhostMarker(dualCrossDGhostPoint, helpers.currentMapViewForTest()).destinationId,
+  "portal:cross-d"
+);
+assert.ok(portalGhostFillOpsNear(dualCrossDGhostPoint).length > 0);
+assert.ok(portalGhostLineOpsNear(dualCrossDGhostPoint).length > 0);
+const dualCenterZoom = helpers.currentMapViewForTest().zoom;
+const centeredDualPortal = helpers.centerOnMarkerId("portal:cross-a");
+dualInteractionView = helpers.currentMapViewForTest();
+const centeredDualPortalPoint = helpers.worldToScreen(centeredDualPortal.world, dualInteractionView);
+canvasRect = elements["battle-map"].getBoundingClientRect();
+assert.strictEqual(dualInteractionView.dualLevel, true);
+assert.strictEqual(dualInteractionView.zoom, dualCenterZoom);
+assert.ok(Math.abs(centeredDualPortalPoint.x - (canvasRect.width / 2)) < 0.001);
+assert.ok(Math.abs(centeredDualPortalPoint.y - (canvasRect.height / 2)) < 0.001);
+drawOperations.length = 0;
+const dualSourceAAfterCenter = dualInteractionView.markers.find((marker) => marker.id === "portal:source-a");
+const dualSourceAPointAfterCenter = helpers.worldToScreen(dualSourceAAfterCenter.world, dualInteractionView);
+dispatchCanvasPointer("pointerdown", dualSourceAPointAfterCenter, 713);
+dispatchCanvasPointer("pointerup", dualSourceAPointAfterCenter, 713);
+const dualPanelButtons = targetDestinationButtons();
+const dualPanelCrossAButton = dualPanelButtons.find((button) => (
+  button.dataset.portalDestinationId === "portal:cross-a"
+));
+assert.ok(dualPanelCrossAButton);
+const dualPanelZoom = helpers.currentMapViewForTest().zoom;
+dualPanelCrossAButton.dispatch("click", {{}});
+dualInteractionView = helpers.currentMapViewForTest();
+const dualPanelTarget = dualInteractionView.markers.find((marker) => marker.id === "portal:cross-a");
+const dualPanelTargetPoint = helpers.worldToScreen(dualPanelTarget.world, dualInteractionView);
+assert.strictEqual(dualInteractionView.dualLevel, true);
+assert.strictEqual(dualInteractionView.activeMarkerId, "portal:cross-a");
+assert.strictEqual(dualInteractionView.zoom, dualPanelZoom);
+assert.ok(Math.abs(dualPanelTargetPoint.x - (canvasRect.width / 2)) < 0.001);
+assert.ok(Math.abs(dualPanelTargetPoint.y - (canvasRect.height / 2)) < 0.001);
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.pinnedSourceId, "portal:source-a");
+
+elements["path-mode-toggle"].checked = true;
+elements["path-mode-toggle"].dispatch("change", {{}});
+const dualPathPayload = {{
+  hero_id: "hero:dual",
+  status: "found",
+  requested_target_position: {{ x: 4, y: 0, z: 1 }},
+  resolved_target_position: {{ x: 4, y: 0, z: 1 }},
+  steps: [
+    {{ position: {{ x: 0, y: 0, z: 0 }} }},
+    {{ position: {{ x: 1, y: 0, z: 0 }} }},
+    {{ position: {{ x: 1, y: 0, z: 1 }} }},
+    {{ position: {{ x: 4, y: 0, z: 1 }} }}
+  ],
+  segments: [
+    {{
+      segment_type: "walk",
+      start_position: {{ x: 0, y: 0, z: 0 }},
+      end_position: {{ x: 1, y: 0, z: 0 }},
+      steps: [
+        {{ position: {{ x: 0, y: 0, z: 0 }} }},
+        {{ position: {{ x: 1, y: 0, z: 0 }} }}
+      ],
+      is_non_deterministic: false
+    }},
+    {{
+      segment_type: "portal",
+      start_position: {{ x: 1, y: 0, z: 0 }},
+      end_position: {{ x: 1, y: 0, z: 1 }},
+      steps: [
+        {{ position: {{ x: 1, y: 0, z: 0 }} }},
+        {{ position: {{ x: 1, y: 0, z: 1 }} }}
+      ],
+      is_non_deterministic: false,
+      portal_edge: {{
+        source_id: "portal:source-a",
+        destination_id: "portal:cross-a",
+        source_position: {{ x: 1, y: 0, z: 0 }},
+        destination_position: {{ x: 1, y: 0, z: 1 }},
+        portal_type: "monolith_one_way",
+        channel_key: "dual-path"
+      }}
+    }},
+    {{
+      segment_type: "walk",
+      start_position: {{ x: 1, y: 0, z: 1 }},
+      end_position: {{ x: 4, y: 0, z: 1 }},
+      steps: [
+        {{ position: {{ x: 1, y: 0, z: 1 }} }},
+        {{ position: {{ x: 4, y: 0, z: 1 }} }}
+      ],
+      is_non_deterministic: false
+    }}
+  ],
+  message: null
+}};
+nextPathPayload = dualPathPayload;
+const dualLaneOneTilePoint = helpers.screenPointForPositionInView(
+  {{ x: 4, y: 0, z: 1 }},
+  dualInteractionSnapshot,
+  helpers.currentMapViewForTest()
+);
+drawOperations.length = 0;
+const dualLanePathStart = fetchRequests.length;
+dispatchCanvasPointer("pointerdown", dualLaneOneTilePoint, 714);
+dispatchCanvasPointer("pointerup", dualLaneOneTilePoint, 714);
+await flushPromises();
+const dualLanePathRequests = pathRequestsSince(dualLanePathStart);
+assert.strictEqual(dualLanePathRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(dualLanePathRequests[0].options.body), {{
+  hero_id: "hero:dual",
+  target_position: {{ x: 4, y: 0, z: 1 }}
+}});
+dualInteractionView = helpers.currentMapViewForTest();
+dualInteractionLanes = helpers.mapLaneGeometry(dualInteractionSnapshot, dualInteractionView);
+const dualPathLineOps = pathRouteLineOps();
+assert.ok(dualPathLineOps.some((operation) => screenXInLane(operation.x, dualInteractionLanes[0], dualInteractionView)));
+assert.ok(dualPathLineOps.some((operation) => screenXInLane(operation.x, dualInteractionLanes[1], dualInteractionView)));
+assert.ok(hasPathLineTo(helpers.screenPointForPositionInView(
+  {{ x: 1, y: 0, z: 0 }},
+  dualInteractionSnapshot,
+  dualInteractionView
+)));
+assert.ok(hasPathLineTo(helpers.screenPointForPositionInView(
+  {{ x: 4, y: 0, z: 1 }},
+  dualInteractionSnapshot,
+  dualInteractionView
+)));
+const dualPathSegmentButtons = pathSegmentButtons();
+assert.strictEqual(dualPathSegmentButtons.length, 3);
+const dualSegmentFocusZoom = dualInteractionView.zoom;
+dualPathSegmentButtons[2].dispatch("click", {{}});
+dualInteractionView = helpers.currentMapViewForTest();
+const dualSegmentFocus = helpers.pathSegmentFocusPosition(dualPathPayload.segments[2]);
+const dualSegmentFocusWorld = helpers.worldPointForPositionInView(
+  dualSegmentFocus,
+  dualInteractionSnapshot,
+  dualInteractionView
+);
+const dualSegmentFocusPoint = helpers.worldToScreen(dualSegmentFocusWorld, dualInteractionView);
+assert.strictEqual(dualInteractionView.dualLevel, true);
+assert.strictEqual(dualInteractionView.zoom, dualSegmentFocusZoom);
+assert.ok(Math.abs(dualSegmentFocusPoint.x - (canvasRect.width / 2)) < 0.001);
+assert.ok(Math.abs(dualSegmentFocusPoint.y - (canvasRect.height / 2)) < 0.001);
+const dualGapPoint = helpers.worldToScreen(
+  {{
+    x: dualInteractionLanes[0].widthWorld + (dualInteractionLanes[0].gapWorld / 2),
+    y: dualInteractionLanes[0].tileSize
+  }},
+  dualInteractionView
+);
+const dualGapPathStart = fetchRequests.length;
+dispatchCanvasPointer("pointerdown", dualGapPoint, 715);
+dispatchCanvasPointer("pointerup", dualGapPoint, 715);
+assert.strictEqual(pathRequestsSince(dualGapPathStart).length, 0);
+assert.ok(elements["path-state"].textContent.includes("outside the map"));
 elements["path-mode-toggle"].checked = false;
 elements["path-mode-toggle"].dispatch("change", {{}});
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
@@ -3001,6 +3278,62 @@ assert.strictEqual(clickedScanView.activeMarkerId, "neutral:0");
 assert.ok(targetStateText().includes("neutral neutral:0"));
 assert.ok(treeText(elements["estimate-state"]).includes("8x Gnoll"));
 assert.ok(treeText(elements["estimate-state"]).includes("scan visible"));
+helpers.renderSnapshot(dualInteractionSnapshot, {{ preserveView: false }});
+targetFilterButtons()[0].dispatch("click", {{}});
+elements["dual-level-toggle"].checked = true;
+elements["dual-level-toggle"].dispatch("change", {{}});
+nextScanResults = [
+  {{
+    target_id: "neutral:dual-underground",
+    target_type: "neutral",
+    distance: 2,
+    win_pct: 88,
+    enemy_ai_value: 160,
+    note: "dual scan",
+    target: {{ name: "Dual Troglodytes", creature_name: "Troglodyte", count: 12 }}
+  }}
+];
+elements["scan-radius"].value = "3";
+const dualScanStart = fetchRequests.length;
+elements["scan-button"].dispatch("click", {{}});
+await flushPromises();
+assert.strictEqual(scanRequestsSince(dualScanStart).length, 1);
+assert.deepStrictEqual(scanResultIds(), ["neutral:dual-underground"]);
+const dualScanRow = scanResultRows()[0];
+const dualScanBeforeHoverView = helpers.currentMapViewForTest();
+dualScanRow.dispatch("pointerenter", {{}});
+dualInteractionView = helpers.currentMapViewForTest();
+assert.strictEqual(dualInteractionView.hoveredMarkerId, "neutral:dual-underground");
+assert.strictEqual(dualInteractionView.zoom, dualScanBeforeHoverView.zoom);
+assert.deepStrictEqual(dualInteractionView.pan, dualScanBeforeHoverView.pan);
+dualScanRow.dispatch("pointerleave", {{}});
+const dualScanClickZoom = helpers.currentMapViewForTest().zoom;
+dualScanRow.dispatch("click", {{}});
+dualInteractionView = helpers.currentMapViewForTest();
+const dualScanMarker = dualInteractionView.markers.find((marker) => marker.id === "neutral:dual-underground");
+const dualScanMarkerPoint = helpers.worldToScreen(dualScanMarker.world, dualInteractionView);
+canvasRect = elements["battle-map"].getBoundingClientRect();
+assert.strictEqual(dualInteractionView.activeMarkerId, "neutral:dual-underground");
+assert.strictEqual(dualInteractionView.zoom, dualScanClickZoom);
+assert.ok(targetStateText().includes("neutral neutral:dual-underground"));
+assert.ok(treeText(elements["estimate-state"]).includes("dual scan"));
+assert.ok(Math.abs(dualScanMarkerPoint.x - (canvasRect.width / 2)) < 0.001);
+assert.ok(Math.abs(dualScanMarkerPoint.y - (canvasRect.height / 2)) < 0.001);
+let dualContextPrevented = 0;
+elements["battle-map"].dispatch("contextmenu", {{
+  clientX: dualScanMarkerPoint.x,
+  clientY: dualScanMarkerPoint.y,
+  preventDefault() {{
+    dualContextPrevented += 1;
+  }}
+}});
+assert.strictEqual(dualContextPrevented, 1);
+assert.strictEqual(elements["target-context-menu"].hidden, false);
+assert.strictEqual(helpers.currentMapViewForTest().activeMarkerId, "neutral:dual-underground");
+assert.ok(elements["target-context-menu"].style.left.endsWith("px"));
+assert.ok(elements["target-context-menu"].style.top.endsWith("px"));
+const dualContextButtons = elements["target-context-menu"].children.filter((child) => child.type === "button");
+assert.deepStrictEqual(dualContextButtons.map((button) => button.textContent), ["Simulate", "Hide"]);
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 targetFilterButtons()[0].dispatch("click", {{}});
 const bothFilterView = helpers.currentMapViewForTest();

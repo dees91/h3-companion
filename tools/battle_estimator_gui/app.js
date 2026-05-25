@@ -1239,6 +1239,30 @@
     };
   }
 
+  function worldPointForPositionInView(position, snapshot, view) {
+    const current = snapshot || mapView.snapshot;
+    const activeView = view || mapView;
+    if (!position || !current || !current.map) {
+      return null;
+    }
+    const level = positionLevel(position);
+    const lane = mapLaneGeometry(current, activeView)
+      .find((candidate) => candidate.level === level);
+    if (!lane) {
+      return null;
+    }
+    return {
+      x: lane.originWorld.x + ((position.x + 0.5) * lane.tileSize),
+      y: lane.originWorld.y + ((position.y + 0.5) * lane.tileSize)
+    };
+  }
+
+  function screenPointForPositionInView(position, snapshot, view) {
+    const activeView = view || mapView;
+    const world = worldPointForPositionInView(position, snapshot, activeView);
+    return world ? worldToScreen(world, activeView) : null;
+  }
+
   function fitMapToCanvas(snapshot) {
     if (!snapshot) {
       return;
@@ -1771,6 +1795,8 @@
       dualLevelLaneGeometry(mapView.snapshot).forEach((lane) => {
         drawGridForLane(lane, width, height);
       });
+      drawPortalRelationOverlay(tileSize);
+      drawPathRoute();
       drawMarkers();
       elements.zoom.textContent = `Zoom ${Math.round(mapView.zoom * 100)}%`;
       return;
@@ -1810,7 +1836,7 @@
     canvasContext.stroke();
 
     drawPortalRelationOverlay(tileSize);
-    drawPathRoute(tileSize);
+    drawPathRoute();
     drawMarkers();
     elements.zoom.textContent = `Zoom ${Math.round(mapView.zoom * 100)}%`;
   }
@@ -1900,47 +1926,77 @@
     return `portal-ghost:${sourceId || "source"}->${destinationId || "destination"}`;
   }
 
-  function portalGhostMarkersForRelation(relation, tileSize) {
+  function relationSourceVisibleInView(relation, snapshot, view) {
+    if (!relation || !relation.sourcePosition) {
+      return false;
+    }
+    const current = snapshot || mapView.snapshot;
+    const activeView = view || mapView;
+    if (activeView.dualLevel && supportsDualLevelView(current)) {
+      return Boolean(worldPointForPositionInView(relation.sourcePosition, current, activeView));
+    }
+    return positionLevel(relation.sourcePosition) === normalizeLevelForSnapshot(activeView.level, current);
+  }
+
+  function portalGhostWorldPoint(destination, tileSize, snapshot, view) {
+    const current = snapshot || mapView.snapshot;
+    const activeView = view || mapView;
+    if (activeView.dualLevel && supportsDualLevelView(current)) {
+      return worldPointForPositionInView(destination.position, current, activeView);
+    }
+    return pathPointForPosition(destination.position, tileSize);
+  }
+
+  function portalGhostMarkersForRelation(relation, tileSize, snapshot, view) {
+    const current = snapshot || mapView.snapshot;
+    const activeView = view || mapView;
     if (
       !mapView.showPortalLinks
       || !relation
       || !relation.sourcePosition
-      || positionLevel(relation.sourcePosition) !== mapView.level
+      || !relationSourceVisibleInView(relation, current, activeView)
     ) {
       return [];
     }
     return (relation.crossLevelDestinations || [])
       .filter((destination) => destination && destination.position)
-      .map((destination) => ({
-        type: "portal",
-        ghost: true,
-        id: portalGhostMarkerId(relation.sourceId, destination.id),
-        sourceId: relation.sourceId,
-        destinationId: destination.id,
-        label: `${destination.label || "Portal"} destination`,
-        position: destination.position,
-        world: pathPointForPosition(destination.position, tileSize),
-        radius: 8,
-        selected: false,
-        removed: false,
-        hidden: false,
-        unsupported: false,
-        h3mSubid: destination.edge && typeof destination.edge.h3m_subid === "number"
-          ? destination.edge.h3m_subid
-          : null,
-        portalType: destination.portalType,
-        role: destination.role,
-        channelKey: destination.edge && destination.edge.channel_key,
-        destinations: [],
-        realLevel: positionLevel(destination.position),
-        edge: destination.edge
-      }));
+      .map((destination) => {
+        const world = portalGhostWorldPoint(destination, tileSize, current, activeView);
+        if (!world) {
+          return null;
+        }
+        return {
+          type: "portal",
+          ghost: true,
+          id: portalGhostMarkerId(relation.sourceId, destination.id),
+          sourceId: relation.sourceId,
+          destinationId: destination.id,
+          label: `${destination.label || "Portal"} destination`,
+          position: destination.position,
+          world,
+          radius: 8,
+          selected: false,
+          removed: false,
+          hidden: false,
+          unsupported: false,
+          h3mSubid: destination.edge && typeof destination.edge.h3m_subid === "number"
+            ? destination.edge.h3m_subid
+            : null,
+          portalType: destination.portalType,
+          role: destination.role,
+          channelKey: destination.edge && destination.edge.channel_key,
+          destinations: [],
+          realLevel: positionLevel(destination.position),
+          edge: destination.edge
+        };
+      })
+      .filter(Boolean);
   }
 
   function currentPortalGhostMarkers() {
     const current = mapView.snapshot || {};
     const tileSize = tileSizeForMap(current.map || {});
-    return portalGhostMarkersForRelation(currentPortalRelation(), tileSize);
+    return portalGhostMarkersForRelation(currentPortalRelation(), tileSize, current, mapView);
   }
 
   function hitTestPortalGhostMarker(screenPoint, view) {
@@ -2085,19 +2141,22 @@
     if (!mapView.showPortalLinks) {
       return;
     }
+    const current = mapView.snapshot || {};
     const relation = currentPortalRelation();
     if (!relation || !relation.sourcePosition) {
       return;
     }
-    if (positionLevel(relation.sourcePosition) !== mapView.level) {
+    if (!relationSourceVisibleInView(relation, current, mapView)) {
       return;
     }
 
-    const source = worldToScreen(pathPointForPosition(relation.sourcePosition, tileSize), mapView);
+    const source = screenPointForPositionInView(relation.sourcePosition, current, mapView);
+    if (!source) {
+      return;
+    }
     const sameLevelDestinations = (relation.sameLevelDestinations || [])
-      .filter((destination) => destination.position)
-      .filter((destination) => positionLevel(destination.position) === mapView.level);
-    const ghostMarkers = portalGhostMarkersForRelation(relation, tileSize);
+      .filter((destination) => destination.position);
+    const ghostMarkers = portalGhostMarkersForRelation(relation, tileSize, current, mapView);
     const dashed = Boolean(relation.isNonDeterministic);
 
     canvasContext.save();
@@ -2105,7 +2164,10 @@
     canvasContext.lineCap = "round";
     canvasContext.lineJoin = "round";
     sameLevelDestinations.forEach((destination) => {
-      const target = worldToScreen(pathPointForPosition(destination.position, tileSize), mapView);
+      const target = screenPointForPositionInView(destination.position, current, mapView);
+      if (!target) {
+        return;
+      }
       drawPortalRelationArrow(source, target, dashed);
     });
     ghostMarkers.forEach((marker) => {
@@ -2120,7 +2182,7 @@
     canvasContext.restore();
   }
 
-  function drawPathRoute(tileSize) {
+  function drawPathRoute() {
     const result = pathState.result;
     if (!result || result.status !== "found" || !Array.isArray(result.steps)) {
       return;
@@ -2142,11 +2204,14 @@
     for (let index = 0; index < positions.length - 1; index += 1) {
       const current = positions[index];
       const next = positions[index + 1];
-      if (current.z !== mapView.level || next.z !== mapView.level) {
+      if (positionLevel(current) !== positionLevel(next)) {
         continue;
       }
-      const from = worldToScreen(pathPointForPosition(current, tileSize), mapView);
-      const to = worldToScreen(pathPointForPosition(next, tileSize), mapView);
+      const from = screenPointForPositionInView(current, mapView.snapshot, mapView);
+      const to = screenPointForPositionInView(next, mapView.snapshot, mapView);
+      if (!from || !to) {
+        continue;
+      }
       canvasContext.moveTo(from.x, from.y);
       canvasContext.lineTo(to.x, to.y);
       hasLine = true;
@@ -2159,10 +2224,10 @@
     }
 
     positions.forEach((position) => {
-      if (position.z !== mapView.level) {
+      const screen = screenPointForPositionInView(position, mapView.snapshot, mapView);
+      if (!screen) {
         return;
       }
-      const screen = worldToScreen(pathPointForPosition(position, tileSize), mapView);
       canvasContext.beginPath();
       canvasContext.fillStyle = "#dc2626";
       canvasContext.strokeStyle = "#ffffff";
@@ -2917,8 +2982,7 @@
     rebuildMarkerCache(mapView.snapshot);
     updateLevelControls(mapView.snapshot);
     updateMapMetrics(mapView.snapshot);
-    const tileSize = tileSizeForMap(mapView.snapshot.map);
-    return centerOnWorldPoint(pathPointForPosition(focusPosition, tileSize));
+    return centerOnWorldPoint(worldPointForPositionInView(focusPosition, mapView.snapshot, mapView));
   }
 
   function renderPathSegments(payload) {
@@ -3012,7 +3076,7 @@
       payload.target_id = marker.id;
       label = marker.label || marker.id;
     } else {
-      const targetPosition = tilePositionForCanvasPoint(point, mapView.snapshot, mapView);
+      const targetPosition = positionForCanvasPointInView(point, mapView.snapshot, mapView);
       if (!targetPosition) {
         setPathMessage("Path target is outside the map.", "error");
         return;
@@ -5229,6 +5293,7 @@
     estimateTargetLabel,
     filterHeroesForQuery,
     formatWinPct,
+    hitTestPortalGhostMarker,
     hitTestMarker,
     markerTooltipText,
     matchRecentHeroName,
@@ -5295,9 +5360,11 @@
     showHeroSkillsDialog,
     simulationClickDecision,
     singleLevelLaneGeometry,
+    screenPointForPositionInView,
     supportsDualLevelView,
     tilePositionForCanvasPoint,
     verdictForWinPct,
+    worldPointForPositionInView,
     worldToScreenInLane,
     worldToScreen,
     zoomAtPoint
