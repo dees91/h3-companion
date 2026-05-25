@@ -1291,7 +1291,17 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T12. README now describes save-derived current town
+  ownership alerts, the `My color` setting, `Alert radius`, same-level tile
+  distance behavior, visible-marker focus, and the no-fallback diagnostic when
+  ownership cannot be inferred. CHANGELOG records best-effort current town
+  ownership and the alert workflow, including local config defaults. AGENTS now
+  points future save-aware parser and defensive alert work to this planning
+  doc and lists the implemented parser/config/GUI features. Verified with
+  `python3 -m unittest` (360 tests), `node --check
+  tools/battle_estimator_gui/app.js`, `git diff --check`, `git status --short`,
+  and `git diff --name-only --cached`. No manual GUI smoke was run for this
+  docs-only task.
 
 ---
 
@@ -1822,7 +1832,7 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T09 | Render My Color And Alert Radius Controls | done | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | T10 | Render Alerts Sidebar Section | done | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | T11 | Center And Activate Alert Target | done | T10 | frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
-| T12 | Docs And Verification Pass | todo | T08, T09, T10, T11 | quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md` |
+| T12 | Docs And Verification Pass | done | T08, T09, T10, T11 | quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md` |
 | T13 | Research Save Hero Combat Data | todo | -- | hero-combat-research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T14 | Document Hero Combat Data Hypothesis | blocked | T13 | hero-combat-research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T15 | Synthetic Hero Combat Fixtures | blocked | T14 | hero-combat-parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |

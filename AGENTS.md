@@ -119,7 +119,8 @@ For save parsing, autosaves, and local config/cache behavior:
 - `planning/battle-estimator-save-aware-improvements.md` for save-derived
   current town ownership research, player color settings, alert radius
   behavior, defensive castle/town threat alerts, and related save-aware
-  improvement tasks.
+  improvement tasks. Use this doc first for future save-aware parser or
+  defensive alert changes.
 - `tools/battle_estimator_save_parsing_checkpoint.md` for detailed historical
   save parsing findings and observed GM1/GM2 structures.
 
@@ -206,7 +207,9 @@ those files instead of raw `json.loads()`.
 - Cache handling under:
   - `~/.cache/vcmi-battle-estimator`
 - Hero army scanner for observed multiplayer/hotseat save structures.
+- Best-effort current town ownership inference for observed GM1/GM2 structures.
 - Hidden target persistence.
+- `My color` and `Alert radius` local config persistence.
 - Manual current-skill state persistence for hero recommendations.
 
 `tools/h3_map_parser.py`
@@ -343,6 +346,8 @@ Important current features:
 - autosave folder picker rooted at the HoMM3 `Games` directory,
 - follow-latest mode,
 - selected hero and recent hero list,
+- `My color` and `Alert radius` controls,
+- defensive alerts for enemy heroes near owned towns,
 - map grid with markers,
 - hero ranking dialog sorted by AI value,
 - back/forward save navigation,

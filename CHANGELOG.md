@@ -13,6 +13,10 @@ defined in [docs/release-policy.md](docs/release-policy.md).
   rendered side by side.
 - Portal relation hints now include cross-level ghost destinations, destination
   level badges, and multi-exit/non-deterministic indicators.
+- Best-effort save-derived current town ownership for observed GM1/GM2
+  snapshots, exposed in town targets and used by the GUI.
+- Defensive owned-town alerts in the GUI, configured with `My color` and
+  `Alert radius`, with alert rows that focus the threatening enemy hero.
 
 ### Changed
 
@@ -29,7 +33,8 @@ defined in [docs/release-policy.md](docs/release-policy.md).
 
 ### Compatibility Notes
 
-- None.
+- Existing local configs keep `My color` unset and use the default
+  `Alert radius` of `10` until changed in the GUI.
 
 ## [0.1.0] - 2026-05-21
 

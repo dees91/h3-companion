@@ -15,8 +15,8 @@ maps, saves, or binaries; you need your own legally installed copy of the game.
 - Battle estimation for manual armies, save heroes, nearby neutral stacks, and
   enemy heroes.
 - Browser GUI with a simple tile map, optional dual-level view, hero/monster
-  markers, target hiding, hero ranking, radius scans, portal hints, and
-  pathfinding overlays.
+  markers, target hiding, hero ranking, radius scans, town threat alerts,
+  portal hints, and pathfinding overlays.
 - H3M map parsing for neutral monsters, towns, portals, subterranean gates, and
   route layers.
 - Secondary-skill recommendations for standard heroes.
@@ -34,6 +34,13 @@ side panel, so you can quickly decide whether to clear, avoid, or route around a
 fight.
 
 ![H3 Companion radius scan with target difficulty results](docs/images/radius-scan.png)
+
+Town threat alerts use save-derived current ownership when it is available for
+the loaded snapshot. Set `My color` in the Heroes sidebar, then use
+`Alert radius` to list enemy heroes within that same-level map-tile distance of
+your owned towns. Alert rows focus the enemy hero marker on the map when it is
+visible. When current town ownership cannot be inferred from the save, the GUI
+shows a diagnostic and does not fall back to initial map owners.
 
 ## Quick Start
 
