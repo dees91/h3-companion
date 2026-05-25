@@ -6260,6 +6260,50 @@ assert.ok(pathSegmentButtons().length >= 4);
 
             self._with_server(check, app_state=app_state)
 
+    def test_simulate_target_endpoint_uses_save_combat_context(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_gui_combat_save(
+                game_dir,
+                "001.GM1",
+                primary_skills=(8, 6, 4, 5),
+            )
+            map_path = _write_h3m_map(temp_path / "map.h3m", position=(39, 70, 1))
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+            def check(base_url):
+                with patch.object(
+                    battle_estimator_gui.battle_estimator,
+                    "run_simulations",
+                    return_value=91.5,
+                ) as run_mock:
+                    status, _, payload = self._post_json(
+                        base_url,
+                        "/api/simulate-target",
+                        {
+                            "hero_id": "hero:256",
+                            "target_id": "neutral:0",
+                            "simulations": 12,
+                        },
+                    )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["estimate"]["win_pct"], 91.5)
+                context = run_mock.call_args.kwargs["player_combat_context"]
+                self.assertEqual(context.source, h3_save_parser.HERO_COMBAT_SOURCE_SAVE)
+                self.assertEqual(
+                    context.primary_skills,
+                    h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
+                )
+                self.assertNotIn("enemy_combat_context", run_mock.call_args.kwargs)
+
+            self._with_server(check, app_state=app_state)
+
     def test_hidden_neutral_target_api_filters_state_and_scan_per_map(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

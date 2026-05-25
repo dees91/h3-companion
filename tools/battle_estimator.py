@@ -44,8 +44,9 @@ DEFENSE_POINT_DAMAGE_FACTOR_CAP = 0.7
 DEFAULT_ANALYSIS_SIMULATIONS = 2000
 
 AUTOSAVE_MODELING_LIMITATION = (
-    "Modeling note: hero stats, skills, artifacts, spells, morale, and luck "
-    "are not modeled; Phase 1 uses creature stacks only."
+    "Modeling note: save-derived Attack/Defense and Offense/Armorer/Archery "
+    "are used when parsed; artifacts, spells, morale, luck, and other effects "
+    "are not modeled."
 )
 
 
@@ -398,6 +399,15 @@ class Stack:
         self.has_acted = False
 
 
+@dataclass(frozen=True)
+class CombatSideModifiers:
+    attack: int = 0
+    defense: int = 0
+    offence_melee_pct: int = 0
+    armorer_all_pct: int = 0
+    archery_ranged_pct: int = 0
+
+
 VALID_SCAN_TARGET_TYPES = ("all", "neutral", "hero")
 DEFAULT_SCAN_SIMULATIONS = 500
 _SCAN_RESULT_TYPE_ORDER = {
@@ -471,16 +481,30 @@ def calc_damage_factor(att: int, dfn: int) -> float:
     return 1.0
 
 
-def calc_damage(attacker: Stack, defender: Stack, shooting: bool = False) -> int:
+def calc_damage(
+    attacker: Stack,
+    defender: Stack,
+    shooting: bool = False,
+    attacker_modifiers: CombatSideModifiers = CombatSideModifiers(),
+    defender_modifiers: CombatSideModifiers = CombatSideModifiers(),
+) -> int:
     base_dmg = random.randint(attacker.creature.min_damage,
                               attacker.creature.max_damage)
     stack_dmg = base_dmg * attacker.count
-    factor = calc_damage_factor(attacker.creature.attack,
-                                defender.creature.defense)
+    factor = calc_damage_factor(
+        attacker.creature.attack + attacker_modifiers.attack,
+        defender.creature.defense + defender_modifiers.defense,
+    )
 
     # 50% penalty for shooting in melee (DamageCalculator.cpp:386-389)
     if attacker.creature.shooter and not shooting:
         factor *= 0.5
+
+    if shooting:
+        factor *= 1.0 + attacker_modifiers.archery_ranged_pct / 100
+    else:
+        factor *= 1.0 + attacker_modifiers.offence_melee_pct / 100
+    factor *= 1.0 - defender_modifiers.armorer_all_pct / 100
 
     return max(1, math.floor(stack_dmg * factor))
 
@@ -504,8 +528,13 @@ def apply_damage(target: Stack, damage: int) -> int:
 # ---------------------------------------------------------------------------
 # Single battle simulation
 # ---------------------------------------------------------------------------
-def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
-                    verbose: bool = False) -> bool:
+def simulate_battle(
+    player_stacks: List[Stack],
+    enemy_stacks: List[Stack],
+    verbose: bool = False,
+    player_modifiers: CombatSideModifiers = CombatSideModifiers(),
+    enemy_modifiers: CombatSideModifiers = CombatSideModifiers(),
+) -> bool:
     all_stacks = player_stacks + enemy_stacks
     max_turns = 100
 
@@ -541,9 +570,25 @@ def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
             # Decision: ranged shot or melee
             can_shoot = (active.creature.shooter and active.shots_left > 0)
             shooting = can_shoot  # simplification: a shooter always shoots
+            active_modifiers = (
+                player_modifiers
+                if active.side == 0
+                else enemy_modifiers
+            )
+            target_modifiers = (
+                player_modifiers
+                if target.side == 0
+                else enemy_modifiers
+            )
 
             # --- Attack ---
-            dmg = calc_damage(active, target, shooting)
+            dmg = calc_damage(
+                active,
+                target,
+                shooting,
+                attacker_modifiers=active_modifiers,
+                defender_modifiers=target_modifiers,
+            )
             kills = apply_damage(target, dmg)
             if shooting:
                 active.shots_left -= 1
@@ -556,7 +601,13 @@ def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
 
             # --- Double strike (Crusader, Dread Knight, etc.) ---
             if active.creature.double_strike and target.alive:
-                dmg2 = calc_damage(active, target, shooting)
+                dmg2 = calc_damage(
+                    active,
+                    target,
+                    shooting,
+                    attacker_modifiers=active_modifiers,
+                    defender_modifiers=target_modifiers,
+                )
                 kills2 = apply_damage(target, dmg2)
                 if verbose and turn <= 3:
                     print(f"      (double) +{dmg2} dmg, +{kills2} kills "
@@ -568,7 +619,13 @@ def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
                     and not shooting
                     and not active.creature.no_retaliation):
                 target.retaliations_left -= 1
-                ret_dmg = calc_damage(target, active, shooting=False)
+                ret_dmg = calc_damage(
+                    target,
+                    active,
+                    shooting=False,
+                    attacker_modifiers=target_modifiers,
+                    defender_modifiers=active_modifiers,
+                )
                 ret_kills = apply_damage(active, ret_dmg)
                 if verbose and turn <= 3:
                     print(f"     << kontra {target.creature.name}: "
@@ -597,16 +654,69 @@ def simulate_battle(player_stacks: List[Stack], enemy_stacks: List[Stack],
 # ---------------------------------------------------------------------------
 # Simulation engine
 # ---------------------------------------------------------------------------
-def run_simulations(player_army: List[Tuple[Creature, int]],
-                    enemy_army: List[Tuple[Creature, int]],
-                    n_sims: int, verbose_first: bool = False) -> float:
+def run_simulations(
+    player_army: List[Tuple[Creature, int]],
+    enemy_army: List[Tuple[Creature, int]],
+    n_sims: int,
+    verbose_first: bool = False,
+    *,
+    player_combat_context=None,
+    enemy_combat_context=None,
+) -> float:
     wins = 0
+    player_modifiers = _combat_modifiers_from_context(player_combat_context)
+    enemy_modifiers = _combat_modifiers_from_context(enemy_combat_context)
     for i in range(n_sims):
         p_stacks = [Stack(creature=c, count=n, side=0) for c, n in player_army]
         e_stacks = [Stack(creature=c, count=n, side=1) for c, n in enemy_army]
-        if simulate_battle(p_stacks, e_stacks, verbose=(verbose_first and i == 0)):
+        if simulate_battle(
+            p_stacks,
+            e_stacks,
+            verbose=(verbose_first and i == 0),
+            player_modifiers=player_modifiers,
+            enemy_modifiers=enemy_modifiers,
+        ):
             wins += 1
     return wins / n_sims * 100
+
+
+def _combat_modifiers_from_context(context) -> CombatSideModifiers:
+    if context is None:
+        return CombatSideModifiers()
+    if getattr(context, "source", None) != h3_save_parser.HERO_COMBAT_SOURCE_SAVE:
+        return CombatSideModifiers()
+
+    primary = getattr(context, "primary_skills", None)
+    passive_modifiers = h3_save_parser.hero_combat_passive_modifiers(context)
+    return CombatSideModifiers(
+        attack=0 if primary is None else primary.attack,
+        defense=0 if primary is None else primary.defense,
+        offence_melee_pct=passive_modifiers["offence_melee_pct"],
+        armorer_all_pct=passive_modifiers["armorer_all_pct"],
+        archery_ranged_pct=passive_modifiers["archery_ranged_pct"],
+    )
+
+
+def _save_combat_context_or_none(context):
+    if context is None:
+        return None
+    if getattr(context, "source", None) == h3_save_parser.HERO_COMBAT_SOURCE_SAVE:
+        return context
+    return None
+
+
+def _simulation_context_kwargs(
+    player_combat_context=None,
+    enemy_combat_context=None,
+) -> dict:
+    kwargs = {}
+    player_context = _save_combat_context_or_none(player_combat_context)
+    enemy_context = _save_combat_context_or_none(enemy_combat_context)
+    if player_context is not None:
+        kwargs["player_combat_context"] = player_context
+    if enemy_context is not None:
+        kwargs["enemy_combat_context"] = enemy_context
+    return kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -692,6 +802,9 @@ def estimate_nearby_scan_targets(
     player_army = _hero_army_to_combat_army(selected_hero)
     if not player_army:
         raise NearbyScanError("selected hero has no army stacks")
+    player_combat_context = _save_combat_context_or_none(
+        selected_hero.combat_context,
+    )
 
     estimates = []
     for scan_target in scan_targets:
@@ -723,11 +836,18 @@ def estimate_nearby_scan_targets(
             continue
 
         try:
+            context_kwargs = _simulation_context_kwargs(
+                player_combat_context=player_combat_context,
+                enemy_combat_context=_scan_target_enemy_combat_context(
+                    scan_target,
+                ),
+            )
             win_pct = run_simulations(
                 list(player_army),
                 list(enemy_army),
                 simulations,
                 verbose_first=False,
+                **context_kwargs,
             )
         except Exception as exc:
             estimates.append(
@@ -772,6 +892,12 @@ def _scan_target_enemy_army(
     if scan_target.target_type == "hero":
         return _hero_scan_target_enemy_army(scan_target)
     return (), f"unsupported scan target type: {scan_target.target_type}"
+
+
+def _scan_target_enemy_combat_context(scan_target: NearbyScanTarget):
+    if scan_target.target_type != "hero":
+        return None
+    return _save_combat_context_or_none(scan_target.target.army.combat_context)
 
 
 def _neutral_scan_target_enemy_army(
@@ -1346,7 +1472,7 @@ def _run_nearby_scan(args: argparse.Namespace) -> None:
     context = _resolve_cli_save(args)
     map_file = _resolve_cli_map(args, context, required=True)
     loaded_save = h3_save_parser.load_save(context.save_file)
-    detected_heroes = h3_save_parser.scan_xor01_hero_armies(loaded_save.data)
+    detected_heroes = h3_save_parser.scan_hero_armies_from_loaded_save(loaded_save)
     scan_heroes = _prefer_owned_heroes(detected_heroes)
     listed_heroes = h3_save_parser.filter_relevant_heroes(
         scan_heroes,
@@ -1536,6 +1662,7 @@ def _run_wizard(args: argparse.Namespace) -> int:
         enemy_label="Enemy",
         save_context=context,
         map_file=map_file,
+        player_combat_context=selected_hero.combat_context,
     )
     return 0
 
@@ -1549,6 +1676,8 @@ def run_analysis(
     enemy_label: str = "Enemy",
     save_context: Optional[h3_save_parser.SaveContext] = None,
     map_file: Optional[Path] = None,
+    player_combat_context=None,
+    enemy_combat_context=None,
 ):
     has_ranges = any(r is not None for _, _, r in player_parsed) or \
                  any(r is not None for _, _, r in enemy_parsed)
@@ -1583,7 +1712,11 @@ def run_analysis(
 
         win_pct = run_simulations(player_army, enemy_army,
                                   simulations,
-                                  verbose_first=verbose)
+                                  verbose_first=verbose,
+                                  **_simulation_context_kwargs(
+                                      player_combat_context=player_combat_context,
+                                      enemy_combat_context=enemy_combat_context,
+                                  ))
         print(f"\n  Win chance: {win_pct:.1f}%")
         _print_verdict(win_pct)
         print()
@@ -1634,7 +1767,11 @@ def run_analysis(
             win_pct = run_simulations(
                 p_army_fixed, e_army_fixed,
                 simulations,
-                verbose_first=(verbose and count == lo)
+                verbose_first=(verbose and count == lo),
+                **_simulation_context_kwargs(
+                    player_combat_context=player_combat_context,
+                    enemy_combat_context=enemy_combat_context,
+                ),
             )
             results.append(win_pct)
             bar = "#" * int(win_pct / 2.5)
@@ -1663,7 +1800,11 @@ def run_analysis(
     print(f"{'=' * 65}")
     win_pct = run_simulations(player_army, enemy_army,
                               simulations,
-                              verbose_first=verbose)
+                              verbose_first=verbose,
+                              **_simulation_context_kwargs(
+                                  player_combat_context=player_combat_context,
+                                  enemy_combat_context=enemy_combat_context,
+                              ))
     print(f"\n  Win chance: {win_pct:.1f}%")
     _print_verdict(win_pct)
     print()
@@ -1833,6 +1974,7 @@ def main():
         enemy_label="Enemy",
         save_context=save_context,
         map_file=map_file,
+        player_combat_context=hero_army.combat_context,
     )
 
 

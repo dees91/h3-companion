@@ -4,12 +4,19 @@ from unittest.mock import patch
 from tools import battle_estimator
 from tools import h3_map_parser
 from tools import h3_save_parser
+from tools import hero_skill_recommender
 
 
 _DEFAULT_ESTIMATOR_CREATURE_ID = object()
 
 
-def _hero_army(hero_name, position=None, source_offset=0, stack_specs=((0, 1),)):
+def _hero_army(
+    hero_name,
+    position=None,
+    source_offset=0,
+    stack_specs=((0, 1),),
+    combat_context=None,
+):
     return h3_save_parser.HeroArmy(
         hero_name=hero_name,
         stacks=tuple(
@@ -22,15 +29,51 @@ def _hero_army(hero_name, position=None, source_offset=0, stack_specs=((0, 1),))
             if position is None
             else h3_save_parser.HeroPosition(*position)
         ),
+        combat_context=(
+            h3_save_parser.HeroCombatContext()
+            if combat_context is None
+            else combat_context
+        ),
     )
 
 
-def _hero_target(hero_name, position, source_offset, stack_specs=((0, 1),)):
-    army = _hero_army(hero_name, position, source_offset, stack_specs)
+def _hero_target(
+    hero_name,
+    position,
+    source_offset,
+    stack_specs=((0, 1),),
+    combat_context=None,
+):
+    army = _hero_army(
+        hero_name,
+        position,
+        source_offset,
+        stack_specs,
+        combat_context=combat_context,
+    )
     return h3_save_parser.HeroTarget(
         hero_name=hero_name,
         position=army.position,
         army=army,
+    )
+
+
+def _combat_context(
+    primary=(0, 0, 0, 0),
+    secondary_skills=(),
+    status=h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
+):
+    return h3_save_parser.HeroCombatContext(
+        status=status,
+        source=h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
+        primary_skills=h3_save_parser.HeroPrimarySkills(*primary),
+        secondary_skills=tuple(
+            hero_skill_recommender.CurrentSkill(skill_id, level)
+            for skill_id, level in secondary_skills
+        ),
+        reason=None
+        if status == h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY
+        else "test_partial",
     )
 
 
@@ -70,6 +113,186 @@ def _neutral_target(
 
 
 class NearbyScanServiceTests(unittest.TestCase):
+    def test_calc_damage_applies_primary_and_passive_modifiers_once(self):
+        attacker = battle_estimator.Stack(
+            battle_estimator.Creature(
+                "Attacker",
+                "Test",
+                1,
+                18,
+                1,
+                2,
+                2,
+                10,
+                5,
+                1,
+            ),
+            1,
+            side=0,
+        )
+        defender = battle_estimator.Stack(
+            battle_estimator.Creature(
+                "Defender",
+                "Test",
+                1,
+                1,
+                10,
+                1,
+                1,
+                10,
+                5,
+                1,
+            ),
+            1,
+            side=1,
+        )
+
+        damage = battle_estimator.calc_damage(
+            attacker,
+            defender,
+            attacker_modifiers=battle_estimator.CombatSideModifiers(
+                offence_melee_pct=30,
+            ),
+            defender_modifiers=battle_estimator.CombatSideModifiers(
+                armorer_all_pct=15,
+            ),
+        )
+
+        self.assertEqual(damage, 3)
+
+    def test_calc_damage_applies_primary_attack_and_defense(self):
+        attacker = battle_estimator.Stack(
+            battle_estimator.Creature(
+                "Attacker",
+                "Test",
+                1,
+                10,
+                1,
+                10,
+                10,
+                10,
+                5,
+                1,
+            ),
+            1,
+            side=0,
+        )
+        defender = battle_estimator.Stack(
+            battle_estimator.Creature(
+                "Defender",
+                "Test",
+                1,
+                1,
+                10,
+                1,
+                1,
+                10,
+                5,
+                1,
+            ),
+            1,
+            side=1,
+        )
+
+        boosted_attack = battle_estimator.calc_damage(
+            attacker,
+            defender,
+            attacker_modifiers=battle_estimator.CombatSideModifiers(attack=4),
+        )
+        boosted_defense = battle_estimator.calc_damage(
+            attacker,
+            defender,
+            defender_modifiers=battle_estimator.CombatSideModifiers(defense=4),
+        )
+
+        self.assertEqual(boosted_attack, 12)
+        self.assertEqual(boosted_defense, 9)
+
+    def test_calc_damage_applies_archery_only_to_ranged_attacks(self):
+        shooter = battle_estimator.Stack(
+            battle_estimator.Creature(
+                "Shooter",
+                "Test",
+                1,
+                10,
+                1,
+                10,
+                10,
+                10,
+                5,
+                1,
+                shots=12,
+            ),
+            1,
+            side=0,
+        )
+        defender = battle_estimator.Stack(
+            battle_estimator.Creature(
+                "Defender",
+                "Test",
+                1,
+                1,
+                10,
+                1,
+                1,
+                10,
+                5,
+                1,
+            ),
+            1,
+            side=1,
+        )
+        modifiers = battle_estimator.CombatSideModifiers(
+            archery_ranged_pct=50,
+            offence_melee_pct=30,
+        )
+
+        ranged_damage = battle_estimator.calc_damage(
+            shooter,
+            defender,
+            shooting=True,
+            attacker_modifiers=modifiers,
+        )
+        melee_damage = battle_estimator.calc_damage(
+            shooter,
+            defender,
+            shooting=False,
+            attacker_modifiers=modifiers,
+        )
+
+        self.assertEqual(ranged_damage, 15)
+        self.assertEqual(melee_damage, 6)
+
+    def test_combat_modifiers_from_save_context_use_primary_and_passives(self):
+        context = _combat_context(
+            primary=(8, 6, 4, 5),
+            secondary_skills=(
+                ("offence", "expert"),
+                ("armorer", "advanced"),
+                ("archery", "basic"),
+            ),
+        )
+
+        modifiers = battle_estimator._combat_modifiers_from_context(context)
+
+        self.assertEqual(
+            modifiers,
+            battle_estimator.CombatSideModifiers(
+                attack=8,
+                defense=6,
+                offence_melee_pct=30,
+                armorer_all_pct=10,
+                archery_ranged_pct=10,
+            ),
+        )
+
+    def test_combat_modifiers_ignore_unavailable_contexts(self):
+        modifiers = battle_estimator._combat_modifiers_from_context(
+            h3_save_parser.HeroCombatContext(),
+        )
+
+        self.assertEqual(modifiers, battle_estimator.CombatSideModifiers())
+
     def test_build_nearby_scan_targets_filters_level_radius_and_sorts(self):
         selected = _hero_army("Isra", (39, 69, 1))
         neutral_distance_two = _neutral_target(2401, (41, 69, 1))
@@ -267,6 +490,63 @@ class NearbyScanServiceTests(unittest.TestCase):
             call.kwargs == {"verbose_first": False}
             for call in run_mock.call_args_list
         ))
+
+    def test_estimate_nearby_scan_targets_passes_player_context_for_neutrals(self):
+        selected_context = _combat_context(primary=(8, 6, 4, 5))
+        selected = _hero_army("Isra", (39, 69, 1), combat_context=selected_context)
+        neutral = _neutral_target(2393, (39, 70, 1), 98, 37, "Gnoll")
+        scan_targets = battle_estimator.build_nearby_scan_targets(
+            selected,
+            neutral_targets=(neutral,),
+            radius=10,
+            target_type="neutral",
+        )
+
+        with patch.object(
+            battle_estimator,
+            "run_simulations",
+            return_value=80.0,
+        ) as run_mock:
+            battle_estimator.estimate_nearby_scan_targets(
+                selected,
+                scan_targets,
+                simulations=123,
+            )
+
+        self.assertIs(run_mock.call_args.kwargs["player_combat_context"], selected_context)
+        self.assertNotIn("enemy_combat_context", run_mock.call_args.kwargs)
+
+    def test_estimate_nearby_scan_targets_passes_both_contexts_for_heroes(self):
+        selected_context = _combat_context(primary=(8, 6, 4, 5))
+        enemy_context = _combat_context(primary=(3, 9, 1, 1))
+        selected = _hero_army("Isra", (39, 69, 1), combat_context=selected_context)
+        hero = _hero_target(
+            "Marius",
+            (39, 71, 1),
+            102,
+            stack_specs=((1, 3),),
+            combat_context=enemy_context,
+        )
+        scan_targets = battle_estimator.build_nearby_scan_targets(
+            selected,
+            hero_targets=(hero,),
+            radius=10,
+            target_type="hero",
+        )
+
+        with patch.object(
+            battle_estimator,
+            "run_simulations",
+            return_value=72.0,
+        ) as run_mock:
+            battle_estimator.estimate_nearby_scan_targets(
+                selected,
+                scan_targets,
+                simulations=123,
+            )
+
+        self.assertIs(run_mock.call_args.kwargs["player_combat_context"], selected_context)
+        self.assertIs(run_mock.call_args.kwargs["enemy_combat_context"], enemy_context)
 
     def test_estimate_nearby_scan_targets_uses_default_scan_simulations(self):
         selected = _hero_army("Isra", (39, 69, 1))

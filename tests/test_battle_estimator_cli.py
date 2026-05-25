@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import gzip
 import json
 import os
@@ -8,12 +9,18 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from tools import battle_estimator
 from tools import h3_map_parser
 from tools import h3_save_parser
 from tests.test_h3_map_parser import _build_minimal_sod_h3m_with_monster
+from tests.test_h3_save_parser import (
+    _build_xor_hero_fixture as _build_parser_hero_fixture,
+    _write_hero_combat_fields,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -133,6 +140,35 @@ def _write_save(
         counts=counts,
         position=position,
     ))
+    return save_path
+
+
+def _write_combat_save(
+    game_dir: Path,
+    name: str,
+    hero_name="Isra",
+    position=(39, 69, 1),
+    primary_skills=(8, 6, 4, 5),
+):
+    game_dir.mkdir(parents=True, exist_ok=True)
+    payload, name_offset = _build_parser_hero_fixture(
+        hero_name=hero_name,
+        position=position,
+        xor_key=0x00,
+        position_from_name_offset=(
+            h3_save_parser.HOTSEAT_HERO_STRUCT_POSITION_FROM_NAME_OFFSET
+        ),
+    )
+    mutable = bytearray(payload)
+    mutable[0:len(h3_save_parser.H3SVG_SIGNATURE)] = h3_save_parser.H3SVG_SIGNATURE
+    _write_hero_combat_fields(
+        mutable,
+        name_offset,
+        primary_skills=primary_skills,
+        xor_key=0x00,
+    )
+    save_path = game_dir / name
+    save_path.write_bytes(gzip.compress(bytes(mutable)))
     return save_path
 
 
@@ -428,6 +464,52 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("37x Gnoll", result.stdout)
         self.assertRegex(result.stdout, r"\s100\.0\s")
 
+    def test_scan_nearby_uses_loaded_save_combat_context(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            save_path = _write_combat_save(
+                game_dir,
+                "001.GM1",
+                position=(39, 69, 1),
+            )
+            map_path = _write_h3m_map(
+                temp_path / "map.h3m",
+                position=(39, 70, 1),
+                count=37,
+            )
+            args = argparse.Namespace(
+                army_specs=(),
+                hero="Isra",
+                scan_nearby=2,
+                save_file=str(save_path),
+                autosave_dir=None,
+                save=None,
+                map_file=str(map_path),
+                all_heroes=False,
+                target_type="neutral",
+                include_removed=False,
+                simulations=1,
+            )
+
+            with patch.object(
+                battle_estimator,
+                "estimate_nearby_scan_targets",
+                return_value=(),
+            ) as estimate_mock:
+                with redirect_stdout(io.StringIO()):
+                    battle_estimator._run_nearby_scan(args)
+
+        selected_hero = estimate_mock.call_args.args[0]
+        self.assertEqual(
+            selected_hero.combat_context.source,
+            h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
+        )
+        self.assertEqual(
+            selected_hero.primary_skills,
+            h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
+        )
+
     def test_scan_nearby_filters_markerless_removed_neutral_records(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -546,7 +628,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("Player: 10x Pikeman", result.stdout)
         self.assertIn("Enemy: 20x Boar", result.stdout)
         self.assertNotIn("Save folder:", result.stdout)
-        self.assertNotIn("hero stats, skills, artifacts", result.stdout)
+        self.assertNotIn("save-derived Attack/Defense", result.stdout)
 
     def test_short_hero_form_loads_from_explicit_autosave_dir(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -569,7 +651,7 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertIn("Isra: 731x Skeleton Warrior", result.stdout)
         self.assertIn("Enemy: 1x Pikeman", result.stdout)
         self.assertIn("Save file:", result.stdout)
-        self.assertIn("hero stats, skills, artifacts", result.stdout)
+        self.assertIn("save-derived Attack/Defense", result.stdout)
 
     def test_explicit_hero_flag_accepts_empty_left_side(self):
         with tempfile.TemporaryDirectory() as temp_dir:
