@@ -305,6 +305,9 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "Town target is not a battle simulation target.",
             "Portal target is not a battle simulation target.",
             "portalDestinationText",
+            "portalRelationForSource",
+            "currentPortalRelation",
+            "currentPortalRelationStateForTest",
             "context-menu-note",
             "Initial owner:",
             "AUTO_REFRESH_MS = 5000",
@@ -1163,6 +1166,78 @@ assert.ok(!helpers.markerTooltipText(portalMarker).includes("portal:999"));
 const impassablePortal = level0Markers.find((marker) => marker.id === "portal:120");
 assert.strictEqual(helpers.portalDestinationText(impassablePortal), "Destinations: none");
 assert.strictEqual(helpers.portalTypeLabel("subterranean_gate"), "Subterranean gate");
+const relationSnapshot = {{
+  portal_targets: [
+    {{
+      id: "portal:source",
+      position: {{ x: 0, y: 0, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "entrance",
+      channel_key: "monolith-one-way:1"
+    }},
+    {{
+      id: "portal:same",
+      position: {{ x: 1, y: 0, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "exit",
+      channel_key: "monolith-one-way:1"
+    }},
+    {{
+      id: "portal:cross",
+      position: {{ x: 0, y: 1, z: 1 }},
+      portal_type: "monolith_one_way",
+      role: "exit",
+      channel_key: "monolith-one-way:1"
+    }},
+    {{
+      id: "portal:exit-only",
+      position: {{ x: 2, y: 0, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "exit",
+      channel_key: "monolith-one-way:2"
+    }},
+    {{
+      id: "portal:broken",
+      position: {{ x: 3, y: 0, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "entrance",
+      channel_key: "monolith-one-way:3"
+    }}
+  ],
+  portal_edges: [
+    {{ source_id: "portal:source", destination_id: "portal:same" }},
+    {{ source_id: "portal:source", destination_id: "portal:cross" }},
+    {{ source_id: "portal:source", destination_id: "portal:missing" }},
+    {{ source_id: "portal:broken", destination_id: "portal:missing" }}
+  ]
+}};
+const sourceRelation = helpers.portalRelationForSource(relationSnapshot, "portal:source");
+assert.strictEqual(sourceRelation.source.id, "portal:source");
+assert.deepStrictEqual(
+  sourceRelation.destinations.map((destination) => destination.id),
+  ["portal:same", "portal:cross"]
+);
+assert.deepStrictEqual(
+  sourceRelation.sameLevelDestinations.map((destination) => destination.id),
+  ["portal:same"]
+);
+assert.deepStrictEqual(
+  sourceRelation.crossLevelDestinations.map((destination) => destination.id),
+  ["portal:cross"]
+);
+assert.strictEqual(sourceRelation.destinationCount, 2);
+assert.strictEqual(sourceRelation.outgoingEdgeCount, 3);
+assert.strictEqual(sourceRelation.unresolvedDestinationCount, 1);
+assert.strictEqual(sourceRelation.isMultiExit, true);
+assert.strictEqual(sourceRelation.isNonDeterministic, true);
+assert.strictEqual(sourceRelation.status, "partial_destinations");
+const exitOnlyRelation = helpers.portalRelationForSource(relationSnapshot, "portal:exit-only");
+assert.strictEqual(exitOnlyRelation.status, "no_known_destination");
+assert.strictEqual(exitOnlyRelation.unresolvedDestinationCount, 0);
+const brokenRelation = helpers.portalRelationForSource(relationSnapshot, "portal:broken");
+assert.strictEqual(brokenRelation.status, "no_known_destination");
+assert.strictEqual(brokenRelation.unresolvedDestinationCount, 1);
+assert.strictEqual(helpers.portalRelationForSource(relationSnapshot, "neutral:0"), null);
 assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 0), ["LWBB", "LLWB", "BWLX", "LLLL"]);
 assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 1), ["BBBB", "WWWW", "LLLL", "LWBZ"]);
 assert.deepStrictEqual(helpers.routeRowsForLevel(markerSnapshot, 99), ["BBBB", "WWWW", "LLLL", "LWBZ"]);
@@ -1943,6 +2018,31 @@ assert.deepStrictEqual(neutralContextButtons.map((button) => button.textContent)
 assert.strictEqual(fetchCalls, fetchCallsBeforeTownClick);
 const renderedPortal = renderedView.markers.find((marker) => marker.id === "portal:100");
 const renderedPortalScreen = helpers.worldToScreen(renderedPortal.world, renderedView);
+elements["battle-map"].dispatch("pointermove", {{
+  pointerId: 80,
+  clientX: renderedPortalScreen.x,
+  clientY: renderedPortalScreen.y
+}});
+assert.strictEqual(helpers.currentMapViewForTest().activeMarkerId, "neutral:0");
+let portalRelationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(portalRelationState.hoveredSourceId, "portal:100");
+assert.strictEqual(portalRelationState.pinnedSourceId, null);
+assert.strictEqual(portalRelationState.relation.source.id, "portal:100");
+assert.deepStrictEqual(
+  portalRelationState.relation.crossLevelDestinations.map((destination) => destination.id),
+  ["portal:101", "portal:102"]
+);
+const emptyPortalRelationPoint = mapTileScreenPoint(3, 2, helpers.currentMapViewForTest());
+elements["battle-map"].dispatch("pointermove", {{
+  pointerId: 81,
+  clientX: emptyPortalRelationPoint.x,
+  clientY: emptyPortalRelationPoint.y
+}});
+assert.strictEqual(helpers.currentMapViewForTest().activeMarkerId, "neutral:0");
+portalRelationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(portalRelationState.hoveredSourceId, null);
+assert.strictEqual(portalRelationState.pinnedSourceId, null);
+assert.strictEqual(portalRelationState.relation, null);
 const fetchCallsBeforePortalClick = fetchCalls;
 elements["battle-map"].dispatch("pointerdown", {{
   button: 0,
@@ -1957,9 +2057,120 @@ elements["battle-map"].dispatch("pointerup", {{
   clientY: renderedPortalScreen.y
 }});
 assert.strictEqual(fetchCalls, fetchCallsBeforePortalClick);
+portalRelationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(portalRelationState.hoveredSourceId, "portal:100");
+assert.strictEqual(portalRelationState.pinnedSourceId, "portal:100");
+assert.strictEqual(portalRelationState.relation.source.id, "portal:100");
 assert.ok(elements["target-state"].textContent.includes("portal portal:100"));
 assert.ok(elements["target-state"].textContent.includes("Destinations: 0,2,1; 1,2,1"));
 assert.ok(elements["estimate-state"].textContent.includes("Portal target"));
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 82,
+  clientX: renderedTownScreen.x,
+  clientY: renderedTownScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 82,
+  clientX: renderedTownScreen.x,
+  clientY: renderedTownScreen.y
+}});
+portalRelationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(portalRelationState.hoveredSourceId, null);
+assert.strictEqual(portalRelationState.pinnedSourceId, null);
+assert.strictEqual(portalRelationState.relation, null);
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 83,
+  clientX: renderedPortalScreen.x,
+  clientY: renderedPortalScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 83,
+  clientX: renderedPortalScreen.x,
+  clientY: renderedPortalScreen.y
+}});
+assert.strictEqual(helpers.currentPortalRelationStateForTest().pinnedSourceId, "portal:100");
+elements["battle-map"].dispatch("pointermove", {{
+  pointerId: 830,
+  clientX: renderedPortalScreen.x,
+  clientY: renderedPortalScreen.y
+}});
+assert.strictEqual(helpers.currentPortalRelationStateForTest().hoveredSourceId, "portal:100");
+elements["battle-map"].dispatch("pointerleave", {{}});
+portalRelationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(portalRelationState.hoveredSourceId, null);
+assert.strictEqual(portalRelationState.pinnedSourceId, "portal:100");
+assert.strictEqual(portalRelationState.activeSourceId, "portal:100");
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 831,
+  clientX: renderedPortalScreen.x,
+  clientY: renderedPortalScreen.y
+}});
+elements["battle-map"].dispatch("pointermove", {{
+  pointerId: 831,
+  clientX: renderedPortalScreen.x + 12,
+  clientY: renderedPortalScreen.y + 12
+}});
+portalRelationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(portalRelationState.hoveredSourceId, null);
+assert.strictEqual(portalRelationState.pinnedSourceId, "portal:100");
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 831,
+  clientX: renderedPortalScreen.x + 12,
+  clientY: renderedPortalScreen.y + 12
+}});
+const renderedSecondPortal = renderedView.markers.find((marker) => marker.id === "portal:110");
+const renderedSecondPortalScreen = helpers.worldToScreen(renderedSecondPortal.world, renderedView);
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 84,
+  clientX: renderedSecondPortalScreen.x,
+  clientY: renderedSecondPortalScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 84,
+  clientX: renderedSecondPortalScreen.x,
+  clientY: renderedSecondPortalScreen.y
+}});
+assert.strictEqual(helpers.currentPortalRelationStateForTest().pinnedSourceId, "portal:110");
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 85,
+  clientX: emptyPortalRelationPoint.x,
+  clientY: emptyPortalRelationPoint.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 85,
+  clientX: emptyPortalRelationPoint.x,
+  clientY: emptyPortalRelationPoint.y
+}});
+portalRelationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(portalRelationState.hoveredSourceId, null);
+assert.strictEqual(portalRelationState.pinnedSourceId, null);
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 86,
+  clientX: renderedPortalScreen.x,
+  clientY: renderedPortalScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 86,
+  clientX: renderedPortalScreen.x,
+  clientY: renderedPortalScreen.y
+}});
+assert.strictEqual(fetchCalls, fetchCallsBeforePortalClick);
+assert.strictEqual(helpers.currentPortalRelationStateForTest().pinnedSourceId, "portal:100");
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: true }});
+assert.strictEqual(helpers.currentPortalRelationStateForTest().hoveredSourceId, null);
+assert.strictEqual(helpers.currentPortalRelationStateForTest().pinnedSourceId, null);
 let contextMenuPrevented = 0;
 elements["battle-map"].dispatch("contextmenu", {{
   clientX: renderedPortalScreen.x,
@@ -2174,6 +2385,41 @@ elements["path-mode-toggle"].dispatch("change", {{}});
 assert.strictEqual(helpers.currentMapViewForTest().pathMode, true);
 assert.strictEqual(elements["path-mode-toggle"].checked, true);
 const pathView = helpers.currentMapViewForTest();
+const pathPortal = pathView.markers.find((marker) => marker.id === "portal:100");
+const pathPortalScreen = helpers.worldToScreen(pathPortal.world, pathView);
+elements["battle-map"].dispatch("pointermove", {{
+  pointerId: 220,
+  clientX: pathPortalScreen.x,
+  clientY: pathPortalScreen.y
+}});
+assert.strictEqual(helpers.currentPortalRelationStateForTest().hoveredSourceId, "portal:100");
+assert.strictEqual(helpers.currentPortalRelationStateForTest().pinnedSourceId, null);
+const pathPortalStart = fetchRequests.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 221,
+  clientX: pathPortalScreen.x,
+  clientY: pathPortalScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 221,
+  clientX: pathPortalScreen.x,
+  clientY: pathPortalScreen.y
+}});
+await flushPromises();
+let pathPortalRequests = pathRequestsSince(pathPortalStart);
+assert.strictEqual(pathPortalRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(pathPortalRequests[0].options.body), {{
+  hero_id: "hero:0",
+  target_id: "portal:100"
+}});
+assert.strictEqual(
+  fetchRequests.slice(pathPortalStart).filter((request) => request.path === "/api/simulate-target").length,
+  0
+);
+assert.strictEqual(helpers.currentPortalRelationStateForTest().pinnedSourceId, null);
+assert.strictEqual(helpers.currentPortalRelationStateForTest().hoveredSourceId, "portal:100");
 const pathNeutral = pathView.markers.find((marker) => marker.id === "neutral:0");
 const pathNeutralScreen = helpers.worldToScreen(pathNeutral.world, pathView);
 const foundPathStart = fetchRequests.length;

@@ -1469,19 +1469,38 @@ pinned portal relation. The relation should be derived from existing
 current snapshot proves insufficient during implementation.
 
 **Acceptance criteria:**
-- [ ] Hovered portal relation can be derived without mutating active target
+- [x] Hovered portal relation can be derived without mutating active target
       state.
-- [ ] Pinned portal relation can be set by clicking a portal outside Path mode.
-- [ ] Relation data distinguishes same-level destinations, cross-level
+- [x] Pinned portal relation can be set by clicking a portal outside Path mode.
+- [x] Relation data distinguishes same-level destinations, cross-level
       destinations, multi-exit possible destinations, and no-known-destination
       cases.
-- [ ] Pinned relation clears or is replaced predictably when the user clicks
+- [x] Pinned relation clears or is replaced predictably when the user clicks
       empty map or another marker.
 
 **Verification:**
-- [ ] Add frontend helper tests in `tests/test_battle_estimator_gui.py`.
-- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Add frontend helper tests in `tests/test_battle_estimator_gui.py`.
+- [x] Run `node --check tools/battle_estimator_gui/app.js`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion Notes (2026-05-25):**
+- Added frontend-only portal relation state with hovered and pinned portal
+  source IDs. Hover preview takes precedence over pinned state and does not
+  mutate the active target marker.
+- Added `portalRelationForSource()` to derive source, resolved destinations,
+  same-level destinations, cross-level destinations, unresolved destination
+  counts, multi-exit/non-deterministic flags, and no-known-destination status
+  from existing `portal_targets` and `portal_edges`.
+- Normal-mode portal clicks now pin the portal relation while preserving the
+  existing non-simulation behavior; empty clicks and non-portal marker clicks
+  clear or replace the pinned relation. Path Mode portal clicks continue to
+  request routes without pinning.
+- Added frontend smoke coverage for helper output, hover preview, normal-mode
+  pin/clear/replace behavior, pointerleave and drag hover cleanup, snapshot
+  cleanup, and Path Mode portal click semantics.
+- Verification: `node --check tools/battle_estimator_gui/app.js`;
+  `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`.
 
 **Dependencies:** Task 8
 
@@ -1803,8 +1822,8 @@ After Tasks 9, 17, 25, and 31:
 | 23 | Add Path Mode UI And Route Rendering | done | 22 |
 | 24 | Add Path Segment List And Cross-Level Navigation | done | 23 |
 | 25 | End-To-End Pathfinding Verification | done | 18, 19, 20, 21, 22, 23, 24 |
-| 26 | Add Portal Relation View State | todo | 8 |
-| 27 | Redesign Portal Marker Symbols | blocked | 26 |
+| 26 | Add Portal Relation View State | done | 8 |
+| 27 | Redesign Portal Marker Symbols | todo | 26 |
 | 28 | Render Portal Relation Overlay | blocked | 26, 27 |
 | 29 | Expand Portal Target Details And Navigation | blocked | 28 |
 | 30 | Preserve Path Mode Portal Semantics | blocked | 29 |

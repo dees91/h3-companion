@@ -123,6 +123,10 @@
     result: null,
     target: null
   };
+  const portalRelationState = {
+    hoveredSourceId: null,
+    pinnedSourceId: null
+  };
   const heroSkillsState = {
     requestId: 0,
     heroId: null,
@@ -619,6 +623,112 @@
     return targets;
   }
 
+  function portalTargetById(snapshot, targetId) {
+    if (!snapshot || !targetId) {
+      return null;
+    }
+    return portalTargetsById(snapshot).get(targetId) || null;
+  }
+
+  function portalRelationDestination(edge, destination) {
+    return {
+      id: destination.id,
+      label: portalMarkerLabel(destination),
+      position: destination.position,
+      portalType: destination.portal_type,
+      role: destination.role,
+      edge
+    };
+  }
+
+  function portalRelationForSource(snapshot, sourceId) {
+    const source = portalTargetById(snapshot, sourceId);
+    if (!source || !source.position) {
+      return null;
+    }
+
+    const lookup = portalTargetsById(snapshot);
+    const outgoingEdges = (snapshot.portal_edges || [])
+      .filter((edge) => edge && edge.source_id === source.id);
+    const destinations = outgoingEdges
+      .map((edge) => {
+        const destination = lookup.get(edge.destination_id);
+        if (!destination || !destination.position) {
+          return null;
+        }
+        return portalRelationDestination(edge, destination);
+      })
+      .filter(Boolean);
+    const sourceLevel = positionLevel(source.position);
+    const sameLevelDestinations = destinations.filter((destination) => (
+      positionLevel(destination.position) === sourceLevel
+    ));
+    const crossLevelDestinations = destinations.filter((destination) => (
+      positionLevel(destination.position) !== sourceLevel
+    ));
+    const unresolvedDestinationCount = Math.max(0, outgoingEdges.length - destinations.length);
+    const status = destinations.length > 0
+      ? (unresolvedDestinationCount > 0 ? "partial_destinations" : "known_destinations")
+      : "no_known_destination";
+
+    return {
+      source,
+      sourceId: source.id,
+      sourcePosition: source.position,
+      destinations,
+      sameLevelDestinations,
+      crossLevelDestinations,
+      destinationCount: destinations.length,
+      outgoingEdgeCount: outgoingEdges.length,
+      unresolvedDestinationCount,
+      isMultiExit: outgoingEdges.length > 1,
+      isNonDeterministic: outgoingEdges.length > 1,
+      status
+    };
+  }
+
+  function currentPortalRelationSourceId() {
+    return portalRelationState.hoveredSourceId || portalRelationState.pinnedSourceId || null;
+  }
+
+  function currentPortalRelation() {
+    return portalRelationForSource(mapView.snapshot, currentPortalRelationSourceId());
+  }
+
+  function clearPortalRelationState() {
+    portalRelationState.hoveredSourceId = null;
+    portalRelationState.pinnedSourceId = null;
+  }
+
+  function clearPortalRelationHover() {
+    if (!portalRelationState.hoveredSourceId) {
+      return false;
+    }
+    portalRelationState.hoveredSourceId = null;
+    return true;
+  }
+
+  function setPortalRelationHover(marker) {
+    const sourceId = marker && marker.type === "portal" ? marker.id : null;
+    if (portalRelationState.hoveredSourceId === sourceId) {
+      return false;
+    }
+    portalRelationState.hoveredSourceId = sourceId;
+    return true;
+  }
+
+  function updatePinnedPortalRelationForClick(marker, pathMode) {
+    if (pathMode) {
+      return false;
+    }
+    const sourceId = marker && marker.type === "portal" ? marker.id : null;
+    if (portalRelationState.pinnedSourceId === sourceId) {
+      return false;
+    }
+    portalRelationState.pinnedSourceId = sourceId;
+    return true;
+  }
+
   function portalDestinationsForTarget(snapshot, portal, targetsById) {
     if (!snapshot || !portal || !portal.id) {
       return [];
@@ -1087,6 +1197,7 @@
 
     mapView.targetFilter = normalized;
     mapView.hoveredMarkerId = null;
+    clearPortalRelationHover();
     elements.canvas.classList.remove("has-marker-hover");
     hideMapTooltip();
     hideTargetContextMenu();
@@ -1103,6 +1214,7 @@
     mapView.level = normalizeLevelForSnapshot(level, mapView.snapshot);
     mapView.hoveredMarkerId = null;
     scanState.hoveredResultTargetId = null;
+    clearPortalRelationHover();
     elements.canvas.classList.remove("has-marker-hover");
     hideMapTooltip();
     rebuildMarkerCache(mapView.snapshot);
@@ -1830,6 +1942,15 @@
       running: pathState.running,
       result: pathState.result,
       target: pathState.target
+    };
+  }
+
+  function currentPortalRelationStateForTest() {
+    return {
+      hoveredSourceId: portalRelationState.hoveredSourceId,
+      pinnedSourceId: portalRelationState.pinnedSourceId,
+      activeSourceId: currentPortalRelationSourceId(),
+      relation: currentPortalRelation()
     };
   }
 
@@ -3881,6 +4002,7 @@
     rebuildMarkerCache(snapshot);
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
+    clearPortalRelationState();
     elements.canvas.classList.remove("has-marker-hover");
     hideMapTooltip();
     hideTargetContextMenu();
@@ -3932,6 +4054,7 @@
     mapView.level = 0;
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
+    clearPortalRelationState();
     elements.canvas.classList.remove("has-marker-hover");
     elements.showHiddenToggle.checked = false;
     elements.showHiddenToggle.disabled = true;
@@ -4170,12 +4293,16 @@
         x: mapView.drag.pan.x + dx,
         y: mapView.drag.pan.y + dy
       };
+      mapView.hoveredMarkerId = null;
+      clearPortalRelationHover();
+      elements.canvas.classList.remove("has-marker-hover");
       hideMapTooltip();
       drawMap();
       return;
     }
 
     const marker = hitTestMarker(mapView.markers, point, mapView);
+    setPortalRelationHover(marker);
     mapView.hoveredMarkerId = marker ? marker.id : null;
     elements.canvas.classList.toggle("has-marker-hover", Boolean(marker));
     if (marker) {
@@ -4203,6 +4330,8 @@
       return;
     }
     const marker = hitTestMarker(mapView.markers, point, mapView);
+    setPortalRelationHover(marker);
+    updatePinnedPortalRelationForClick(marker, mapView.pathMode);
     mapView.activeMarkerId = marker ? marker.id : null;
     setTargetDetails(marker);
     if (mapView.pathMode) {
@@ -4224,11 +4353,15 @@
         && marker.type !== "portal"
       )
     ) {
+      updatePinnedPortalRelationForClick(null, mapView.pathMode);
       hideTargetContextMenu();
+      drawMap();
       return;
     }
 
     event.preventDefault();
+    setPortalRelationHover(marker);
+    updatePinnedPortalRelationForClick(marker, mapView.pathMode);
     mapView.activeMarkerId = marker.id;
     setTargetDetails(marker);
     hideMapTooltip();
@@ -4238,6 +4371,7 @@
 
   elements.canvas.addEventListener("pointerleave", () => {
     mapView.hoveredMarkerId = null;
+    clearPortalRelationHover();
     elements.canvas.classList.remove("has-marker-hover");
     hideMapTooltip();
     drawMap();
@@ -4299,6 +4433,8 @@
     centerOnWorldPoint,
     currentMapViewForTest,
     currentPathStateForTest,
+    currentPortalRelation,
+    currentPortalRelationStateForTest,
     compareHeroSkillOffers,
     focusPathSegment,
     focusPortalDestination,
@@ -4316,6 +4452,7 @@
     pathSegmentStartPosition,
     pathSegmentText,
     pathSegmentTypeLabel,
+    portalRelationForSource,
     portalDestinationText,
     portalMarkerLabel,
     portalTypeLabel,
