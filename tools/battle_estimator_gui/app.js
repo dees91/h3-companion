@@ -1119,6 +1119,7 @@
     elements.castleAlertsState.textContent = message;
     elements.castleAlertsState.title = message;
     elements.castleAlertsState.removeAttribute("role");
+    syncCastleAlertSelection();
   }
 
   function castleAlertTitle(alert) {
@@ -1134,6 +1135,72 @@
       parts.push(`+${alert.other_towns_in_radius} other towns in radius`);
     }
     return parts.join(" | ");
+  }
+
+  function elementsWithClass(node, className) {
+    if (!node) {
+      return [];
+    }
+    const classNames = String(node.className || "").split(/\s+/);
+    const matches = classNames.includes(className) ? [node] : [];
+    return matches.concat(
+      Array.from(node.children || []).flatMap((child) => (
+        elementsWithClass(child, className)
+      ))
+    );
+  }
+
+  function syncCastleAlertSelection() {
+    const activeMarkerId = mapView.activeMarkerId || "";
+    elementsWithClass(elements.castleAlertsState, "alert-row").forEach((row) => {
+      const isActive = Boolean(
+        row.dataset
+        && row.dataset.enemyHeroId
+        && row.dataset.enemyHeroId === activeMarkerId
+      );
+      row.classList.toggle("active", isActive);
+      row.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  }
+
+  function focusCastleAlert(alert) {
+    const enemyHeroId = alert && alert.enemy_hero_id;
+    if (!enemyHeroId || !mapView.snapshot) {
+      return null;
+    }
+    if (mapView.targetFilter === "monsters") {
+      setTargetFilter("both");
+    }
+    const marker = centerOnMarkerId(enemyHeroId);
+    if (marker) {
+      mapView.activeMarkerId = marker.id;
+      setTargetDetails(marker);
+    } else {
+      mapView.activeMarkerId = null;
+      const targetPosition = (
+        alert.enemy_position
+        || positionForTargetId(mapView.snapshot, enemyHeroId)
+      );
+      if (targetPosition) {
+        mapView.level = normalizeLevelForSnapshot(
+          positionLevel(targetPosition),
+          mapView.snapshot
+        );
+        rebuildMarkerCache(mapView.snapshot);
+        updateLevelControls(mapView.snapshot);
+        updateMapMetrics(mapView.snapshot);
+        centerOnWorldPoint(
+          worldPointForPositionInView(targetPosition, mapView.snapshot, mapView)
+        );
+      }
+      setTargetDetailsText(
+        `hero ${enemyHeroId} | no visible marker`,
+        "Alert target has no visible marker in the current snapshot."
+      );
+    }
+    syncCastleAlertSelection();
+    drawMap();
+    return marker;
   }
 
   function renderCastleAlerts(snapshot) {
@@ -1157,11 +1224,16 @@
     elements.castleAlertsState.title = "";
     elements.castleAlertsState.setAttribute("role", "list");
     alerts.forEach((alert) => {
-      const row = document.createElement("div");
+      const item = document.createElement("div");
+      item.className = "alert-list-item";
+      item.setAttribute("role", "listitem");
+
+      const row = document.createElement("button");
+      row.type = "button";
       row.className = "list-item alert-row";
       row.dataset.alertId = alert.id || "";
       row.dataset.enemyHeroId = alert.enemy_hero_id || "";
-      row.setAttribute("role", "listitem");
+      row.addEventListener("click", () => focusCastleAlert(alert));
 
       const title = document.createElement("div");
       title.className = "alert-row-title";
@@ -1180,8 +1252,10 @@
 
       row.appendChild(title);
       row.appendChild(meta);
-      elements.castleAlertsState.appendChild(row);
+      item.appendChild(row);
+      elements.castleAlertsState.appendChild(item);
     });
+    syncCastleAlertSelection();
   }
 
   function markerTooltipText(marker) {
@@ -1692,6 +1766,7 @@
     if (!mapView.markers.some((marker) => marker.id === mapView.activeMarkerId)) {
       mapView.activeMarkerId = null;
       setTargetDetails(null);
+      syncCastleAlertSelection();
     }
     fitMapToCanvas(mapView.snapshot);
     updateMapMetrics(mapView.snapshot);
@@ -1793,6 +1868,7 @@
     if (!mapView.markers.some((marker) => marker.id === mapView.activeMarkerId)) {
       mapView.activeMarkerId = null;
       setTargetDetails(null);
+      syncCastleAlertSelection();
     }
     updateMapMetrics(mapView.snapshot);
     clearScanResults("No scan results.");
@@ -1809,6 +1885,7 @@
     if (!mapView.markers.some((marker) => marker.id === mapView.activeMarkerId)) {
       mapView.activeMarkerId = null;
       setTargetDetails(null);
+      syncCastleAlertSelection();
     }
     updateLevelControls(mapView.snapshot);
     updateMapMetrics(mapView.snapshot);
@@ -1964,6 +2041,7 @@
     if (marker) {
       setTargetDetails(marker);
     }
+    syncCastleAlertSelection();
     drawMap();
     return marker;
   }
@@ -3070,6 +3148,7 @@
       level: mapView.level,
       dualLevel: mapView.dualLevel,
       pathMode: mapView.pathMode,
+      targetFilter: mapView.targetFilter,
       activeMarkerId: mapView.activeMarkerId,
       hoveredMarkerId: mapView.hoveredMarkerId,
       markers: mapView.markers
@@ -3751,6 +3830,7 @@
       target_id: result.target_id,
       estimate: result
     });
+    syncCastleAlertSelection();
     drawMap();
   }
 
@@ -4232,6 +4312,7 @@
     if (marker) {
       setTargetDetails(marker);
     }
+    syncCastleAlertSelection();
     drawMap();
   }
 
@@ -5151,7 +5232,6 @@
     elements.portalLinksToggle.checked = mapView.showPortalLinks;
     elements.portalLinksToggle.disabled = false;
     syncAlertSettingsControls(snapshot);
-    renderCastleAlerts(snapshot);
     rebuildMarkerCache(snapshot);
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
@@ -5161,6 +5241,7 @@
     hideTargetContextMenu();
     invalidateEstimateRequests();
     setTargetDetails(null);
+    renderCastleAlerts(snapshot);
     if (nextViewState.preserveView) {
       mapView.zoom = nextViewState.zoom;
       mapView.pan = nextViewState.pan;
@@ -5529,6 +5610,7 @@
     updatePinnedPortalRelationForClick(marker, mapView.pathMode);
     mapView.activeMarkerId = marker ? marker.id : null;
     setTargetDetails(marker);
+    syncCastleAlertSelection();
     if (mapView.pathMode) {
       requestPath(marker, point);
       drawMap();
@@ -5566,6 +5648,7 @@
     updatePinnedPortalRelationForClick(marker, mapView.pathMode);
     mapView.activeMarkerId = marker.id;
     setTargetDetails(marker);
+    syncCastleAlertSelection();
     hideMapTooltip();
     showTargetContextMenu(marker, event);
     drawMap();
@@ -5619,6 +5702,8 @@
     recentHeroChipState,
     renderSnapshot,
     loadState,
+    focusCastleAlert,
+    syncCastleAlertSelection,
     resolveSelectedHeroId,
     routeRowsForLevel,
     routeStateForChar,

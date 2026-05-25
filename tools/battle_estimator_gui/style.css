@@ -654,6 +654,22 @@ select:disabled {
 .alert-row {
   display: grid;
   gap: 4px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.alert-row:hover,
+.alert-row:focus-visible {
+  border-color: #758195;
+  background: #f3f6fa;
+  outline: none;
+}
+
+.alert-row.active {
+  border-color: #7a4d00;
+  background: #fff7db;
+  box-shadow: inset 3px 0 0 #f5c542;
 }
 
 .alert-row-title,

@@ -1242,7 +1242,19 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T11. Alert rows are now keyboard-accessible buttons inside
+  the alert list. Clicking an alert switches the target filter to `Both` when
+  needed so hero markers are visible, centers on the enemy hero marker,
+  switches to that hero's level, marks the marker active, and updates target
+  details while preserving path mode. Active alert highlighting is derived from
+  the current active marker ID and is resynchronized after alert focus, map
+  clicks, portal focus, scan result selection, ranking focus, and snapshot
+  refreshes. If an alert target has no visible marker, the UI centers on the
+  known position when available, shows a no-visible-marker target detail, and
+  does not leave a stale active alert. Added frontend tests for filter
+  switching, level switching, active row state, path-mode preservation, stale
+  scan clearing, hidden-marker fallback, and refresh clearing of alert
+  highlight.
 
 ---
 
@@ -1809,8 +1821,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T08 | Expose Snapshot Contract | done | T07 | backend | Main | S | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
 | T09 | Render My Color And Alert Radius Controls | done | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | T10 | Render Alerts Sidebar Section | done | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
-| T11 | Center And Activate Alert Target | todo | T10 | frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
-| T12 | Docs And Verification Pass | blocked | T08, T09, T10, T11 | quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md` |
+| T11 | Center And Activate Alert Target | done | T10 | frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
+| T12 | Docs And Verification Pass | todo | T08, T09, T10, T11 | quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md` |
 | T13 | Research Save Hero Combat Data | todo | -- | hero-combat-research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T14 | Document Hero Combat Data Hypothesis | blocked | T13 | hero-combat-research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T15 | Synthetic Hero Combat Fixtures | blocked | T14 | hero-combat-parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |

@@ -275,6 +275,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "castleAlertsState",
             "renderCastleAlerts",
             "castleAlertDiagnosticText",
+            "focusCastleAlert",
+            "syncCastleAlertSelection",
             "routeOverlayToggle",
             "portalLinksToggle",
             "targetFilterControl",
@@ -448,6 +450,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".alert-diagnostic",
             ".alert-list",
             ".alert-row",
+            ".alert-row.active",
             ".alert-row-meta",
             ".portal-destination",
             "#battle-map.path-mode",
@@ -646,9 +649,27 @@ class Element {{
     this.value = "";
     this.width = 960;
     this.classList = {{
-      add() {{}},
-      remove() {{}},
-      toggle() {{}}
+      add: (...names) => {{
+        const classNames = new Set(String(this.className || "").split(/\\s+/).filter(Boolean));
+        names.forEach((name) => classNames.add(name));
+        this.className = Array.from(classNames).join(" ");
+      }},
+      remove: (...names) => {{
+        const classNames = new Set(String(this.className || "").split(/\\s+/).filter(Boolean));
+        names.forEach((name) => classNames.delete(name));
+        this.className = Array.from(classNames).join(" ");
+      }},
+      toggle: (name, force) => {{
+        const classNames = new Set(String(this.className || "").split(/\\s+/).filter(Boolean));
+        const shouldAdd = force === undefined ? !classNames.has(name) : Boolean(force);
+        if (shouldAdd) {{
+          classNames.add(name);
+        }} else {{
+          classNames.delete(name);
+        }}
+        this.className = Array.from(classNames).join(" ");
+        return shouldAdd;
+      }}
     }};
   }}
   get firstChild() {{
@@ -2346,18 +2367,63 @@ helpers.renderSnapshot(renderedAlertSnapshot, {{ preserveView: false }});
 const alertRows = nodesWithClass(elements["castle-alerts-state"], "alert-row");
 assert.strictEqual(alertRows.length, 1);
 assert.strictEqual(elements["castle-alerts-state"].role, "list");
+assert.strictEqual(alertRows[0].tagName || alertRows[0].id, "button");
+assert.strictEqual(alertRows[0].type, "button");
 assert.strictEqual(alertRows[0].dataset.alertId, "castle-threat:hero:1");
 assert.strictEqual(alertRows[0].dataset.enemyHeroId, "hero:1");
-assert.strictEqual(alertRows[0].events.click, undefined);
+assert.ok(alertRows[0].events.click.length > 0);
+assert.strictEqual(alertRows[0]["aria-pressed"], "false");
 assert.ok(castleAlertsText().includes("Fafner"));
 assert.ok(castleAlertsText().includes("Tan"));
 assert.ok(castleAlertsText().includes("4 tiles"));
 assert.ok(castleAlertsText().includes("near Castle Keep"));
 assert.ok(castleAlertsText().includes("+2 other towns in radius"));
 assert.strictEqual(nodesWithClass(elements["castle-alerts-state"], "color-swatch").length, 1);
-const activeBeforeAlertRowDispatch = helpers.currentMapViewForTest().activeMarkerId;
+elements["target-filter-control"].children
+  .find((button) => button.textContent === "Monsters")
+  .dispatch("click", {{}});
+helpers.setPathMode(true);
 alertRows[0].dispatch("click", {{}});
-assert.strictEqual(helpers.currentMapViewForTest().activeMarkerId, activeBeforeAlertRowDispatch);
+let alertFocusedView = helpers.currentMapViewForTest();
+assert.strictEqual(alertFocusedView.targetFilter, "both");
+assert.strictEqual(alertFocusedView.pathMode, true);
+assert.strictEqual(alertFocusedView.level, 1);
+assert.strictEqual(alertFocusedView.activeMarkerId, "hero:1");
+assert.ok(targetStateText().includes("hero hero:1"));
+assert.ok(alertRows[0].className.includes("active"));
+assert.strictEqual(alertRows[0]["aria-pressed"], "true");
+assert.ok(scanStateTextIncludes("No scan results."));
+helpers.renderSnapshot(renderedAlertSnapshot, {{ preserveView: true }});
+assert.strictEqual(helpers.currentMapViewForTest().activeMarkerId, null);
+assert.ok(!nodesWithClass(elements["castle-alerts-state"], "alert-row")[0].className.includes("active"));
+const hiddenAlertSnapshot = {{
+  ...hiddenHeroSnapshot,
+  castle_alerts_status: "ok",
+  castle_alerts_status_detail: null,
+  castle_alerts: [
+    {{
+      id: "castle-threat:hero:hidden",
+      enemy_hero_id: "hero:hidden",
+      enemy_hero_name: "Hidden",
+      enemy_color_id: 2,
+      enemy_color_name: "tan",
+      town_id: "town:0",
+      town_name: "Castle Keep",
+      distance: 2,
+      other_towns_in_radius: 0,
+      enemy_position: {{ x: 3, y: 2, z: 0 }},
+      town_position: {{ x: 0, y: 0, z: 0 }}
+    }}
+  ]
+}};
+helpers.renderSnapshot(hiddenAlertSnapshot, {{ preserveView: false }});
+const hiddenAlertRow = nodesWithClass(elements["castle-alerts-state"], "alert-row")[0];
+hiddenAlertRow.dispatch("click", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().activeMarkerId, null);
+assert.ok(targetStateText().includes("hero hero:hidden"));
+assert.ok(targetStateText().includes("no visible marker"));
+assert.ok(!hiddenAlertRow.className.includes("active"));
+helpers.setPathMode(false);
 helpers.renderSnapshot({{
   ...markerSnapshot,
   castle_alerts_status: "ok",
