@@ -1211,13 +1211,13 @@ const markerSnapshot = {{
 }};
 const level0Markers = helpers.buildMarkerCache(markerSnapshot, 10, 0, false);
 assert.deepStrictEqual(level0Markers.map((marker) => marker.id), [
+  "neutral:0",
   "town:0",
   "town:random",
   "portal:100",
   "portal:110",
   "portal:120",
-  "hero:0",
-  "neutral:0"
+  "hero:0"
 ]);
 const townMarker = level0Markers.find((marker) => marker.id === "town:0");
 assert.strictEqual(townMarker.type, "town");
@@ -1327,7 +1327,7 @@ assert.strictEqual(helpers.routeStyleForChar("X"), null);
 const level0WithRemoved = helpers.buildMarkerCache(markerSnapshot, 10, 0, true);
 assert.deepStrictEqual(
   level0WithRemoved.map((marker) => marker.id),
-  ["town:0", "town:random", "portal:100", "portal:110", "portal:120", "hero:0", "neutral:0", "neutral:removed"]
+  ["neutral:0", "neutral:removed", "town:0", "town:random", "portal:100", "portal:110", "portal:120", "hero:0"]
 );
 assert.strictEqual(level0WithRemoved.find((marker) => marker.id === "neutral:removed").removed, true);
 const level0HeroesOnly = helpers.buildMarkerCache(markerSnapshot, 10, 0, false, false, "heroes");
@@ -1341,12 +1341,12 @@ assert.deepStrictEqual(level0HeroesOnly.map((marker) => marker.id), [
 ]);
 const level0MonstersOnly = helpers.buildMarkerCache(markerSnapshot, 10, 0, false, false, "monsters");
 assert.deepStrictEqual(level0MonstersOnly.map((marker) => marker.id), [
+  "neutral:0",
   "town:0",
   "town:random",
   "portal:100",
   "portal:110",
-  "portal:120",
-  "neutral:0"
+  "portal:120"
 ]);
 const hiddenHeroSnapshot = {{
   ...markerSnapshot,
@@ -1375,19 +1375,29 @@ assert.strictEqual(helpers.buildMarkerCache(hiddenHeroSnapshot, 10, 0, false, tr
 assert.ok(!helpers.buildMarkerCache(hiddenHeroSnapshot, 10, 0, false, true, "monsters").some((marker) => marker.id === "hero:hidden"));
 const level1Markers = helpers.buildMarkerCache(markerSnapshot, 10, 1, false);
 assert.deepStrictEqual(level1Markers.map((marker) => marker.id), [
+  "neutral:1",
   "town:1",
   "portal:101",
   "portal:102",
   "portal:111",
-  "hero:1",
-  "neutral:1"
+  "hero:1"
 ]);
 assert.strictEqual(level1Markers.find((marker) => marker.id === "town:1").label, "Dungeon town");
 const overlapSnapshot = {{
   map: {{ width: 4, height: 4, levels: 1 }},
   selected_hero_id: "hero:0",
   heroes: [markerSnapshot.heroes[0]],
-  neutral_targets: [],
+  neutral_targets: [
+    {{
+      id: "neutral:overlap",
+      position: {{ x: 1, y: 2, z: 0 }},
+      count: 4,
+      creature_name: "Imp",
+      h3m_subid: 42,
+      estimator_creature_id: 42,
+      removed: false
+    }}
+  ],
   town_targets: [
     {{
       id: "town:overlap",
@@ -1415,6 +1425,7 @@ const overlapSnapshot = {{
 }};
 const overlapMarkers = helpers.buildMarkerCache(overlapSnapshot, 10, 0, false);
 assert.deepStrictEqual(overlapMarkers.map((marker) => marker.id), [
+  "neutral:overlap",
   "town:overlap",
   "portal:overlap",
   "hero:0"
@@ -1427,7 +1438,7 @@ const portalTownOverlapSnapshot = {{
   map: {{ width: 4, height: 4, levels: 1 }},
   selected_hero_id: null,
   heroes: [],
-  neutral_targets: [],
+  neutral_targets: overlapSnapshot.neutral_targets,
   town_targets: overlapSnapshot.town_targets,
   portal_targets: overlapSnapshot.portal_targets,
   portal_edges: []
@@ -1436,6 +1447,24 @@ const portalTownOverlapMarkers = helpers.buildMarkerCache(portalTownOverlapSnaps
 assert.strictEqual(
   helpers.hitTestMarker(portalTownOverlapMarkers, {{ x: 15, y: 25 }}, {{ zoom: 1, pan: {{ x: 0, y: 0 }} }}).id,
   "portal:overlap"
+);
+const townNeutralOverlapSnapshot = {{
+  ...portalTownOverlapSnapshot,
+  portal_targets: []
+}};
+const townNeutralOverlapMarkers = helpers.buildMarkerCache(townNeutralOverlapSnapshot, 10, 0, false);
+assert.strictEqual(
+  helpers.hitTestMarker(townNeutralOverlapMarkers, {{ x: 15, y: 25 }}, {{ zoom: 1, pan: {{ x: 0, y: 0 }} }}).id,
+  "town:overlap"
+);
+const neutralOnlyOverlapSnapshot = {{
+  ...townNeutralOverlapSnapshot,
+  town_targets: []
+}};
+const neutralOnlyOverlapMarkers = helpers.buildMarkerCache(neutralOnlyOverlapSnapshot, 10, 0, false);
+assert.strictEqual(
+  helpers.hitTestMarker(neutralOnlyOverlapMarkers, {{ x: 15, y: 25 }}, {{ zoom: 1, pan: {{ x: 0, y: 0 }} }}).id,
+  "neutral:overlap"
 );
 assert.deepStrictEqual(
   helpers.rankedMapHeroes(markerSnapshot).map((hero) => hero.id),
@@ -1634,6 +1663,37 @@ const portalFillsAfterRender = drawOperations.filter((operation) => (
   operation.op === "fillRect" && portalFillStyles.has(operation.fillStyle)
 ));
 assert.ok(portalFillsAfterRender.length >= 1);
+drawOperations.length = 0;
+helpers.renderSnapshot(overlapSnapshot, {{ preserveView: false }});
+const neutralDrawIndex = drawOperations.findIndex((operation) => (
+  operation.op === "fill" && operation.fillStyle === "#1f2937" && operation.arc
+));
+const townDrawIndex = drawOperations.findIndex((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#e11d2e"
+));
+const portalDrawIndex = drawOperations.findIndex((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#7c3aed"
+));
+const heroDrawIndex = drawOperations.findIndex((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#f5c542"
+));
+assert.ok(neutralDrawIndex >= 0, "overlap neutral body should draw");
+assert.ok(townDrawIndex >= 0, "overlap town body should draw");
+assert.ok(portalDrawIndex >= 0, "overlap portal body should draw");
+assert.ok(heroDrawIndex >= 0, "overlap selected hero body should draw");
+assert.ok(
+  neutralDrawIndex < townDrawIndex,
+  `neutral should draw before town: ${{neutralDrawIndex}} vs ${{townDrawIndex}}`
+);
+assert.ok(
+  townDrawIndex < portalDrawIndex,
+  `town should draw before portal: ${{townDrawIndex}} vs ${{portalDrawIndex}}`
+);
+assert.ok(
+  portalDrawIndex < heroDrawIndex,
+  `portal should draw before hero: ${{portalDrawIndex}} vs ${{heroDrawIndex}}`
+);
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 const renderedView = helpers.currentMapViewForTest();
 assert.strictEqual(elements["path-mode-toggle"].disabled, false);
 assert.strictEqual(elements["path-mode-toggle"].checked, false);

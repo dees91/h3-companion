@@ -408,7 +408,13 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for M01. Marker cache order now draws neutral monster markers
+  before towns, portals, and heroes, which also makes reverse-order hit testing
+  prefer heroes, then portals, then towns, then monsters. Frontend helper tests
+  cover cache order, overlap hit priority, and a headless canvas draw-order
+  check for overlapping monster/town/portal/hero markers. Verified with
+  `node --check tools/battle_estimator_gui/app.js` and
+  `python3 -m unittest tests.test_battle_estimator_gui`.
 
 ---
 
@@ -1615,7 +1621,7 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 | ID | Title | Status | Blocked By | Wave | Execution | Effort | Scope | Files Likely Touched |
 |---|---|---|---|---|---|---|---|---|
-| M01 | Lower Monster Marker Priority | todo | -- | priority-map-ux | Parallel | S | GUI | `tools/battle_estimator_gui/app.js`, GUI tests |
+| M01 | Lower Monster Marker Priority | done | -- | priority-map-ux | Parallel | S | GUI | `tools/battle_estimator_gui/app.js`, GUI tests |
 | M02 | Subterranean Gate Click Level Toggle | todo | -- | priority-map-ux | Parallel | S | GUI | `tools/battle_estimator_gui/app.js`, GUI tests |
 | M03 | Cross-Level Ghost Portal Destinations | blocked | M02 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M04 | Dual-Level View State And Geometry | todo | -- | priority-map-ux | Main | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |

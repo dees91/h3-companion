@@ -1005,7 +1005,7 @@
         }))
       : [];
 
-    return townMarkers.concat(portalMarkers, heroMarkers, neutralMarkers);
+    return neutralMarkers.concat(townMarkers, portalMarkers, heroMarkers);
   }
 
   function hitTestMarker(markers, screenPoint, view) {
