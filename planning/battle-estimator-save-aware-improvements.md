@@ -2,9 +2,10 @@
 
 > **Source**: planning discussion on 2026-05-25.
 >
-> This plan adds save-derived current town ownership, a player color setting,
-> and defensive alerts when enemy heroes are within an alert radius of any
-> current town owned by the selected player color.
+> This plan tracks save-aware improvements that require reverse engineering
+> GM1/GM2 data beyond the existing hero army parser. Current workstreams cover
+> save-derived current town ownership, defensive alerts, and save-derived hero
+> combat context for stronger battle estimates.
 >
 > **Related**:
 > [Autosave Brief](./battle-estimator-autosave-brief.md),
@@ -51,6 +52,13 @@ The alerts must use current ownership parsed from the save. They must not fall
 back to `.h3m` `initial_owner`, because towns can be captured during play and
 the user cares about currently owned towns.
 
+The battle estimator should also improve hero combat estimates by using hero
+combat context parsed from the save whenever it is reliable. The first useful
+threshold is current primary Attack/Defense for both sides. If current secondary
+combat skills can also be parsed, the estimator should apply passive damage
+modifiers such as Offense, Armorer, and Archery. The estimator must never use
+VCMI starting skills or manual state as a silent fallback for combat math.
+
 ## Product Decisions
 
 - Add a persistent `My color` setting in the left hero panel.
@@ -69,6 +77,21 @@ the user cares about currently owned towns.
 - Clicking an alert centers the map on the enemy hero and activates its marker.
 - If current town ownership cannot be parsed confidently for a snapshot, show a
   diagnostic state and emit no fallback alerts.
+- Hero combat context is save-first. Do not add manual combat stat entry for
+  this workflow.
+- Research should look broadly for hero primary skills, secondary skills,
+  artifacts, spellbook, mana, experience, level, and specialty-related data.
+- Estimator integration should be incremental and explicit: use any reliable
+  parsed subset, but label the model as `army-only`, `primary-only`, or
+  `primary+secondary` per side.
+- The first estimator integration should cover passive combat modifiers only:
+  primary Attack/Defense, Offense, Armorer, and Archery.
+- Active spell casting, artifact bonuses, morale/luck modeling, specialties,
+  tactics deployment, and battlefield positioning are out of the first hero
+  combat estimator integration even if research finds related save data.
+- Hero combat context should improve both selected-hero-vs-neutral estimates
+  and hero-vs-hero estimates. Enemy combat context is used only when the target
+  is another parsed hero.
 
 ## Critical Implementation Notes
 
@@ -78,6 +101,19 @@ the user cares about currently owned towns.
 - The parser currently extracts save-derived hero army, position, and owner
   color from observed GM1/GM2 structures. Town ownership must be researched
   separately from real local saves and then covered with synthetic tests.
+- Current hero combat context is not implemented today. `HeroArmy` contains
+  name, stacks, source offset, position, and owner color only.
+- Existing hero skill recommendation state is manually maintained for advice.
+  It must not be reused as combat-estimator input unless a future task
+  explicitly asks for a manual what-if mode.
+- Existing VCMI-derived hero metadata includes starting secondary skills and
+  skill effect values, but starting skills are not current save state. Combat
+  estimates must not silently fall back to those values.
+- VCMI's `DamageCalculator` is the mechanics reference for passive damage
+  math. Attack-side factors are additive, defense-side factors are
+  multiplicative reductions.
+- `config/skills.json` already contains Offense, Armorer, and Archery effect
+  values. Use the existing JSONC loader path instead of raw `json.loads()`.
 - Current town ownership needs to join save-derived ownership records to H3M
   town targets. The join should be based on coordinates/object identity when
   supported by observed save data, not on display name alone.
@@ -171,6 +207,73 @@ Recommended `castle_alerts_status` values:
 - `no_owned_towns`: ownership parsed, but `My color` owns no towns,
 - `no_threats`: ownership parsed and no enemy is within radius.
 
+### Hero Combat Context Serialization
+
+Extend serialized hero entries with save-derived combat context when available:
+
+```json
+{
+  "id": "hero:783079",
+  "name": "Isra",
+  "combat_context": {
+    "status": "primary+secondary",
+    "source": "save",
+    "primary": {
+      "attack": 12,
+      "defense": 10,
+      "spell_power": 7,
+      "knowledge": 6
+    },
+    "secondary_skills": [
+      {"skill": "offence", "level": "expert"},
+      {"skill": "armorer", "level": "basic"}
+    ],
+    "passive_modifiers": {
+      "offence_melee_pct": 30,
+      "armorer_all_pct": 5,
+      "archery_ranged_pct": 0
+    },
+    "unsupported_observed": ["artifacts", "spellbook"]
+  }
+}
+```
+
+Recommended hero combat context statuses:
+
+- `unavailable`: no reliable current combat context was parsed,
+- `primary-only`: current primary skills were parsed,
+- `primary+secondary`: current primary skills and current secondary skills were
+  parsed,
+- `partial`: some useful data was parsed, but not enough to fit the stable
+  `primary-only` or `primary+secondary` shapes.
+
+Do not emit VCMI starting skills as `save` context. Starting skills may appear
+elsewhere in the hero skill recommender, but they are not current combat state.
+
+### Estimate Combat Model Notes
+
+Extend estimate payloads with model notes rather than overloading the existing
+`note` string:
+
+```json
+{
+  "combat_model": {
+    "player_status": "primary+secondary",
+    "enemy_status": "army-only",
+    "applied": [
+      "player primary attack/defense",
+      "player offence",
+      "player archery"
+    ],
+    "omitted": [
+      "enemy hero context unavailable",
+      "artifacts not modeled",
+      "active spells not modeled"
+    ]
+  }
+}
+```
+
 ## Dependency Graph
 
 ```text
@@ -195,6 +298,18 @@ Save-Aware Improvements
     T08 -> T10 [Render Alerts Sidebar Section]
     T10 -> T11 [Center And Activate Alert Target]
 
+  Hero Combat Context:
+    T13 [Research Save Hero Combat Data]
+      -> T14 [Document Hero Combat Data Hypothesis]
+      -> T15 [Synthetic Hero Combat Fixtures]
+      -> T16 [Parse Hero Primary Skills]
+      -> T17 [Parse Hero Secondary Skills]
+      -> T18 [Build Combat Context Contract]
+      -> T19 [Apply Passive Combat Modifiers]
+      -> T20 [Expose Combat Model Notes]
+      -> T21 [Render Estimate Model Details]
+      -> T22 [Hero Combat Docs And Verification]
+
   Quality:
     T08, T09, T10, T11 -> T12 [Docs And Verification Pass]
 ```
@@ -202,8 +317,10 @@ Save-Aware Improvements
 **Max parallelism:** T06 can run after the config contract is agreed, while
 T03/T04 parser work continues. T09 can be prototyped against a fixed test
 snapshot after T08's contract is written, but final wiring must wait for T08.
-Parser tasks should be single-owner because `tools/h3_save_parser.py` and its
-binary fixture helpers are easy to conflict on.
+T13/T14 hero combat research can run in parallel with town ownership research,
+but T03/T04 and T15/T16/T17 should be coordinated because they share
+`tools/h3_save_parser.py` and binary fixture helpers. Parser tasks should be
+single-owner per file during implementation.
 
 ## Task Definitions
 
@@ -650,6 +767,389 @@ binary fixture helpers are easy to conflict on.
 
 ---
 
+### T13: Research Save Hero Combat Data
+
+| Field | Value |
+|---|---|
+| Description | Use local real saves to identify current hero combat data near or linked to parsed hero army structures. Research should look for primary skills, secondary skills, artifacts, spellbook, mana, experience, level, and specialty-relevant identifiers. |
+| Blocked By | -- |
+| Wave | hero-combat-research |
+| Execution | Main |
+| Effort | M |
+| Scope | Research |
+| Source | Save-first hero combat estimator requirement |
+
+**Files to modify:**
+
+- `tools/battle_estimator_save_parsing_checkpoint.md`
+- Possibly this planning doc for revised caveats
+
+**Acceptance Criteria:**
+
+1. At least two real saves with known hero Attack/Defense and secondary skills
+   are inspected locally.
+2. Observations include whether combat data appears in the same hero struct as
+   army/name/position or in a linked record.
+3. Notes record candidate offsets, encoding, validation signals, and unsupported
+   structures without real save bytes or private paths.
+
+**Verification:**
+
+1. Manual check that no `.GM1`, `.GM2`, `.h3m`, cache files, or private paths
+   are staged.
+2. `git status --short`
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### T14: Document Hero Combat Data Hypothesis
+
+| Field | Value |
+|---|---|
+| Description | Convert research observations into a bounded parser hypothesis for current hero primary skills, secondary skills, and other discovered combat-adjacent data. |
+| Blocked By | T13 |
+| Wave | hero-combat-research |
+| Execution | Main |
+| Effort | S |
+| Scope | Docs |
+| Source | Parser safety |
+
+**Files to modify:**
+
+- `tools/battle_estimator_save_parsing_checkpoint.md`
+- This planning doc, if task dependencies or caveats change
+
+**Acceptance Criteria:**
+
+1. The checkpoint doc names the supported save structures and key offsets.
+2. It explains how primary and secondary skills are decoded and validated.
+3. It explicitly lists conditions that must return unavailable or partial
+   combat context instead of guessing.
+
+**Verification:**
+
+1. Markdown review for private data leaks.
+2. `git diff --check`
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### T15: Synthetic Hero Combat Fixtures
+
+| Field | Value |
+|---|---|
+| Description | Add synthetic save fixtures that encode the observed current hero combat data patterns, including complete, partial, and unsupported cases. |
+| Blocked By | T14 |
+| Wave | hero-combat-parser |
+| Execution | Main |
+| Effort | M |
+| Scope | Test |
+| Source | Regression coverage |
+
+**Files to modify:**
+
+- `tests/test_h3_save_parser.py`
+- `tests/test_battle_estimator_gui.py`
+- Possibly test helper code already local to these files
+
+**Acceptance Criteria:**
+
+1. Fixtures cover a hero with current primary Attack/Defense/Spell Power/Knowledge.
+2. Fixtures cover a hero with current secondary combat skills such as Offense,
+   Armorer, and Archery.
+3. Fixtures cover partial or unsupported structures without using real saves.
+
+**Verification:**
+
+1. `python3 -m unittest tests.test_h3_save_parser`
+2. `python3 -m unittest tests.test_battle_estimator_gui`
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### T16: Parse Hero Primary Skills
+
+| Field | Value |
+|---|---|
+| Description | Extend save hero parsing with current primary skill values, using explicit confidence/status reporting. |
+| Blocked By | T15 |
+| Wave | hero-combat-parser |
+| Execution | Main |
+| Effort | M |
+| Scope | Core |
+| Source | Minimum useful combat estimator threshold |
+
+**Files to modify:**
+
+- `tools/h3_save_parser.py`
+- `tests/test_h3_save_parser.py`
+- `tools/battle_estimator_save_parsing_checkpoint.md`
+
+**Acceptance Criteria:**
+
+1. Parsed hero records can expose current Attack, Defense, Spell Power, and
+   Knowledge when supported by the save structure.
+2. Unsupported or ambiguous records return unavailable/partial status rather
+   than starting-skill fallback values.
+3. Existing hero army, position, owner color, hidden-target, and skill-state
+   tests keep passing.
+
+**Verification:**
+
+1. `python3 -m unittest tests.test_h3_save_parser`
+2. `python3 -m unittest tests.test_battle_estimator_gui`
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### T17: Parse Hero Secondary Skills
+
+| Field | Value |
+|---|---|
+| Description | Extend save hero parsing with current secondary skills and levels, with enough validation to support passive combat modifiers. |
+| Blocked By | T16 |
+| Wave | hero-combat-parser |
+| Execution | Main |
+| Effort | M |
+| Scope | Core |
+| Source | Offense/Armorer/Archery estimator integration |
+
+**Files to modify:**
+
+- `tools/h3_save_parser.py`
+- `tests/test_h3_save_parser.py`
+- `tools/battle_estimator_save_parsing_checkpoint.md`
+
+**Acceptance Criteria:**
+
+1. Parser returns current secondary skills and levels for supported records.
+2. Skill IDs and levels are validated against known standard skill metadata.
+3. Unsupported layouts produce a clear partial/unavailable status and do not
+   fall back to VCMI starting skills.
+
+**Verification:**
+
+1. `python3 -m unittest tests.test_h3_save_parser`
+2. `python3 -m unittest tests.test_hero_skill_recommender`
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### T18: Build Combat Context Contract
+
+| Field | Value |
+|---|---|
+| Description | Create a stable internal and serialized combat-context contract for parsed hero primary skills, secondary skills, passive modifiers, and per-side model status. |
+| Blocked By | T17 |
+| Wave | hero-combat-backend |
+| Execution | Main |
+| Effort | M |
+| Scope | API/Core |
+| Source | Estimator and GUI integration |
+
+**Files to modify:**
+
+- `tools/h3_save_parser.py`
+- `tools/battle_estimator_gui.py`
+- `tests/test_h3_save_parser.py`
+- `tests/test_battle_estimator_gui.py`
+
+**Acceptance Criteria:**
+
+1. Hero snapshots expose `combat_context` with status, source, primary skills,
+   secondary skills, and passive modifier summary.
+2. Status distinguishes unavailable, primary-only, primary+secondary, and
+   partial context.
+3. No combat context field claims save-derived data unless it came from the
+   save parser.
+
+**Verification:**
+
+1. `python3 -m unittest tests.test_h3_save_parser`
+2. `python3 -m unittest tests.test_battle_estimator_gui`
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### T19: Apply Passive Combat Modifiers
+
+| Field | Value |
+|---|---|
+| Description | Extend the battle estimator damage calculation to use parsed passive hero combat context for primary Attack/Defense and secondary Offense, Armorer, and Archery. |
+| Blocked By | T18 |
+| Wave | hero-combat-estimator |
+| Execution | Main |
+| Effort | M |
+| Scope | Core |
+| Source | Improved hero-vs-hero and hero-vs-neutral estimates |
+
+**Files to modify:**
+
+- `tools/battle_estimator.py`
+- `tests/test_nearby_scan.py`
+- `tests/test_battle_estimator_cli.py`
+- Possibly `tests/test_battle_estimator_gui.py`
+
+**Acceptance Criteria:**
+
+1. Selected hero primary Attack/Defense affects estimates against neutral and
+   hero targets when parsed.
+2. Enemy hero primary Attack/Defense affects hero-vs-hero estimates when
+   parsed.
+3. Offense, Armorer, and Archery apply with VCMI-compatible passive damage
+   factors and do not affect missing/unsupported contexts.
+
+**Verification:**
+
+1. `python3 -m unittest tests.test_nearby_scan`
+2. `python3 -m unittest tests.test_battle_estimator_cli`
+3. `python3 -m unittest tests.test_battle_estimator_gui`
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### T20: Expose Combat Model Notes
+
+| Field | Value |
+|---|---|
+| Description | Include explicit combat model status in estimate payloads and CLI output so users can see which save-derived modifiers were applied or omitted. |
+| Blocked By | T19 |
+| Wave | hero-combat-api |
+| Execution | Main |
+| Effort | S |
+| Scope | API/CLI |
+| Source | Accuracy transparency |
+
+**Files to modify:**
+
+- `tools/battle_estimator.py`
+- `tools/battle_estimator_gui.py`
+- `tests/test_nearby_scan.py`
+- `tests/test_battle_estimator_cli.py`
+- `tests/test_battle_estimator_gui.py`
+
+**Acceptance Criteria:**
+
+1. Estimate payloads include per-side statuses such as `army-only`,
+   `primary-only`, and `primary+secondary`.
+2. Payloads list applied and omitted model components separately from
+   unsupported target notes.
+3. CLI output keeps the existing limitation note but makes save-derived
+   passive context visible when used.
+
+**Verification:**
+
+1. `python3 -m unittest tests.test_nearby_scan`
+2. `python3 -m unittest tests.test_battle_estimator_cli`
+3. `python3 -m unittest tests.test_battle_estimator_gui`
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### T21: Render Estimate Model Details
+
+| Field | Value |
+|---|---|
+| Description | Show compact combat model details in the GUI estimate panel without cluttering the hero list. |
+| Blocked By | T20 |
+| Wave | hero-combat-frontend |
+| Execution | Main |
+| Effort | S |
+| Scope | GUI |
+| Source | User-facing transparency |
+
+**Files to modify:**
+
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Acceptance Criteria:**
+
+1. Estimate results show a short model label such as `player primary+secondary,
+   enemy army-only`.
+2. Details expose parsed A/D and passive skill modifiers for each side when
+   present.
+3. Missing artifacts, active spells, morale/luck, and tactics are shown as
+   omitted model components, not hidden assumptions.
+
+**Verification:**
+
+1. `node --check tools/battle_estimator_gui/app.js`
+2. `python3 -m unittest tests.test_battle_estimator_gui`
+3. Manual GUI check that the estimate panel stays compact at desktop and
+   narrow widths.
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### T22: Hero Combat Docs And Verification
+
+| Field | Value |
+|---|---|
+| Description | Update docs for save-derived hero combat context and run the full relevant verification suite. |
+| Blocked By | T21 |
+| Wave | hero-combat-quality |
+| Execution | Main |
+| Effort | S |
+| Scope | Docs/Test |
+| Source | Public behavior change |
+
+**Files to modify:**
+
+- `README.md`
+- `CHANGELOG.md`
+- `AGENTS.md`
+- `tools/battle_estimator_save_parsing_checkpoint.md`
+- This planning doc
+
+**Acceptance Criteria:**
+
+1. README explains which hero combat data is save-derived and which model
+   components remain omitted.
+2. CHANGELOG records improved hero-vs-hero and hero-vs-neutral estimates.
+3. Save parsing checkpoint documents supported combat-context structures and
+   unsupported variants.
+
+**Verification:**
+
+1. `python3 -m unittest`
+2. `node --check tools/battle_estimator_gui/app.js`
+3. `git status --short` confirms no real save/map files are staged.
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
 ## Checkpoints
 
 ### Checkpoint: Research Ready
@@ -682,9 +1182,37 @@ binary fixture helpers are easy to conflict on.
 - [ ] Alert controls and rows fit compact sidebars.
 - [ ] Alert clicks center and activate the enemy hero marker.
 
+### Checkpoint: Hero Combat Research Ready
+
+- [ ] T13 and T14 are `done`.
+- [ ] Current hero combat data hypothesis is documented.
+- [ ] The hypothesis covers primary skills, secondary skills, and explicitly
+      marks artifacts, spellbook, mana, experience, level, and specialty data
+      as supported, unsupported, or observed-but-not-modeled.
+- [ ] No private saves, private map files, or local absolute save paths are in
+      the working tree.
+
+### Checkpoint: Hero Combat Parser Ready
+
+- [ ] T15, T16, T17, and T18 are `done`.
+- [ ] Synthetic fixtures prove complete, partial, and unsupported hero combat
+      contexts.
+- [ ] Hero snapshots expose combat context without using VCMI starting skills
+      or manually maintained recommendation state.
+
+### Checkpoint: Passive Combat Estimator Ready
+
+- [ ] T19, T20, and T21 are `done`.
+- [ ] Save-derived primary Attack/Defense affect neutral and hero estimates
+      when available.
+- [ ] Save-derived Offense, Armorer, and Archery affect estimates only when
+      current secondary skills are parsed.
+- [ ] GUI estimate details clearly label applied and omitted model components.
+
 ### Checkpoint: Complete
 
 - [ ] T12 is `done`.
+- [ ] T22 is `done`.
 - [ ] Full Python suite passes.
 - [ ] JavaScript syntax check passes.
 - [ ] Manual GUI check has been recorded in completion notes.
@@ -701,6 +1229,11 @@ binary fixture helpers are easy to conflict on.
 | Alert radius conflicts with scan radius mental model. | Medium | Use separate `Alert radius` but same distance metric; label controls clearly. |
 | Frontend sidebars become too crowded. | Medium | Add a compact `Alerts` section with terse rows and diagnostic states; avoid extra map modes in MVP. |
 | Save-derived ownership is partially parsed. | Medium | Surface a diagnostic status instead of quietly treating missing records as no threat. |
+| Hero combat data layout differs from the currently parsed hero army structure. | High | Research linked records before implementation, support only confirmed layouts, and expose unavailable/partial status for the rest. |
+| Parser falsely assigns primary or secondary skills to the wrong hero. | High | Validate names, offsets, ownership, position, and army linkage together before emitting save-derived combat context. |
+| Partial hero combat modeling looks more exact than it is. | Medium | Include per-side model status and applied/omitted components in API, CLI, and GUI estimate details. |
+| Artifacts or spells are discovered in the save but not modeled initially. | Medium | Record them as unsupported or observed-but-omitted; do not silently include their effects until dedicated tasks model them. |
+| Enemy hero context is unavailable more often than player hero context. | Medium | Allow asymmetric estimates, e.g. player `primary+secondary` versus enemy `army-only`, and make that visible. |
 
 ## Open Questions
 
@@ -712,6 +1245,14 @@ binary fixture helpers are easy to conflict on.
 - Should a later iteration add an `Include allied towns` toggle?
 - Should a later iteration add pathfinding-based "reachable threat" alerts
   using portals and route layers?
+- Which real saves have known hero primary skills and secondary skills for
+  validating parser offsets?
+- Can hero primary/secondary skill records be linked exactly to the same save
+  hero record that already provides army, position, and owner color?
+- Are enemy hero combat fields available for all detected visible heroes, or
+  only for the current player and previously observed heroes?
+- If artifacts or spellbook data are parsed later, which extra VCMI config
+  files are needed for truthful modeling and attribution?
 
 ## Summary Table
 
@@ -729,3 +1270,13 @@ binary fixture helpers are easy to conflict on.
 | T10 | Render Alerts Sidebar Section | blocked | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | T11 | Center And Activate Alert Target | blocked | T10 | frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
 | T12 | Docs And Verification Pass | blocked | T08, T09, T10, T11 | quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md` |
+| T13 | Research Save Hero Combat Data | todo | -- | hero-combat-research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
+| T14 | Document Hero Combat Data Hypothesis | blocked | T13 | hero-combat-research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
+| T15 | Synthetic Hero Combat Fixtures | blocked | T14 | hero-combat-parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
+| T16 | Parse Hero Primary Skills | blocked | T15 | hero-combat-parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
+| T17 | Parse Hero Secondary Skills | blocked | T16 | hero-combat-parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
+| T18 | Build Combat Context Contract | blocked | T17 | hero-combat-backend | Main | M | API/Core | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
+| T19 | Apply Passive Combat Modifiers | blocked | T18 | hero-combat-estimator | Main | M | Core | `tools/battle_estimator.py`, estimator tests |
+| T20 | Expose Combat Model Notes | blocked | T19 | hero-combat-api | Main | S | API/CLI | `tools/battle_estimator.py`, `tools/battle_estimator_gui.py`, tests |
+| T21 | Render Estimate Model Details | blocked | T20 | hero-combat-frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
+| T22 | Hero Combat Docs And Verification | blocked | T21 | hero-combat-quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint doc |
