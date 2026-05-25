@@ -1691,20 +1691,40 @@ pathfinding semantics, while hover and panel/context actions remain useful for
 portal inspection.
 
 **Acceptance criteria:**
-- [ ] Hovering portals in Path mode still shows relation preview when portal
+- [x] Hovering portals in Path mode still shows relation preview when portal
       links are enabled.
-- [ ] Left-clicking a portal in Path mode still requests a route to that portal
+- [x] Left-clicking a portal in Path mode still requests a route to that portal
       target.
-- [ ] Portal pinning by ordinary left-click is limited to non-Path mode.
-- [ ] Existing path segment list navigation and portal segment metadata still
+- [x] Portal pinning by ordinary left-click is limited to non-Path mode.
+- [x] Existing path segment list navigation and portal segment metadata still
       work.
-- [ ] Existing normal-mode click-to-simulate behavior for heroes/neutrals is
+- [x] Existing normal-mode click-to-simulate behavior for heroes/neutrals is
       unchanged.
 
 **Verification:**
-- [ ] Add tests covering portal clicks in normal mode and Path mode.
-- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Add tests covering portal clicks in normal mode and Path mode.
+- [x] Run `node --check tools/battle_estimator_gui/app.js`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+
+**Completion Notes (2026-05-25):**
+- Kept production Path mode behavior unchanged and strengthened frontend smoke
+  coverage around the final portal-relation UI.
+- Verified Path mode portal hover keeps relation preview active while `Portal
+  Links` is enabled, including canvas badge output for cross-level portal
+  destinations.
+- Verified Path mode portal clicks issue `/api/path-route` with the portal
+  target, do not issue `/api/simulate-target`, and do not pin the portal
+  relation.
+- Verified ordinary non-Path portal clicks can pin the portal relation without
+  starting pathfinding or battle simulation, while normal neutral and enemy hero
+  map clicks still issue `/api/simulate-target` with the expected request
+  bodies.
+- Existing path segment list checks continue to cover portal segment metadata,
+  non-deterministic labels, channel keys, no-fetch segment navigation, and
+  cross-level segment focusing.
+- Verification: `node --check tools/battle_estimator_gui/app.js`;
+  `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`.
 
 **Dependencies:** Task 29
 
@@ -1898,5 +1918,5 @@ After Tasks 9, 17, 25, and 31:
 | 27 | Redesign Portal Marker Symbols | done | 26 |
 | 28 | Render Portal Relation Overlay | done | 26, 27 |
 | 29 | Expand Portal Target Details And Navigation | done | 28 |
-| 30 | Preserve Path Mode Portal Semantics | todo | 29 |
-| 31 | End-To-End Portal Readability Verification | blocked | 26, 27, 28, 29, 30 |
+| 30 | Preserve Path Mode Portal Semantics | done | 29 |
+| 31 | End-To-End Portal Readability Verification | todo | 26, 27, 28, 29, 30 |

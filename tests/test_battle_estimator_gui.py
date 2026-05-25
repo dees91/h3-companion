@@ -1750,6 +1750,11 @@ function pathRequestsSince(startIndex) {{
     .slice(startIndex)
     .filter((request) => request.path === "/api/path-route");
 }}
+function simulateRequestsSince(startIndex) {{
+  return fetchRequests
+    .slice(startIndex)
+    .filter((request) => request.path === "/api/simulate-target");
+}}
 function scanSortButtons() {{
   return elements["scan-sort-control"].children;
 }}
@@ -2841,9 +2846,12 @@ elements["path-mode-toggle"].checked = true;
 elements["path-mode-toggle"].dispatch("change", {{}});
 assert.strictEqual(helpers.currentMapViewForTest().pathMode, true);
 assert.strictEqual(elements["path-mode-toggle"].checked, true);
-const pathView = helpers.currentMapViewForTest();
+assert.strictEqual(elements["portal-links-toggle"].checked, true);
+assert.strictEqual(elements["portal-links-toggle"].disabled, false);
+let pathView = helpers.currentMapViewForTest();
 const pathPortal = pathView.markers.find((marker) => marker.id === "portal:100");
 const pathPortalScreen = helpers.worldToScreen(pathPortal.world, pathView);
+drawOperations.length = 0;
 elements["battle-map"].dispatch("pointermove", {{
   pointerId: 220,
   clientX: pathPortalScreen.x,
@@ -2851,6 +2859,7 @@ elements["battle-map"].dispatch("pointermove", {{
 }});
 assert.strictEqual(helpers.currentPortalRelationStateForTest().hoveredSourceId, "portal:100");
 assert.strictEqual(helpers.currentPortalRelationStateForTest().pinnedSourceId, null);
+assert.ok(portalRelationBadgeTexts().some((operation) => operation.text.includes("L1")));
 const pathPortalStart = fetchRequests.length;
 elements["battle-map"].dispatch("pointerdown", {{
   button: 0,
@@ -2871,13 +2880,89 @@ assert.deepStrictEqual(JSON.parse(pathPortalRequests[0].options.body), {{
   hero_id: "hero:0",
   target_id: "portal:100"
 }});
-assert.strictEqual(
-  fetchRequests.slice(pathPortalStart).filter((request) => request.path === "/api/simulate-target").length,
-  0
-);
+assert.strictEqual(simulateRequestsSince(pathPortalStart).length, 0);
+assert.strictEqual(helpers.currentMapViewForTest().activeMarkerId, "portal:100");
+assert.ok(targetStateText().includes("portal portal:100"));
+assert.ok(targetStateText().includes("Type One-way monolith"));
 assert.strictEqual(helpers.currentPortalRelationStateForTest().pinnedSourceId, null);
 assert.strictEqual(helpers.currentPortalRelationStateForTest().hoveredSourceId, "portal:100");
-const pathNeutral = pathView.markers.find((marker) => marker.id === "neutral:0");
+elements["path-mode-toggle"].checked = false;
+elements["path-mode-toggle"].dispatch("change", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().pathMode, false);
+const normalPortal = helpers.centerOnMarkerId("portal:100");
+pathView = helpers.currentMapViewForTest();
+const normalPortalScreen = helpers.worldToScreen(normalPortal.world, pathView);
+const normalPortalStart = fetchRequests.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 222,
+  clientX: normalPortalScreen.x,
+  clientY: normalPortalScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 222,
+  clientX: normalPortalScreen.x,
+  clientY: normalPortalScreen.y
+}});
+await flushPromises();
+assert.strictEqual(pathRequestsSince(normalPortalStart).length, 0);
+assert.strictEqual(simulateRequestsSince(normalPortalStart).length, 0);
+assert.strictEqual(helpers.currentPortalRelationStateForTest().pinnedSourceId, "portal:100");
+assert.ok(elements["estimate-state"].textContent.includes("Portal target"));
+const normalNeutral = helpers.centerOnMarkerId("neutral:0");
+pathView = helpers.currentMapViewForTest();
+const normalNeutralScreen = helpers.worldToScreen(normalNeutral.world, pathView);
+const normalNeutralStart = fetchRequests.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 223,
+  clientX: normalNeutralScreen.x,
+  clientY: normalNeutralScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 223,
+  clientX: normalNeutralScreen.x,
+  clientY: normalNeutralScreen.y
+}});
+await flushPromises();
+let normalSimulateRequests = simulateRequestsSince(normalNeutralStart);
+assert.strictEqual(normalSimulateRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(normalSimulateRequests[0].options.body), {{
+  hero_id: "hero:0",
+  target_id: "neutral:0"
+}});
+assert.strictEqual(pathRequestsSince(normalNeutralStart).length, 0);
+const normalHero = helpers.centerOnMarkerId("hero:1");
+pathView = helpers.currentMapViewForTest();
+const normalHeroScreen = helpers.worldToScreen(normalHero.world, pathView);
+const normalHeroStart = fetchRequests.length;
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 224,
+  clientX: normalHeroScreen.x,
+  clientY: normalHeroScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 224,
+  clientX: normalHeroScreen.x,
+  clientY: normalHeroScreen.y
+}});
+await flushPromises();
+normalSimulateRequests = simulateRequestsSince(normalHeroStart);
+assert.strictEqual(normalSimulateRequests.length, 1);
+assert.deepStrictEqual(JSON.parse(normalSimulateRequests[0].options.body), {{
+  hero_id: "hero:0",
+  target_id: "hero:1"
+}});
+assert.strictEqual(pathRequestsSince(normalHeroStart).length, 0);
+elements["path-mode-toggle"].checked = true;
+elements["path-mode-toggle"].dispatch("change", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().pathMode, true);
+const pathNeutral = helpers.centerOnMarkerId("neutral:0");
+pathView = helpers.currentMapViewForTest();
 const pathNeutralScreen = helpers.worldToScreen(pathNeutral.world, pathView);
 const foundPathStart = fetchRequests.length;
 const foundPathDrawStart = drawOperations.length;
@@ -2900,10 +2985,7 @@ assert.deepStrictEqual(JSON.parse(pathRequests[0].options.body), {{
   hero_id: "hero:0",
   target_id: "neutral:0"
 }});
-assert.strictEqual(
-  fetchRequests.slice(foundPathStart).filter((request) => request.path === "/api/simulate-target").length,
-  0
-);
+assert.strictEqual(simulateRequestsSince(foundPathStart).length, 0);
 assert.ok(treeText(elements["path-state"]).includes("found"));
 assert.ok(treeText(elements["path-state"]).includes("3"));
 const foundPathOps = drawOperations.slice(foundPathDrawStart);
