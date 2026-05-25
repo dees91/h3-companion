@@ -494,6 +494,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             "/api/game-folder": self._api_game_folder,
             "/api/hidden-target": self._api_hidden_target,
             "/api/show-hidden": self._api_show_hidden,
+            "/api/alert-settings": self._api_alert_settings,
             "/api/simulate-target": self._api_simulate_target,
             "/api/scan-radius": self._api_scan_radius,
             "/api/path-route": self._api_path_route,
@@ -711,6 +712,19 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             self.app_state.show_hidden_neutrals = show_hidden
         domain_snapshot = _domain_snapshot_for_app(self.app_state)
         return _state_payload_for_app(self.app_state, domain_snapshot)
+
+    def _api_alert_settings(self, payload: dict) -> dict:
+        my_color_id = _required_nullable_int(payload, "my_color_id")
+        alert_radius = _required_int(payload, "alert_radius")
+        with self.app_state.lock:
+            config_path = self.app_state.config_path
+        with self.app_state.config_lock:
+            config = h3_save_parser.set_config_alert_settings(
+                my_color_id,
+                alert_radius,
+                config_path,
+            )
+        return _serialize_alert_settings(config)
 
     def _api_simulate_target(self, payload: dict) -> dict:
         hero_id = _required_text(payload, "hero_id")
@@ -2338,6 +2352,15 @@ def _serialize_tuple_position(position) -> dict | None:
     }
 
 
+def _serialize_alert_settings(config: h3_save_parser.BattleEstimatorConfig) -> dict:
+    my_color_id = config.my_color_id
+    return {
+        "my_color_id": my_color_id,
+        "my_color_name": _initial_owner_color_name(my_color_id),
+        "alert_radius": config.alert_radius,
+    }
+
+
 def _snapshot_kwargs_for_state(app_state: GuiAppState) -> dict:
     with app_state.lock:
         return {
@@ -2967,6 +2990,26 @@ def _required_text(payload: dict, key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ApiError(HTTPStatus.BAD_REQUEST, f"{key} must be a non-empty string")
     return value.strip()
+
+
+def _required_nullable_int(payload: dict, key: str) -> int | None:
+    if key not in payload:
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"{key} is required")
+    value = payload[key]
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"{key} must be an integer or null")
+    return value
+
+
+def _required_int(payload: dict, key: str) -> int:
+    if key not in payload:
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"{key} is required")
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"{key} must be an integer")
+    return value
 
 
 def _validate_hidden_neutral_target(

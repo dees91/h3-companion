@@ -46,6 +46,8 @@ CACHE_ROOT = Path.home() / ".cache" / "vcmi-battle-estimator"
 SAVE_EXTENSIONS = (".GM1", ".GM2")
 RECENT_HERO_LIMIT = 8
 H3SVG_SIGNATURE = b"H3SVG"
+DEFAULT_ALERT_RADIUS = 10
+MAX_ALERT_RADIUS = 200
 GAME_FOLDER_DATE_PATTERN = re.compile(
     r"^(?P<year>\d{4})\.(?P<month>\d{2})\.(?P<day>\d{2})"
     r"\s+"
@@ -167,6 +169,8 @@ class BattleEstimatorConfig:
     autosave_dir: Path | None = None
     last_hero: str | None = None
     recent_heroes: tuple[str, ...] = ()
+    my_color_id: int | None = None
+    alert_radius: int = DEFAULT_ALERT_RADIUS
     hidden_neutral_targets_by_map: dict[str, tuple[str, ...]] = field(
         default_factory=dict
     )
@@ -532,6 +536,8 @@ def load_config(config_path: str | Path = CONFIG_PATH) -> BattleEstimatorConfig:
         autosave_dir=_read_optional_path(data, "autosave_dir", path),
         last_hero=_read_optional_text(data, "last_hero", path),
         recent_heroes=_read_recent_heroes(data, path),
+        my_color_id=_read_optional_player_color_id(data, "my_color_id", path),
+        alert_radius=_read_alert_radius(data, path),
         hidden_neutral_targets_by_map=_read_hidden_neutral_targets_by_map(
             data,
             path,
@@ -554,7 +560,7 @@ def save_config(
     """Persist user configuration to JSON."""
 
     path = Path(config_path)
-    data = _config_to_json(config)
+    data = _config_to_json(_validated_config_for_write(config, path))
     temp_path = path.with_name(f".{path.name}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -565,6 +571,17 @@ def save_config(
         temp_path.replace(path)
     except OSError as exc:
         raise ConfigError(path, f"write failed: {exc}") from exc
+
+
+def _validated_config_for_write(
+    config: BattleEstimatorConfig,
+    path: Path,
+) -> BattleEstimatorConfig:
+    return replace(
+        config,
+        my_color_id=validate_optional_player_color_id(config.my_color_id, path),
+        alert_radius=validate_alert_radius(config.alert_radius, path),
+    )
 
 
 def set_config_autosave_dir(
@@ -629,6 +646,25 @@ def set_config_selected_hero(
         current,
         last_hero=normalized_hero or None,
         recent_heroes=recent_heroes,
+    )
+    save_config(updated, config_path)
+    return updated
+
+
+def set_config_alert_settings(
+    my_color_id,
+    alert_radius,
+    config_path: str | Path = CONFIG_PATH,
+) -> BattleEstimatorConfig:
+    """Persist alert settings while preserving unrelated config values."""
+
+    validated_color = validate_optional_player_color_id(my_color_id, config_path)
+    validated_radius = validate_alert_radius(alert_radius, config_path)
+    current = load_config(config_path)
+    updated = replace(
+        current,
+        my_color_id=validated_color,
+        alert_radius=validated_radius,
     )
     save_config(updated, config_path)
     return updated
@@ -2026,6 +2062,42 @@ def _read_recent_heroes(data: dict, path: Path) -> tuple[str, ...]:
     return tuple(recent_heroes)
 
 
+def _read_optional_player_color_id(
+    data: dict,
+    key: str,
+    path: Path,
+) -> int | None:
+    return validate_optional_player_color_id(data.get(key), path)
+
+
+def _read_alert_radius(data: dict, path: Path) -> int:
+    return validate_alert_radius(data.get("alert_radius", DEFAULT_ALERT_RADIUS), path)
+
+
+def validate_optional_player_color_id(value, path: str | Path = CONFIG_PATH) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(path, "invalid config: my_color_id must be an integer or null")
+    if value < 0 or value >= len(PLAYER_COLOR_NAMES):
+        raise ConfigError(
+            path,
+            f"invalid config: my_color_id must be between 0 and {len(PLAYER_COLOR_NAMES) - 1}",
+        )
+    return value
+
+
+def validate_alert_radius(value, path: str | Path = CONFIG_PATH) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(path, "invalid config: alert_radius must be an integer")
+    if value < 0 or value > MAX_ALERT_RADIUS:
+        raise ConfigError(
+            path,
+            f"invalid config: alert_radius must be between 0 and {MAX_ALERT_RADIUS}",
+        )
+    return value
+
+
 def _read_hidden_neutral_targets_by_map(data: dict, path: Path) -> dict[str, tuple[str, ...]]:
     value = data.get("hidden_neutral_targets_by_map")
     if value is None:
@@ -2361,6 +2433,10 @@ def _config_to_json(config: BattleEstimatorConfig) -> dict:
         data["last_hero"] = config.last_hero
     if config.recent_heroes:
         data["recent_heroes"] = list(config.recent_heroes)
+    if config.my_color_id is not None:
+        data["my_color_id"] = config.my_color_id
+    if config.alert_radius != DEFAULT_ALERT_RADIUS:
+        data["alert_radius"] = config.alert_radius
     hidden_neutral_targets_by_map = {
         map_key: list(target_ids)
         for map_key, target_ids in sorted(

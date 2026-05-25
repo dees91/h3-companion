@@ -5050,6 +5050,118 @@ assert.ok(pathSegmentButtons().length >= 4);
 
             self._with_server(check, app_state=app_state)
 
+    def test_alert_settings_endpoint_persists_and_clears_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    last_hero="Isra",
+                    recent_heroes=("Isra",),
+                    hidden_neutral_targets_by_map={
+                        "map-key": ("neutral:1",),
+                    },
+                ),
+                config_path,
+            )
+            app_state = battle_estimator_gui.GuiAppState(config_path=config_path)
+
+            def check(base_url):
+                status, content_type, payload = self._post_json(
+                    base_url,
+                    "/api/alert-settings",
+                    {
+                        "my_color_id": 2,
+                        "alert_radius": 15,
+                    },
+                )
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+
+                self.assertEqual(status, 200)
+                self.assertEqual(content_type, "application/json")
+                self.assertEqual(payload["my_color_id"], 2)
+                self.assertEqual(payload["my_color_name"], "tan")
+                self.assertEqual(payload["alert_radius"], 15)
+                self.assertEqual(config.my_color_id, 2)
+                self.assertEqual(config.alert_radius, 15)
+                self.assertEqual(config.last_hero, "Isra")
+                self.assertEqual(config.recent_heroes, ("Isra",))
+                self.assertEqual(
+                    config.hidden_neutral_targets_by_map["map-key"],
+                    ("neutral:1",),
+                )
+
+                status, _, cleared = self._post_json(
+                    base_url,
+                    "/api/alert-settings",
+                    {
+                        "my_color_id": None,
+                        "alert_radius": h3_save_parser.DEFAULT_ALERT_RADIUS,
+                    },
+                )
+                config = battle_estimator_gui.h3_save_parser.load_config(config_path)
+
+                self.assertEqual(status, 200)
+                self.assertIsNone(cleared["my_color_id"])
+                self.assertIsNone(cleared["my_color_name"])
+                self.assertEqual(
+                    cleared["alert_radius"],
+                    h3_save_parser.DEFAULT_ALERT_RADIUS,
+                )
+                self.assertIsNone(config.my_color_id)
+                self.assertEqual(
+                    config.alert_radius,
+                    h3_save_parser.DEFAULT_ALERT_RADIUS,
+                )
+
+            self._with_server(check, app_state=app_state)
+
+    def test_alert_settings_endpoint_rejects_invalid_payload_without_mutating_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    last_hero="Isra",
+                    my_color_id=2,
+                    alert_radius=15,
+                ),
+                config_path,
+            )
+            before = config_path.read_bytes()
+            app_state = battle_estimator_gui.GuiAppState(config_path=config_path)
+            invalid_payloads = (
+                {},
+                {"alert_radius": 10},
+                {"my_color_id": 0},
+                {"my_color_id": True, "alert_radius": 10},
+                {"my_color_id": "red", "alert_radius": 10},
+                {
+                    "my_color_id": len(h3_save_parser.PLAYER_COLOR_NAMES),
+                    "alert_radius": 10,
+                },
+                {"my_color_id": 0, "alert_radius": True},
+                {"my_color_id": 0, "alert_radius": "10"},
+                {"my_color_id": 0, "alert_radius": -1},
+                {
+                    "my_color_id": 0,
+                    "alert_radius": h3_save_parser.MAX_ALERT_RADIUS + 1,
+                },
+            )
+
+            def check(base_url):
+                for payload in invalid_payloads:
+                    with self.subTest(payload=payload):
+                        with self.assertRaises(HTTPError) as raised:
+                            self._post_json(
+                                base_url,
+                                "/api/alert-settings",
+                                payload,
+                            )
+
+                        self.assertEqual(raised.exception.code, 400)
+                        self.assertEqual(config_path.read_bytes(), before)
+
+            self._with_server(check, app_state=app_state)
+
     def test_hero_skills_endpoint_returns_starting_state_and_recommendations(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

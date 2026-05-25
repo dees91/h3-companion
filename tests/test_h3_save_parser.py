@@ -908,7 +908,23 @@ class H3SaveParserContractTests(unittest.TestCase):
             config = h3_save_parser.load_config(config_path)
 
             self.assertEqual(config, h3_save_parser.BattleEstimatorConfig())
+            self.assertIsNone(config.my_color_id)
+            self.assertEqual(config.alert_radius, h3_save_parser.DEFAULT_ALERT_RADIUS)
             self.assertFalse(config_path.exists())
+
+    def test_config_alert_settings_load_defaults_and_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+
+            config = h3_save_parser.load_config(config_path)
+            h3_save_parser.save_config(config, config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertIsNone(config.my_color_id)
+        self.assertEqual(config.alert_radius, h3_save_parser.DEFAULT_ALERT_RADIUS)
+        self.assertNotIn("my_color_id", raw_config)
+        self.assertNotIn("alert_radius", raw_config)
 
     def test_set_config_autosave_dir_saves_and_loads_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1168,6 +1184,86 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertEqual(loaded.recent_heroes, ("Isra",))
         self.assertEqual(loaded.hidden_neutral_targets_by_map["map-key"], ("neutral:1",))
         self.assertEqual(loaded.hidden_hero_targets_by_map["other-map"], ("hero:9",))
+
+    def test_set_config_alert_settings_preserves_existing_config_sections(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    autosave_dir=Path(temp_dir) / "game",
+                    last_hero="Isra",
+                    recent_heroes=("Isra", "Marius"),
+                    hidden_neutral_targets_by_map={
+                        "map-key": ("neutral:1",),
+                    },
+                    hidden_hero_targets_by_map={
+                        "map-key": ("hero:512",),
+                    },
+                    manual_hero_current_skills_by_map={
+                        "map-key": {
+                            "hero:512": (
+                                hero_skill_recommender.CurrentSkill(
+                                    "necromancy",
+                                    "basic",
+                                ),
+                            ),
+                        },
+                    },
+                ),
+                config_path,
+            )
+
+            updated = h3_save_parser.set_config_alert_settings(2, 15, config_path)
+            loaded = h3_save_parser.load_config(config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(updated.my_color_id, 2)
+        self.assertEqual(updated.alert_radius, 15)
+        self.assertEqual(loaded.my_color_id, 2)
+        self.assertEqual(loaded.alert_radius, 15)
+        self.assertEqual(raw_config["my_color_id"], 2)
+        self.assertEqual(raw_config["alert_radius"], 15)
+        self.assertEqual(loaded.autosave_dir, Path(temp_dir) / "game")
+        self.assertEqual(loaded.last_hero, "Isra")
+        self.assertEqual(loaded.recent_heroes, ("Isra", "Marius"))
+        self.assertEqual(
+            loaded.hidden_neutral_targets_by_map["map-key"],
+            ("neutral:1",),
+        )
+        self.assertEqual(
+            loaded.hidden_hero_targets_by_map["map-key"],
+            ("hero:512",),
+        )
+        self.assertEqual(
+            loaded.manual_hero_current_skills_by_map["map-key"]["hero:512"],
+            (hero_skill_recommender.CurrentSkill("necromancy", "basic"),),
+        )
+
+    def test_set_config_alert_settings_can_clear_color_and_default_radius(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            h3_save_parser.save_config(
+                h3_save_parser.BattleEstimatorConfig(
+                    my_color_id=2,
+                    alert_radius=15,
+                ),
+                config_path,
+            )
+
+            updated = h3_save_parser.set_config_alert_settings(
+                None,
+                h3_save_parser.DEFAULT_ALERT_RADIUS,
+                config_path,
+            )
+            loaded = h3_save_parser.load_config(config_path)
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertIsNone(updated.my_color_id)
+        self.assertEqual(updated.alert_radius, h3_save_parser.DEFAULT_ALERT_RADIUS)
+        self.assertIsNone(loaded.my_color_id)
+        self.assertEqual(loaded.alert_radius, h3_save_parser.DEFAULT_ALERT_RADIUS)
+        self.assertNotIn("my_color_id", raw_config)
+        self.assertNotIn("alert_radius", raw_config)
 
     def test_config_manual_hero_current_skills_round_trip_and_clean_invalid(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1725,6 +1821,20 @@ class H3SaveParserContractTests(unittest.TestCase):
             ({"last_hero": []}, "must be a string"),
             ({"recent_heroes": "Isra"}, "must be a list"),
             ({"recent_heroes": ["Isra", 42]}, "recent_heroes[1] must be a string"),
+            ({"my_color_id": "red"}, "my_color_id must be an integer or null"),
+            ({"my_color_id": True}, "my_color_id must be an integer or null"),
+            ({"my_color_id": -1}, "my_color_id must be between"),
+            (
+                {"my_color_id": len(h3_save_parser.PLAYER_COLOR_NAMES)},
+                "my_color_id must be between",
+            ),
+            ({"alert_radius": "10"}, "alert_radius must be an integer"),
+            ({"alert_radius": True}, "alert_radius must be an integer"),
+            ({"alert_radius": -1}, "alert_radius must be between"),
+            (
+                {"alert_radius": h3_save_parser.MAX_ALERT_RADIUS + 1},
+                "alert_radius must be between",
+            ),
             (
                 {"hidden_neutral_targets_by_map": []},
                 "hidden_neutral_targets_by_map must be an object",
@@ -1761,6 +1871,45 @@ class H3SaveParserContractTests(unittest.TestCase):
 
                 self.assertEqual(raised.exception.path, config_path)
                 self.assertIn(expected_reason, raised.exception.reason)
+
+    def test_set_config_alert_settings_rejects_invalid_values_without_writing(self):
+        cases = (
+            (True, 10, "my_color_id must be an integer or null"),
+            ("red", 10, "my_color_id must be an integer or null"),
+            (-1, 10, "my_color_id must be between"),
+            (
+                len(h3_save_parser.PLAYER_COLOR_NAMES),
+                10,
+                "my_color_id must be between",
+            ),
+            (0, True, "alert_radius must be an integer"),
+            (0, "10", "alert_radius must be an integer"),
+            (0, -1, "alert_radius must be between"),
+            (
+                0,
+                h3_save_parser.MAX_ALERT_RADIUS + 1,
+                "alert_radius must be between",
+            ),
+        )
+        for my_color_id, alert_radius, expected_reason in cases:
+            with self.subTest(my_color_id=my_color_id, alert_radius=alert_radius):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    config_path = Path(temp_dir) / "config.json"
+                    h3_save_parser.save_config(
+                        h3_save_parser.BattleEstimatorConfig(last_hero="Isra"),
+                        config_path,
+                    )
+                    before = config_path.read_bytes()
+
+                    with self.assertRaises(h3_save_parser.ConfigError) as raised:
+                        h3_save_parser.set_config_alert_settings(
+                            my_color_id,
+                            alert_radius,
+                            config_path,
+                        )
+
+                    self.assertIn(expected_reason, raised.exception.reason)
+                    self.assertEqual(config_path.read_bytes(), before)
 
     def test_load_config_treats_null_and_blank_values_as_unset(self):
         with tempfile.TemporaryDirectory() as temp_dir:
