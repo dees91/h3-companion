@@ -1203,6 +1203,18 @@
     return singleLevelLaneGeometry(current, activeView.level);
   }
 
+  function mapWorldBounds(snapshot, view) {
+    const lanes = mapLaneGeometry(snapshot, view);
+    if (lanes.length === 0) {
+      return mapWorldSize(snapshot);
+    }
+    return lanes.reduce((bounds, lane) => ({
+      tileSize: lane.tileSize,
+      width: Math.max(bounds.width, lane.originWorld.x + lane.widthWorld),
+      height: Math.max(bounds.height, lane.originWorld.y + lane.heightWorld)
+    }), { tileSize: lanes[0].tileSize, width: 0, height: 0 });
+  }
+
   function positionForCanvasPointInView(point, snapshot, view) {
     const current = snapshot || mapView.snapshot;
     const activeView = view || mapView;
@@ -1232,7 +1244,7 @@
       return;
     }
     const canvasSize = syncCanvasSize();
-    const worldSize = mapWorldSize(snapshot);
+    const worldSize = mapWorldBounds(snapshot, mapView);
     const fitZoom = clamp(
       Math.min(
         canvasSize.width / worldSize.width,
@@ -1252,6 +1264,27 @@
     const current = snapshot || mapView.snapshot;
     const tileSize = tileSizeForMap((current && current.map) || {});
     mapView.level = normalizeLevelForSnapshot(mapView.level, current);
+    if (mapView.dualLevel && supportsDualLevelView(current)) {
+      mapView.markers = dualLevelLaneGeometry(current).flatMap((lane) => (
+        buildMarkerCache(
+          current,
+          tileSize,
+          lane.level,
+          mapView.showRemovedNeutrals,
+          mapView.showHiddenNeutrals,
+          mapView.targetFilter
+        ).map((marker) => ({
+          ...marker,
+          world: {
+            x: lane.originWorld.x + marker.world.x,
+            y: lane.originWorld.y + marker.world.y
+          },
+          laneIndex: lane.index,
+          laneLevel: lane.level
+        }))
+      ));
+      return;
+    }
     mapView.markers = buildMarkerCache(
       current,
       tileSize,
@@ -1323,6 +1356,17 @@
     }
     mapView.dualLevel = nextValue;
     syncDualLevelControl(mapView.snapshot);
+    mapView.hoveredMarkerId = null;
+    clearPortalRelationHover();
+    elements.canvas.classList.remove("has-marker-hover");
+    hideMapTooltip();
+    hideTargetContextMenu();
+    rebuildMarkerCache(mapView.snapshot);
+    if (!mapView.markers.some((marker) => marker.id === mapView.activeMarkerId)) {
+      mapView.activeMarkerId = null;
+      setTargetDetails(null);
+    }
+    fitMapToCanvas(mapView.snapshot);
     updateMapMetrics(mapView.snapshot);
     drawMap();
   }
@@ -1645,6 +1689,68 @@
     return true;
   }
 
+  function laneDisplayLabel(level) {
+    if (level === 0) {
+      return "Surface";
+    }
+    if (level === 1) {
+      return "Underground";
+    }
+    return `Level ${level}`;
+  }
+
+  function drawGridForLane(lane, width, height) {
+    const tileSize = lane.tileSize;
+    const topLeft = worldToScreenInLane({ x: 0, y: 0 }, lane, mapView);
+    const bottomRight = worldToScreenInLane(
+      { x: width * tileSize, y: height * tileSize },
+      lane,
+      mapView
+    );
+
+    canvasContext.fillStyle = "#f8fafc";
+    canvasContext.fillRect(
+      topLeft.x,
+      topLeft.y,
+      bottomRight.x - topLeft.x,
+      bottomRight.y - topLeft.y
+    );
+
+    if (mapView.showRouteOverlay) {
+      drawRouteOverlayForLane(mapView.snapshot, lane, width, height);
+    }
+
+    canvasContext.strokeStyle = "#d4dbe4";
+    canvasContext.lineWidth = 1;
+    canvasContext.beginPath();
+    for (let x = 0; x <= width; x += 1) {
+      const screen = worldToScreenInLane({ x: x * tileSize, y: 0 }, lane, mapView);
+      canvasContext.moveTo(screen.x, topLeft.y);
+      canvasContext.lineTo(screen.x, bottomRight.y);
+    }
+    for (let y = 0; y <= height; y += 1) {
+      const screen = worldToScreenInLane({ x: 0, y: y * tileSize }, lane, mapView);
+      canvasContext.moveTo(topLeft.x, screen.y);
+      canvasContext.lineTo(bottomRight.x, screen.y);
+    }
+    canvasContext.stroke();
+
+    if (mapView.dualLevel) {
+      const label = laneDisplayLabel(lane.level);
+      const labelWidth = Math.max(70, label.length * 7 + 16);
+      const labelX = topLeft.x + 8;
+      const labelY = topLeft.y + 8;
+      canvasContext.fillStyle = "rgba(255, 255, 255, 0.88)";
+      canvasContext.fillRect(labelX, labelY, labelWidth, 20);
+      canvasContext.strokeStyle = "#64748b";
+      canvasContext.lineWidth = 1;
+      canvasContext.strokeRect(labelX, labelY, labelWidth, 20);
+      canvasContext.fillStyle = "#111827";
+      canvasContext.font = "12px Arial, Helvetica, sans-serif";
+      canvasContext.fillText(label, labelX + 8, labelY + 14);
+    }
+  }
+
   function drawMap() {
     const canvasSize = syncCanvasSize();
     canvasContext.clearRect(0, 0, canvasSize.width, canvasSize.height);
@@ -1660,6 +1766,16 @@
     const width = Math.max(1, map.width || 1);
     const height = Math.max(1, map.height || width);
     const tileSize = worldSize.tileSize;
+
+    if (mapView.dualLevel && supportsDualLevelView(mapView.snapshot)) {
+      dualLevelLaneGeometry(mapView.snapshot).forEach((lane) => {
+        drawGridForLane(lane, width, height);
+      });
+      drawMarkers();
+      elements.zoom.textContent = `Zoom ${Math.round(mapView.zoom * 100)}%`;
+      return;
+    }
+
     const topLeft = worldToScreen({ x: 0, y: 0 }, mapView);
     const bottomRight = worldToScreen(
       { x: width * tileSize, y: height * tileSize },
@@ -1699,8 +1815,8 @@
     elements.zoom.textContent = `Zoom ${Math.round(mapView.zoom * 100)}%`;
   }
 
-  function drawRouteOverlay(snapshot, tileSize, width, height) {
-    const rows = routeRowsForLevel(snapshot, mapView.level);
+  function drawRouteOverlayForLane(snapshot, lane, width, height) {
+    const rows = routeRowsForLevel(snapshot, lane.level);
     if (rows.length === 0) {
       return;
     }
@@ -1715,9 +1831,14 @@
         if (!style) {
           continue;
         }
-        const topLeft = worldToScreen({ x: x * tileSize, y: y * tileSize }, mapView);
-        const bottomRight = worldToScreen(
-          { x: (x + 1) * tileSize, y: (y + 1) * tileSize },
+        const topLeft = worldToScreenInLane(
+          { x: x * lane.tileSize, y: y * lane.tileSize },
+          lane,
+          mapView
+        );
+        const bottomRight = worldToScreenInLane(
+          { x: (x + 1) * lane.tileSize, y: (y + 1) * lane.tileSize },
+          lane,
           mapView
         );
         canvasContext.fillStyle = style.fill;
@@ -1730,6 +1851,23 @@
       }
     }
     canvasContext.restore();
+  }
+
+  function drawRouteOverlay(snapshot, tileSize, width, height) {
+    drawRouteOverlayForLane(
+      snapshot,
+      {
+        level: mapView.level,
+        index: 0,
+        originWorld: { x: 0, y: 0 },
+        widthWorld: width * tileSize,
+        heightWorld: height * tileSize,
+        tileSize,
+        gapWorld: 0
+      },
+      width,
+      height
+    );
   }
 
   function pathStepPosition(step) {

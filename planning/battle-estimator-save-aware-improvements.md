@@ -612,7 +612,19 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for M05. Dual-level mode now fits the combined two-lane world
+  bounds, rebuilds marker cache for both levels, and draws Surface/Underground
+  lanes side by side with each lane's route layer, grid, label, and markers.
+  Marker positions keep their original `position.z` while using lane-shifted
+  canvas `world` coordinates plus `laneIndex`/`laneLevel` metadata. Single-level
+  rendering remains the default path, with the existing route overlay wrapper
+  preserved for active-level rendering. Frontend tests cover per-level route
+  colors, lane-shifted markers, original marker positions, lane-1 hit-test
+  priority, lane-1 draw order, dual toggle off cache reset, unsupported map
+  handling, and the headless canvas dual-lane render check. Verified with
+  `node --check tools/battle_estimator_gui/app.js`,
+  `python3 -m unittest tests.test_battle_estimator_gui`,
+  `python3 -m unittest`, and `git diff --check`.
 
 ---
 
@@ -1656,8 +1668,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | M02 | Subterranean Gate Click Level Toggle | done | -- | priority-map-ux | Parallel | S | GUI | `tools/battle_estimator_gui/app.js`, GUI tests |
 | M03 | Cross-Level Ghost Portal Destinations | done | M02 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M04 | Dual-Level View State And Geometry | done | -- | priority-map-ux | Main | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
-| M05 | Render Dual-Level Map And Markers | todo | M04 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
-| M06 | Dual-Level Interactions And Portal Links | blocked | M03, M05 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
+| M05 | Render Dual-Level Map And Markers | done | M04 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
+| M06 | Dual-Level Interactions And Portal Links | todo | M03, M05 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
 | M07 | Map UX Follow-Up Verification | blocked | M01, M02, M03, M04, M05, M06 | priority-map-ux | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, planning doc |
 | T01 | Collect Local Save Evidence | todo | -- | research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T02 | Document Save Ownership Hypothesis | blocked | T01 | research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |

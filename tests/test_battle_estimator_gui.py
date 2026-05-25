@@ -1720,6 +1720,7 @@ assert.strictEqual(helpers.supportsDualLevelView({{ map: {{ width: 4, height: 4,
 const singleLanes = helpers.mapLaneGeometry(markerSnapshot, renderedView);
 assert.strictEqual(singleLanes.length, 1);
 assert.strictEqual(singleLanes[0].level, 0);
+drawOperations.length = 0;
 elements["dual-level-toggle"].checked = true;
 elements["dual-level-toggle"].dispatch("change", {{}});
 const dualView = helpers.currentMapViewForTest();
@@ -1733,6 +1734,34 @@ assert.deepStrictEqual(dualLanes.map((lane) => lane.level), [0, 1]);
 assert.strictEqual(dualLanes[0].tileSize, dualLanes[1].tileSize);
 assert.strictEqual(dualLanes[1].originWorld.x, dualLanes[0].widthWorld + dualLanes[0].gapWorld);
 assert.strictEqual(dualLanes[1].originWorld.y, 0);
+assert.ok(drawOperations.some((operation) => (
+  operation.op === "fillText" && operation.text === "Surface"
+)));
+assert.ok(drawOperations.some((operation) => (
+  operation.op === "fillText" && operation.text === "Underground"
+)));
+const surfaceOriginRouteFills = routeFillOpsAt(helpers.worldToScreenInLane(
+  {{ x: dualLanes[0].tileSize * 0.5, y: dualLanes[0].tileSize * 0.5 }},
+  dualLanes[0],
+  dualView
+));
+assert.ok(surfaceOriginRouteFills.some((operation) => operation.fillStyle === "#d9ead5"));
+assert.ok(!surfaceOriginRouteFills.some((operation) => operation.fillStyle === "#87919e"));
+const undergroundOriginRouteFills = routeFillOpsAt(helpers.worldToScreenInLane(
+  {{ x: dualLanes[1].tileSize * 0.5, y: dualLanes[1].tileSize * 0.5 }},
+  dualLanes[1],
+  dualView
+));
+assert.ok(undergroundOriginRouteFills.some((operation) => operation.fillStyle === "#87919e"));
+assert.ok(!undergroundOriginRouteFills.some((operation) => operation.fillStyle === "#d9ead5"));
+const dualMarkerById = new Map(dualView.markers.map((marker) => [marker.id, marker]));
+assert.strictEqual(dualMarkerById.get("hero:0").laneLevel, 0);
+assert.strictEqual(dualMarkerById.get("hero:1").laneLevel, 1);
+assert.strictEqual(dualMarkerById.get("neutral:1").position.z, 1);
+assert.strictEqual(
+  dualMarkerById.get("neutral:1").world.x,
+  dualLanes[1].originWorld.x + ((markerSnapshot.neutral_targets[2].position.x + 0.5) * dualLanes[1].tileSize)
+);
 const laneOneScreen = helpers.worldToScreenInLane(
   {{ x: dualLanes[1].tileSize * 2.5, y: dualLanes[1].tileSize * 1.5 }},
   dualLanes[1],
@@ -1759,11 +1788,125 @@ assert.deepStrictEqual(
   helpers.tilePositionForCanvasPoint(mapTileScreenPoint(2, 1, dualView), markerSnapshot, dualView),
   {{ x: 2, y: 1, z: 0 }}
 );
+const dualOverlapSnapshot = {{
+  map: {{ width: 4, height: 4, levels: 2 }},
+  route_layers: [["LLLL", "LLLL", "LLLL", "LLLL"], ["LLLL", "LLLL", "LLLL", "LLLL"]],
+  selected_hero_id: "hero:lane-overlap",
+  heroes: [
+    {{
+      id: "hero:lane-overlap",
+      name: "Lane Hero",
+      position: {{ x: 1, y: 1, z: 1 }},
+      owner_color_id: 0,
+      owner_color_name: "red",
+      team_id: 0,
+      total_creatures: 1,
+      ai_value: 1,
+      army_summary: "1x Pikeman"
+    }}
+  ],
+  neutral_targets: [
+    {{
+      id: "neutral:lane-overlap",
+      position: {{ x: 1, y: 1, z: 1 }},
+      count: 4,
+      creature_name: "Imp",
+      h3m_subid: 42,
+      estimator_creature_id: 42,
+      removed: false
+    }}
+  ],
+  town_targets: [
+    {{
+      id: "town:lane-overlap",
+      object_index: 70,
+      position: {{ x: 1, y: 1, z: 1 }},
+      object_id: 98,
+      h3m_subid: 3,
+      faction_subid: 3,
+      initial_owner_color_name: "red",
+      custom_name: "Lane Town"
+    }}
+  ],
+  portal_targets: [
+    {{
+      id: "portal:lane-overlap",
+      object_index: 71,
+      position: {{ x: 1, y: 1, z: 1 }},
+      portal_type: "monolith_two_way",
+      role: "both",
+      channel_key: "monolith-two-way:71"
+    }}
+  ],
+  portal_edges: []
+}};
+helpers.renderSnapshot(dualOverlapSnapshot, {{ preserveView: false }});
+drawOperations.length = 0;
+elements["dual-level-toggle"].checked = true;
+elements["dual-level-toggle"].dispatch("change", {{}});
+const dualOverlapView = helpers.currentMapViewForTest();
+const dualOverlapLanes = helpers.mapLaneGeometry(dualOverlapSnapshot, dualOverlapView);
+const laneOneOverlapPoint = helpers.worldToScreenInLane(
+  {{ x: dualOverlapLanes[1].tileSize * 1.5, y: dualOverlapLanes[1].tileSize * 1.5 }},
+  dualOverlapLanes[1],
+  dualOverlapView
+);
+assert.strictEqual(
+  helpers.hitTestMarker(dualOverlapView.markers, laneOneOverlapPoint, dualOverlapView).id,
+  "hero:lane-overlap"
+);
+assert.strictEqual(
+  helpers.hitTestMarker(
+    dualOverlapView.markers.filter((marker) => marker.type !== "hero"),
+    laneOneOverlapPoint,
+    dualOverlapView
+  ).id,
+  "portal:lane-overlap"
+);
+assert.strictEqual(
+  helpers.hitTestMarker(
+    dualOverlapView.markers.filter((marker) => marker.type !== "hero" && marker.type !== "portal"),
+    laneOneOverlapPoint,
+    dualOverlapView
+  ).id,
+  "town:lane-overlap"
+);
+assert.strictEqual(
+  helpers.hitTestMarker(
+    dualOverlapView.markers.filter((marker) => marker.type === "neutral"),
+    laneOneOverlapPoint,
+    dualOverlapView
+  ).id,
+  "neutral:lane-overlap"
+);
+const dualLaneNeutralDrawIndex = drawOperations.findIndex((operation) => (
+  operation.op === "fill" && operation.fillStyle === "#1f2937" && operation.arc
+));
+const dualLaneTownDrawIndex = drawOperations.findIndex((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#e11d2e"
+));
+const dualLanePortalDrawIndex = drawOperations.findIndex((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#7c3aed"
+));
+const dualLaneHeroDrawIndex = drawOperations.findIndex((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#f5c542"
+));
+assert.ok(dualLaneNeutralDrawIndex >= 0);
+assert.ok(dualLaneTownDrawIndex >= 0);
+assert.ok(dualLanePortalDrawIndex >= 0);
+assert.ok(dualLaneHeroDrawIndex >= 0);
+assert.ok(dualLaneNeutralDrawIndex < dualLaneTownDrawIndex);
+assert.ok(dualLaneTownDrawIndex < dualLanePortalDrawIndex);
+assert.ok(dualLanePortalDrawIndex < dualLaneHeroDrawIndex);
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+elements["dual-level-toggle"].checked = true;
+elements["dual-level-toggle"].dispatch("change", {{}});
 elements["dual-level-toggle"].checked = false;
 elements["dual-level-toggle"].dispatch("change", {{}});
 assert.strictEqual(helpers.currentMapViewForTest().dualLevel, false);
 assert.strictEqual(elements["dual-level-toggle"].checked, false);
 assert.ok(elements["map-summary"].textContent.includes("Level 0"));
+assert.ok(!helpers.currentMapViewForTest().markers.some((marker) => marker.id === "hero:1"));
 elements["dual-level-toggle"].checked = true;
 elements["dual-level-toggle"].dispatch("change", {{}});
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: true }});
@@ -1946,6 +2089,16 @@ function heroSkillRequestsSince(startIndex, path) {{
 }}
 function mapTileScreenPoint(x, y, view) {{
   return helpers.worldToScreen({{ x: (x + 0.5) * 28, y: (y + 0.5) * 28 }}, view);
+}}
+function routeFillOpsAt(point) {{
+  return drawOperations.filter((operation) => (
+    operation.op === "fillRect"
+    && routeFillStyles.has(operation.fillStyle)
+    && point.x >= operation.x
+    && point.x <= operation.x + operation.width
+    && point.y >= operation.y
+    && point.y <= operation.y + operation.height
+  ));
 }}
 function symbolLineOpsNear(point) {{
   return drawOperations.filter((operation) => (
