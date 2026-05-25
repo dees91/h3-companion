@@ -209,6 +209,61 @@ h3 {
   min-width: 0;
 }
 
+.alert-settings-section {
+  display: grid;
+  gap: 7px;
+}
+
+.alert-settings-heading {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.alert-settings-heading h3 {
+  margin-bottom: 0;
+}
+
+.alert-settings-status {
+  min-width: 0;
+  text-align: right;
+  white-space: normal;
+}
+
+.alert-settings-section .field-label {
+  margin-bottom: -3px;
+}
+
+.color-segmented-control {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 4px;
+  width: 100%;
+}
+
+.color-segmented-control button,
+.color-segmented-control button:first-child,
+.color-segmented-control button:last-child {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  border-radius: 4px;
+}
+
+.color-segmented-control button + button {
+  margin-left: 0;
+}
+
+.color-segmented-control .color-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .detected-heroes-section {
   display: flex;
   flex: 1 1 auto;

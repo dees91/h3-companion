@@ -62,6 +62,16 @@
           <h3>Recent</h3>
           <div id="recent-heroes" class="chip-row empty-state">None</div>
         </section>
+        <section class="panel-section alert-settings-section" aria-label="Alert settings">
+          <div class="alert-settings-heading">
+            <h3>Alerts</h3>
+            <p id="alert-settings-status" class="panel-subtitle alert-settings-status" aria-live="polite">Choose your color</p>
+          </div>
+          <div class="field-label">My color</div>
+          <div id="my-color-control" class="segmented-control color-segmented-control" role="group" aria-label="My color"></div>
+          <label class="field-label" for="alert-radius">Alert radius</label>
+          <input id="alert-radius" type="number" value="10" min="0" max="200" disabled>
+        </section>
         <section class="panel-section detected-heroes-section" aria-label="Detected heroes">
           <h3>Detected</h3>
           <div id="hero-list" class="list-stack">

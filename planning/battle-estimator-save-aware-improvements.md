@@ -1146,7 +1146,18 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T09. Added compact left-panel alert configuration
+  controls for `My color` and `Alert radius`. The color control renders only
+  enabled players from the current map, with owner swatches and a `None`
+  option, while preserving a clear status when the saved color is not active on
+  the current map. Alert radius is validated locally as an integer `0..200`,
+  stored independently from radius scan, and persisted through
+  `POST /api/alert-settings`; successful saves reload `/api/state` so the
+  snapshot contract remains authoritative. Controls are reset on snapshot
+  errors and disabled while state or alert-settings requests are in flight.
+  Added frontend tests for enabled-player filtering, disabled-player omission,
+  stale-load protection, color/radius/None persistence, invalid radius
+  handling, and scan-radius isolation.
 
 ---
 
@@ -1786,7 +1797,7 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T06 | Persist My Color And Alert Radius | done | -- | backend | Parallel | S | Config | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
 | T07 | Build Threat Alert Service | done | T05, T06 | backend | Main | M | Core/API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
 | T08 | Expose Snapshot Contract | done | T07 | backend | Main | S | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
-| T09 | Render My Color And Alert Radius Controls | todo | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
+| T09 | Render My Color And Alert Radius Controls | done | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | T10 | Render Alerts Sidebar Section | todo | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | T11 | Center And Activate Alert Target | blocked | T10 | frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
 | T12 | Docs And Verification Pass | blocked | T08, T09, T10, T11 | quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md` |

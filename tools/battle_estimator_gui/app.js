@@ -18,6 +18,9 @@
     heroSearch: document.getElementById("hero-search"),
     heroCount: document.getElementById("hero-count"),
     recentHeroes: document.getElementById("recent-heroes"),
+    myColorControl: document.getElementById("my-color-control"),
+    alertRadius: document.getElementById("alert-radius"),
+    alertSettingsStatus: document.getElementById("alert-settings-status"),
     heroList: document.getElementById("hero-list"),
     mapSummary: document.getElementById("map-summary"),
     objectCount: document.getElementById("object-count"),
@@ -157,9 +160,11 @@
     saveModeRequestId: 0,
     gameFolderListRequestId: 0,
     gameFolderRequestId: 0,
+    alertSettingsRequestId: 0,
     gameFolderInFlight: false,
     hiddenTargetInFlight: false,
     showHiddenInFlight: false,
+    alertSettingsInFlight: false,
     saveModeInFlight: false,
     autoRefreshRunning: false,
     autoRefreshTimer: null
@@ -184,6 +189,19 @@
   const SCAN_SORT_MODE_BY_ID = new Map(
     SCAN_SORT_MODES.map((mode) => [mode.id, mode])
   );
+  const DEFAULT_ALERT_RADIUS = 10;
+  const MIN_ALERT_RADIUS = 0;
+  const MAX_ALERT_RADIUS = 200;
+  const PLAYER_COLOR_NAMES = [
+    "red",
+    "blue",
+    "tan",
+    "green",
+    "orange",
+    "purple",
+    "teal",
+    "pink"
+  ];
   const PLAYER_COLOR_STYLES = {
     red: { fill: "#e11d2e", stroke: "#8f1220" },
     blue: { fill: "#2d6cdf", stroke: "#143a75" },
@@ -883,6 +901,187 @@
     swatch.style.borderColor = style.stroke;
     swatch.title = colorName ? titleCase(colorName) : "No owner";
     parent.appendChild(swatch);
+  }
+
+  function playerColorNameForId(colorId) {
+    return PLAYER_COLOR_NAMES[colorId] || null;
+  }
+
+  function snapshotAlertSettings(snapshot) {
+    const settings = snapshot && snapshot.alert_settings ? snapshot.alert_settings : {};
+    const radius = Number(settings.alert_radius);
+    return {
+      myColorId: typeof settings.my_color_id === "number" ? settings.my_color_id : null,
+      alertRadius: Number.isInteger(radius) ? radius : DEFAULT_ALERT_RADIUS
+    };
+  }
+
+  function activeMapPlayers(snapshot) {
+    return ((snapshot && snapshot.players) || [])
+      .filter((player) => player && player.enabled === true)
+      .slice()
+      .sort((left, right) => (
+        Number(left.player_index) - Number(right.player_index)
+      ));
+  }
+
+  function activePlayerColorIds(snapshot) {
+    return new Set(
+      activeMapPlayers(snapshot)
+        .map((player) => player.player_index)
+        .filter((colorId) => typeof colorId === "number")
+    );
+  }
+
+  function parseAlertRadiusInput() {
+    const rawValue = String(elements.alertRadius.value || "").trim();
+    if (!/^\d+$/.test(rawValue)) {
+      return null;
+    }
+    const radius = Number(rawValue);
+    if (!Number.isInteger(radius) || radius < MIN_ALERT_RADIUS || radius > MAX_ALERT_RADIUS) {
+      return null;
+    }
+    return radius;
+  }
+
+  function setAlertSettingsStatus(message, className) {
+    elements.alertSettingsStatus.textContent = message || "";
+    elements.alertSettingsStatus.title = message || "";
+    elements.alertSettingsStatus.className = [
+      "panel-subtitle",
+      "alert-settings-status",
+      className || ""
+    ].filter(Boolean).join(" ");
+  }
+
+  function alertSettingsStatusText(snapshot) {
+    if (!snapshot) {
+      return "No snapshot";
+    }
+    const players = activeMapPlayers(snapshot);
+    if (players.length === 0) {
+      return "No active colors";
+    }
+    const settings = snapshotAlertSettings(snapshot);
+    if (settings.myColorId === null) {
+      return "Choose your color";
+    }
+    if (!activePlayerColorIds(snapshot).has(settings.myColorId)) {
+      return "Selected color is not active on this map";
+    }
+    return "Configured";
+  }
+
+  function alertSettingsDisabled(snapshot) {
+    return !snapshot || stateRequests.loading || stateRequests.alertSettingsInFlight;
+  }
+
+  function renderMyColorControl(snapshot) {
+    clearNode(elements.myColorControl);
+    const settings = snapshotAlertSettings(snapshot);
+    const disabled = alertSettingsDisabled(snapshot);
+
+    const noneButton = document.createElement("button");
+    noneButton.type = "button";
+    noneButton.dataset.colorId = "";
+    noneButton.textContent = "None";
+    noneButton.className = settings.myColorId === null ? "active" : "";
+    noneButton.disabled = disabled;
+    noneButton.setAttribute("aria-pressed", settings.myColorId === null ? "true" : "false");
+    noneButton.addEventListener("click", () => saveAlertSettings(null));
+    elements.myColorControl.appendChild(noneButton);
+
+    activeMapPlayers(snapshot).forEach((player) => {
+      const colorId = player.player_index;
+      const colorName = player.color_name || playerColorNameForId(colorId);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.colorId = String(colorId);
+      button.className = colorId === settings.myColorId ? "active" : "";
+      button.disabled = disabled;
+      button.setAttribute("aria-pressed", colorId === settings.myColorId ? "true" : "false");
+      appendColorSwatch(button, colorName);
+
+      const label = document.createElement("span");
+      label.className = "color-label";
+      label.textContent = titleCase(colorName || `Player ${colorId + 1}`);
+      button.appendChild(label);
+      button.addEventListener("click", () => saveAlertSettings(colorId));
+      elements.myColorControl.appendChild(button);
+    });
+  }
+
+  function syncAlertSettingsControls(snapshot, statusMessage, statusClassName) {
+    const settings = snapshotAlertSettings(snapshot);
+    renderMyColorControl(snapshot);
+    elements.alertRadius.value = String(settings.alertRadius);
+    elements.alertRadius.disabled = alertSettingsDisabled(snapshot);
+    setAlertSettingsStatus(
+      statusMessage || alertSettingsStatusText(snapshot),
+      statusClassName
+    );
+  }
+
+  function saveAlertSettings(myColorId, alertRadius) {
+    if (
+      !mapView.snapshot
+      || stateRequests.loading
+      || stateRequests.alertSettingsInFlight
+    ) {
+      return Promise.resolve();
+    }
+    const radius = (
+      Number.isInteger(alertRadius)
+      && alertRadius >= MIN_ALERT_RADIUS
+      && alertRadius <= MAX_ALERT_RADIUS
+    )
+      ? alertRadius
+      : parseAlertRadiusInput();
+    if (radius === null) {
+      syncAlertSettingsControls(
+        mapView.snapshot,
+        `Radius must be an integer ${MIN_ALERT_RADIUS}-${MAX_ALERT_RADIUS}.`,
+        "error-text"
+      );
+      return Promise.resolve();
+    }
+
+    const requestId = stateRequests.alertSettingsRequestId + 1;
+    stateRequests.alertSettingsRequestId = requestId;
+    stateRequests.alertSettingsInFlight = true;
+    syncAlertSettingsControls(mapView.snapshot, "Saving");
+
+    let finalStatus = "Saved";
+    let finalStatusClass = "";
+    return postJson(
+      "/api/alert-settings",
+      {
+        my_color_id: myColorId,
+        alert_radius: radius
+      },
+      "alert settings request failed"
+    )
+      .then(() => {
+        if (requestId !== stateRequests.alertSettingsRequestId) {
+          return;
+        }
+        return loadState();
+      })
+      .catch((error) => {
+        if (requestId !== stateRequests.alertSettingsRequestId) {
+          return;
+        }
+        finalStatus = `Save failed: ${error.message}`;
+        finalStatusClass = "error-text";
+      })
+      .finally(() => {
+        if (requestId !== stateRequests.alertSettingsRequestId) {
+          return;
+        }
+        stateRequests.alertSettingsInFlight = false;
+        syncAlertSettingsControls(mapView.snapshot, finalStatus, finalStatusClass);
+      });
   }
 
   function markerTooltipText(marker) {
@@ -4851,6 +5050,7 @@
     elements.showHiddenToggle.disabled = false;
     elements.portalLinksToggle.checked = mapView.showPortalLinks;
     elements.portalLinksToggle.disabled = false;
+    syncAlertSettingsControls(snapshot);
     rebuildMarkerCache(snapshot);
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
@@ -4913,6 +5113,8 @@
     elements.showHiddenToggle.disabled = true;
     elements.portalLinksToggle.checked = mapView.showPortalLinks;
     elements.portalLinksToggle.disabled = true;
+    stateRequests.alertSettingsInFlight = false;
+    syncAlertSettingsControls(null);
     mapView.pathMode = false;
     syncDualLevelControl(null);
     updatePathModeControl();
@@ -4939,6 +5141,7 @@
     clearScanResults("No scan results.");
     setText(elements.refresh, "Loading");
     elements.refreshButton.disabled = true;
+    syncAlertSettingsControls(mapView.snapshot, "Loading");
     syncSaveControls(mapView.snapshot);
     syncGameFolderControls();
 
@@ -4960,6 +5163,7 @@
           elements.refreshButton.disabled = false;
           syncSaveControls(mapView.snapshot);
           syncGameFolderControls();
+          syncAlertSettingsControls(mapView.snapshot);
         }
       });
   }
@@ -5129,6 +5333,11 @@
 
   elements.scanRadius.addEventListener("input", () => {
     updateScanControls();
+  });
+
+  elements.alertRadius.addEventListener("change", () => {
+    const settings = snapshotAlertSettings(mapView.snapshot);
+    saveAlertSettings(settings.myColorId, parseAlertRadiusInput());
   });
 
   elements.canvas.addEventListener("pointerdown", (event) => {
@@ -5307,6 +5516,7 @@
     rankedMapHeroes,
     recentHeroChipState,
     renderSnapshot,
+    loadState,
     resolveSelectedHeroId,
     routeRowsForLevel,
     routeStateForChar,
@@ -5385,6 +5595,7 @@
   updatePathModeControl();
   renderTargetFilterControl();
   renderScanSortControl();
+  syncAlertSettingsControls(null);
   syncHeroRankingControls();
   syncHeroSkillControls();
   elements.targetContextMenu.addEventListener("click", (event) => {

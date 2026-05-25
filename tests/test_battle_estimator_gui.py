@@ -233,6 +233,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             '"/api/path-route"',
             '"/api/hidden-target"',
             '"/api/show-hidden"',
+            '"/api/alert-settings"',
             '"/api/saves"',
             '"/api/save-mode"',
             '"/api/game-folders"',
@@ -258,10 +259,15 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "heroRankingButton",
             "heroRankingDialog",
             "renderHeroRanking",
+            "loadState",
             "gameFolderPath",
             "gameFolderInFlight",
             "showFollowLatestDialog",
             "showHiddenToggle",
+            "myColorControl",
+            "alertRadius",
+            "alertSettingsStatus",
+            "syncAlertSettingsControls",
             "routeOverlayToggle",
             "portalLinksToggle",
             "targetFilterControl",
@@ -345,6 +351,11 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="use-game-folder-button"',
             'id="hero-search"',
             'id="recent-heroes"',
+            'id="my-color-control"',
+            'id="alert-radius"',
+            'id="alert-settings-status"',
+            "My color",
+            "Alert radius",
             'class="panel-section detected-heroes-section"',
             'id="hero-list"',
             'id="save-picker"',
@@ -433,6 +444,9 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "width: 100%;",
             "height: calc(100vh - 73px);",
             ".detected-heroes-section",
+            ".alert-settings-section",
+            ".alert-settings-status",
+            ".color-segmented-control",
             "align-content: start;",
             "align-items: start;",
             "flex: 1 1 auto;",
@@ -696,8 +710,23 @@ const snapshot = {{
   portal_targets: [],
   portal_edges: [],
   recent_heroes: [],
-  selected_hero_id: null
+  selected_hero_id: null,
+  players: [
+    {{ player_index: 0, color_name: "red", enabled: true, team_id: null }},
+    {{ player_index: 1, color_name: "blue", enabled: false, team_id: null }},
+    {{ player_index: 2, color_name: "tan", enabled: true, team_id: null }}
+  ],
+  alert_settings: {{
+    my_color_id: null,
+    my_color_name: null,
+    my_team_id: null,
+    alert_radius: 10
+  }},
+  castle_alerts_status: "unconfigured",
+  castle_alerts_status_detail: null,
+  castle_alerts: []
 }};
+let serverSnapshot = JSON.parse(JSON.stringify(snapshot));
 let fetchCalls = 0;
 const fetchRequests = [];
 let deferNextScanResponse = false;
@@ -797,10 +826,14 @@ function heroNameForId(heroId) {{
   }}
   return heroId;
 }}
+const playerColorNames = ["red", "blue", "tan", "green", "orange", "purple", "teal", "pink"];
+function colorNameForId(colorId) {{
+  return typeof colorId === "number" ? playerColorNames[colorId] || null : null;
+}}
 global.fetch = (path, options = {{}}) => {{
   fetchCalls += 1;
   fetchRequests.push({{ path, options }});
-  let payload = snapshot;
+  let payload = JSON.parse(JSON.stringify(serverSnapshot));
   let responseOk = true;
   let responseStatus = 200;
   let deferResponse = false;
@@ -812,6 +845,22 @@ global.fetch = (path, options = {{}}) => {{
     payload = {{
       selected_hero_id: requestPayload.hero_id,
       recent_heroes: [heroNameForId(requestPayload.hero_id), "Isra"]
+    }};
+  }} else if (path === "/api/alert-settings") {{
+    const requestPayload = JSON.parse(options.body || "{{}}");
+    serverSnapshot.alert_settings = {{
+      my_color_id: requestPayload.my_color_id,
+      my_color_name: colorNameForId(requestPayload.my_color_id),
+      my_team_id: null,
+      alert_radius: requestPayload.alert_radius
+    }};
+    serverSnapshot.castle_alerts_status = requestPayload.my_color_id === null
+      ? "unconfigured"
+      : "no_owned_towns";
+    payload = {{
+      my_color_id: requestPayload.my_color_id,
+      my_color_name: colorNameForId(requestPayload.my_color_id),
+      alert_radius: requestPayload.alert_radius
     }};
   }} else if (path === "/api/hidden-target") {{
     const requestPayload = JSON.parse(options.body || "{{}}");
@@ -1008,6 +1057,130 @@ async function flushPromises() {{
   }}
 }}
 await flushPromises();
+const myColorControl = elements["my-color-control"];
+const alertRadiusInput = elements["alert-radius"];
+const alertSettingsStatus = elements["alert-settings-status"];
+assert.deepStrictEqual(
+  myColorControl.children.map((button) => button.dataset.colorId),
+  ["", "0", "2"]
+);
+assert.ok(!myColorControl.children.some((button) => button.dataset.colorId === "1"));
+assert.ok(myColorControl.children[0].className.includes("active"));
+assert.strictEqual(alertRadiusInput.value, "10");
+assert.strictEqual(alertRadiusInput.disabled, false);
+const scanRadiusValueBeforeAlertSettings = elements["scan-radius"].value;
+assert.strictEqual(alertSettingsStatus.textContent, "Choose your color");
+const scanRequestCountBeforeAlertSettings = fetchRequests
+  .filter((request) => request.path === "/api/scan-radius")
+  .length;
+const tanButton = myColorControl.children.find((button) => button.dataset.colorId === "2");
+assert.strictEqual(tanButton.disabled, false);
+let previousFetch = global.fetch;
+const pendingStateResponses = [];
+global.fetch = (path, options = {{}}) => {{
+  if (path === "/api/state") {{
+    fetchCalls += 1;
+    fetchRequests.push({{ path, options }});
+    return new Promise((resolve) => {{
+      pendingStateResponses.push(() => resolve({{
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(JSON.parse(JSON.stringify(serverSnapshot)))
+      }}));
+    }});
+  }}
+  return previousFetch(path, options);
+}};
+const pendingLoad = helpers.loadState();
+await flushPromises();
+assert.strictEqual(alertRadiusInput.disabled, true);
+assert.strictEqual(myColorControl.children.find((button) => button.dataset.colorId === "2").disabled, true);
+const alertRequestCountDuringLoading = fetchRequests
+  .filter((request) => request.path === "/api/alert-settings")
+  .length;
+await Promise.all(tanButton.dispatch("click"));
+await flushPromises();
+assert.strictEqual(
+  fetchRequests.filter((request) => request.path === "/api/alert-settings").length,
+  alertRequestCountDuringLoading
+);
+pendingStateResponses.shift()();
+await pendingLoad;
+await flushPromises();
+global.fetch = previousFetch;
+assert.strictEqual(alertRadiusInput.disabled, false);
+await Promise.all(tanButton.dispatch("click"));
+await flushPromises();
+let alertSettingsRequests = fetchRequests
+  .filter((request) => request.path === "/api/alert-settings");
+const colorRequest = alertSettingsRequests[alertSettingsRequests.length - 1];
+assert.deepStrictEqual(JSON.parse(colorRequest.options.body), {{
+  my_color_id: 2,
+  alert_radius: 10
+}});
+assert.strictEqual(serverSnapshot.alert_settings.my_color_id, 2);
+assert.strictEqual(helpers.currentMapViewForTest().snapshot.alert_settings.my_color_id, 2);
+assert.strictEqual(alertRadiusInput.value, "10");
+assert.strictEqual(elements["scan-radius"].value, scanRadiusValueBeforeAlertSettings);
+assert.ok(
+  myColorControl.children
+    .find((button) => button.dataset.colorId === "2")
+    .className.includes("active")
+);
+alertRadiusInput.value = "15";
+await Promise.all(alertRadiusInput.dispatch("change"));
+await flushPromises();
+alertSettingsRequests = fetchRequests
+  .filter((request) => request.path === "/api/alert-settings");
+const radiusRequest = alertSettingsRequests[alertSettingsRequests.length - 1];
+assert.deepStrictEqual(JSON.parse(radiusRequest.options.body), {{
+  my_color_id: 2,
+  alert_radius: 15
+}});
+assert.strictEqual(serverSnapshot.alert_settings.alert_radius, 15);
+assert.strictEqual(helpers.currentMapViewForTest().snapshot.alert_settings.alert_radius, 15);
+assert.strictEqual(elements["scan-radius"].value, scanRadiusValueBeforeAlertSettings);
+const noneButton = myColorControl.children.find((button) => button.dataset.colorId === "");
+await Promise.all(noneButton.dispatch("click"));
+await flushPromises();
+alertSettingsRequests = fetchRequests
+  .filter((request) => request.path === "/api/alert-settings");
+const noneRequest = alertSettingsRequests[alertSettingsRequests.length - 1];
+assert.deepStrictEqual(JSON.parse(noneRequest.options.body), {{
+  my_color_id: null,
+  alert_radius: 15
+}});
+assert.strictEqual(serverSnapshot.alert_settings.my_color_id, null);
+assert.ok(myColorControl.children[0].className.includes("active"));
+const alertRequestCountBeforeInvalid = fetchRequests
+  .filter((request) => request.path === "/api/alert-settings")
+  .length;
+alertRadiusInput.value = "201";
+await Promise.all(alertRadiusInput.dispatch("change"));
+await flushPromises();
+assert.strictEqual(
+  fetchRequests.filter((request) => request.path === "/api/alert-settings").length,
+  alertRequestCountBeforeInvalid
+);
+assert.strictEqual(alertRadiusInput.value, "15");
+assert.ok(alertSettingsStatus.textContent.includes("Radius must be an integer"));
+assert.strictEqual(
+  fetchRequests.filter((request) => request.path === "/api/scan-radius").length,
+  scanRequestCountBeforeAlertSettings
+);
+const inactiveColorSnapshot = JSON.parse(JSON.stringify(snapshot));
+inactiveColorSnapshot.alert_settings = {{
+  my_color_id: 4,
+  my_color_name: "orange",
+  my_team_id: null,
+  alert_radius: 15
+}};
+helpers.renderSnapshot(inactiveColorSnapshot);
+assert.strictEqual(
+  alertSettingsStatus.textContent,
+  "Selected color is not active on this map"
+);
+assert.ok(!myColorControl.children.some((button) => button.className.includes("active")));
 const markerSnapshot = {{
   map: {{ width: 4, height: 4, levels: 2 }},
   route_layers: [
