@@ -7,6 +7,12 @@
 > save-derived current town ownership, defensive alerts, and save-derived hero
 > combat context for stronger battle estimates.
 >
+> It also keeps a short priority map-UX follow-up queue at the beginning of the
+> task list. Those tasks build on the completed portal-readability work in
+> [Map Improvements](./battle-estimator-map-improvements.md) and should be
+> handled before the longer save-research workstreams if the user asks for the
+> next map usability pass.
+>
 > **Related**:
 > [Autosave Brief](./battle-estimator-autosave-brief.md),
 > [Phase 1 Autosave MVP Tasks](./phase-1-battle-estimator-autosave-mvp-tasks.md),
@@ -59,6 +65,13 @@ combat skills can also be parsed, the estimator should apply passive damage
 modifiers such as Offense, Armorer, and Archery. The estimator must never use
 VCMI starting skills or manual state as a silent fallback for combat math.
 
+The immediate map UX follow-up should make two-level portal navigation and map
+readability faster during play: subterranean gates should be easy to traverse
+visually, neutral monster markers should stop obscuring more important markers,
+cross-level portal destinations should be visible as ghost context, and an
+optional side-by-side level view should let the user inspect surface and
+underground together.
+
 ## Product Decisions
 
 - Add a persistent `My color` setting in the left hero panel.
@@ -92,6 +105,22 @@ VCMI starting skills or manual state as a silent fallback for combat math.
 - Hero combat context should improve both selected-hero-vs-neutral estimates
   and hero-vs-hero estimates. Enemy combat context is used only when the target
   is another parsed hero.
+- Priority map UX follow-ups are frontend-first and should reuse existing
+  `portal_targets`, `portal_edges`, portal relation state, and `Portal links`
+  toggle unless implementation proves the snapshot contract is insufficient.
+- Normal-mode click on a paired subterranean gate should switch to the paired
+  gate's level, center it, and preserve the source portal relation context.
+  Path mode click semantics must remain route requests.
+- Cross-level portal relation preview should draw off-level destination portals
+  as ghost markers at their map `(x, y)` with alpha around `0.5`, plus a line
+  from the source to the ghost and a badge showing the real destination level.
+  This applies only to hovered/pinned portal relations, not all portals.
+- Neutral monster markers should render and hit-test below heroes, portals, and
+  towns. Recommended hit priority is hero, portal, town, then monster.
+- Side-by-side map levels should be an optional view mode, not a replacement
+  for the existing single-level view. It is enabled only for two-level maps,
+  uses shared pan/zoom and the same scale for both levels, and is hidden or
+  disabled for single-level maps.
 
 ## Critical Implementation Notes
 
@@ -126,6 +155,14 @@ VCMI starting skills or manual state as a silent fallback for combat math.
   avoid decorative UI.
 - Keep real save files out of the repo. Add only synthetic binary fixtures to
   tests.
+- The current portal-readability baseline already has portal relation state,
+  marker symbols, portal links overlay, target details, and Path mode
+  preservation in `tools/battle_estimator_gui/app.js`.
+- The current single-level map model filters markers by `mapView.level`.
+  Side-by-side levels will require explicit viewport/lane geometry rather than
+  only changing `setMapLevel()`.
+- Current marker rendering/hit testing should be audited before changing z
+  order; marker cache order and reverse hit-test order both affect priority.
 
 ## Proposed Data Contracts
 
@@ -279,6 +316,15 @@ Extend estimate payloads with model notes rather than overloading the existing
 ```text
 Save-Aware Improvements
 
+  Priority Map UX Follow-Ups:
+    M01 [Lower Monster Marker Priority]
+    M02 [Subterranean Gate Click Level Toggle]
+      -> M03 [Cross-Level Ghost Portal Destinations]
+    M04 [Dual-Level View State And Geometry]
+      -> M05 [Render Dual-Level Map And Markers]
+      -> M06 [Dual-Level Interactions And Portal Links]
+    M01, M02, M03, M04, M05, M06 -> M07 [Map UX Follow-Up Verification]
+
   Research:
     T01 [Collect Local Save Evidence]
       -> T02 [Document Save Ownership Hypothesis]
@@ -320,9 +366,302 @@ snapshot after T08's contract is written, but final wiring must wait for T08.
 T13/T14 hero combat research can run in parallel with town ownership research,
 but T03/T04 and T15/T16/T17 should be coordinated because they share
 `tools/h3_save_parser.py` and binary fixture helpers. Parser tasks should be
-single-owner per file during implementation.
+single-owner per file during implementation. M01 and M02 can be implemented
+independently. M03 should wait for M02 if ghost destination clicks share the
+same center/switch behavior. M04/M05/M06 should be sequential because
+side-by-side view changes map geometry, rendering, and hit testing.
 
 ## Task Definitions
+
+### M01: Lower Monster Marker Priority
+
+| Field | Value |
+|---|---|
+| Description | Change map marker draw and hit-test priority so neutral monster markers no longer obscure heroes, portals, or towns. |
+| Blocked By | -- |
+| Wave | priority-map-ux |
+| Execution | Parallel |
+| Effort | S |
+| Scope | GUI |
+| Source | User request for monster markers below more important map markers |
+
+**Files to modify:**
+
+- `tools/battle_estimator_gui/app.js`
+- `tests/test_battle_estimator_gui.py`
+
+**Acceptance Criteria:**
+
+1. Neutral monster markers render below towns, portals, and heroes.
+2. Hit testing prefers heroes, then portals, then towns, then monsters when
+   markers overlap.
+3. Scan rings and hover/active states for monsters remain visible when the
+   monster is not covered by a higher-priority marker.
+4. Existing marker filtering and hidden-target behavior remain unchanged.
+
+**Verification:**
+
+1. `node --check tools/battle_estimator_gui/app.js`
+2. `python3 -m unittest tests.test_battle_estimator_gui`
+3. Manual or headless GUI check with overlapping monster and portal/town/hero
+   markers.
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### M02: Subterranean Gate Click Level Toggle
+
+| Field | Value |
+|---|---|
+| Description | Make normal-mode clicks on paired subterranean gates switch to and center the paired gate's map level while preserving portal relation context. |
+| Blocked By | -- |
+| Wave | priority-map-ux |
+| Execution | Parallel |
+| Effort | S |
+| Scope | GUI |
+| Source | User request for subterranean gate click-to-toggle behavior |
+
+**Files to modify:**
+
+- `tools/battle_estimator_gui/app.js`
+- `tests/test_battle_estimator_gui.py`
+
+**Acceptance Criteria:**
+
+1. Clicking a subterranean gate outside Path mode pins or preserves the source
+   portal relation, switches to the paired destination level, and centers the
+   paired gate.
+2. The destination gate is visually active or otherwise clearly identified
+   after the level switch.
+3. Subterranean gates with no known paired destination do not switch levels and
+   show the existing diagnostic/details state.
+4. Path mode left-click on a subterranean gate still requests a route instead
+   of toggling levels.
+
+**Verification:**
+
+1. `node --check tools/battle_estimator_gui/app.js`
+2. `python3 -m unittest tests.test_battle_estimator_gui`
+3. Manual or headless GUI check on a two-level map with a paired subterranean
+   gate.
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### M03: Cross-Level Ghost Portal Destinations
+
+| Field | Value |
+|---|---|
+| Description | Improve cross-level portal relation preview by drawing off-level destination portals as ghost markers with a source-to-ghost line on the active canvas. |
+| Blocked By | M02 |
+| Wave | priority-map-ux |
+| Execution | Main |
+| Effort | M |
+| Scope | GUI |
+| Source | User request for visible cross-level portal destination hints |
+
+**Files to modify:**
+
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Acceptance Criteria:**
+
+1. For hovered or pinned portal relations, destinations on another level draw
+   as ghost portal markers at the destination `(x, y)` on the current canvas.
+2. Ghost portal markers use reduced alpha around `0.5` and a visible badge for
+   the real destination level.
+3. A restrained line connects the source portal to each ghost destination.
+4. Ghost destinations are drawn only for the active portal relation, not for all
+   cross-level portals on the map.
+5. Clicking a ghost destination switches to the real destination level and
+   centers the real portal, sharing the behavior from M02 where practical.
+
+**Verification:**
+
+1. `node --check tools/battle_estimator_gui/app.js`
+2. `python3 -m unittest tests.test_battle_estimator_gui`
+3. Manual GUI check with one subterranean gate and one cross-level monolith
+   relation.
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### M04: Dual-Level View State And Geometry
+
+| Field | Value |
+|---|---|
+| Description | Add an optional dual-level map view mode with shared pan/zoom and explicit geometry helpers for two side-by-side map lanes. |
+| Blocked By | -- |
+| Wave | priority-map-ux |
+| Execution | Main |
+| Effort | M |
+| Scope | GUI |
+| Source | User request for levels side by side instead of only switched |
+
+**Files to modify:**
+
+- `tools/battle_estimator_gui/index.html`
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Acceptance Criteria:**
+
+1. A compact `Dual level` control is available only when the current map has
+   exactly two levels; it is hidden or disabled for single-level maps.
+2. Single-level view remains the default and keeps the existing level segmented
+   control behavior.
+3. Dual-level view computes two side-by-side lanes with the same tile scale,
+   shared zoom, and shared pan.
+4. Geometry helpers can convert between canvas points, world points, map lanes,
+   and `(x, y, z)` positions without changing route/path behavior yet.
+
+**Verification:**
+
+1. `node --check tools/battle_estimator_gui/app.js`
+2. `python3 -m unittest tests.test_battle_estimator_gui`
+3. Frontend helper tests for two-level and one-level map geometry.
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### M05: Render Dual-Level Map And Markers
+
+| Field | Value |
+|---|---|
+| Description | Render both map levels side by side in dual-level mode, including route layers and markers in the correct lane. |
+| Blocked By | M04 |
+| Wave | priority-map-ux |
+| Execution | Main |
+| Effort | M |
+| Scope | GUI |
+| Source | Dual-level map view implementation |
+
+**Files to modify:**
+
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Acceptance Criteria:**
+
+1. Dual-level mode draws both levels side by side on one canvas with clear
+   labels such as `Surface` and `Underground`.
+2. Route layers, towns, portals, heroes, and neutral markers render in the lane
+   matching their real `z` level.
+3. Marker hit testing works in both lanes and respects the priority from M01.
+4. Existing single-level rendering remains unchanged when dual-level mode is
+   off.
+
+**Verification:**
+
+1. `node --check tools/battle_estimator_gui/app.js`
+2. `python3 -m unittest tests.test_battle_estimator_gui`
+3. Manual or headless GUI check on a two-level map.
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### M06: Dual-Level Interactions And Portal Links
+
+| Field | Value |
+|---|---|
+| Description | Make existing map interactions work in dual-level mode, including centering, portal relation overlays, ghost destinations, path rendering, and scan/active marker states. |
+| Blocked By | M03, M05 |
+| Wave | priority-map-ux |
+| Execution | Main |
+| Effort | M |
+| Scope | GUI |
+| Source | Dual-level interaction integration |
+
+**Files to modify:**
+
+- `tools/battle_estimator_gui/app.js`
+- `tools/battle_estimator_gui/style.css`
+- `tests/test_battle_estimator_gui.py`
+
+**Acceptance Criteria:**
+
+1. Centering a marker or portal destination in dual-level mode centers the
+   correct lane without losing shared zoom/pan semantics.
+2. Portal relation lines and ghost destinations draw correctly when source and
+   destination are in different lanes.
+3. Path mode clicks in either lane request routes to the clicked tile or marker
+   with the correct `z` level.
+4. Scan hover/click, active marker, target details, and context menu placement
+   continue to work in dual-level mode.
+
+**Verification:**
+
+1. `node --check tools/battle_estimator_gui/app.js`
+2. `python3 -m unittest tests.test_battle_estimator_gui`
+3. Manual GUI check for portal links, path mode, and scan result interactions
+   in dual-level mode.
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
+
+### M07: Map UX Follow-Up Verification
+
+| Field | Value |
+|---|---|
+| Description | Verify the combined map UX follow-ups on real or representative two-level map data. |
+| Blocked By | M01, M02, M03, M04, M05, M06 |
+| Wave | priority-map-ux |
+| Execution | Main |
+| Effort | S |
+| Scope | Docs/Test |
+| Source | End-to-end quality gate |
+
+**Files to modify:**
+
+- `README.md`
+- `CHANGELOG.md`
+- This planning doc
+
+**Acceptance Criteria:**
+
+1. Monster marker priority, subterranean click toggle, cross-level ghost
+   destinations, and dual-level view are all manually or headlessly verified on
+   a two-level map.
+2. Single-level map behavior remains usable and does not show unavailable
+   dual-level controls as active.
+3. README or CHANGELOG documents the user-visible map UX changes if this work
+   is prepared for release.
+4. Completion notes record the save/map used for verification without
+   committing real save or map files.
+
+**Verification:**
+
+1. `python3 -m unittest`
+2. `node --check tools/battle_estimator_gui/app.js`
+3. `git status --short` confirms no real save/map files are staged.
+
+**Completion Notes:**
+
+- Fill in after implementation.
+
+---
 
 ### T01: Collect Local Save Evidence
 
@@ -1152,6 +1491,18 @@ single-owner per file during implementation.
 
 ## Checkpoints
 
+### Checkpoint: Priority Map UX Ready
+
+- [ ] M01 through M07 are `done`.
+- [ ] Neutral marker draw and hit priority no longer obscures towns, portals,
+      or heroes.
+- [ ] Normal-mode subterranean gate clicks switch to the paired level while
+      Path mode remains route-first.
+- [ ] Cross-level portal destinations can be inspected through ghost markers
+      and level badges for the active relation.
+- [ ] Dual-level view works as an optional two-level map mode, while
+      single-level view remains the default.
+
 ### Checkpoint: Research Ready
 
 - [ ] T01 and T02 are `done`.
@@ -1211,6 +1562,7 @@ single-owner per file during implementation.
 
 ### Checkpoint: Complete
 
+- [ ] M07 is `done`.
 - [ ] T12 is `done`.
 - [ ] T22 is `done`.
 - [ ] Full Python suite passes.
@@ -1234,6 +1586,11 @@ single-owner per file during implementation.
 | Partial hero combat modeling looks more exact than it is. | Medium | Include per-side model status and applied/omitted components in API, CLI, and GUI estimate details. |
 | Artifacts or spells are discovered in the save but not modeled initially. | Medium | Record them as unsupported or observed-but-omitted; do not silently include their effects until dedicated tasks model them. |
 | Enemy hero context is unavailable more often than player hero context. | Medium | Allow asymmetric estimates, e.g. player `primary+secondary` versus enemy `army-only`, and make that visible. |
+| Dual-level view destabilizes existing single-level map interactions. | High | Keep single-level as default, build explicit geometry helpers, and test both modes. |
+| Ghost portal destinations imply that the destination is physically on the current level. | Medium | Use reduced alpha and level badges on every off-level ghost marker. |
+| Subterranean click-to-toggle conflicts with Path mode. | High | Apply click-to-toggle only outside Path mode; Path mode left-click remains route request. |
+| Marker priority change hides useful neutral target scan information. | Medium | Lower neutral draw/hit priority but keep scan rings and scan result rows as the main neutral-target discovery surface. |
+| Dual-level shared pan/zoom feels awkward on very wide maps. | Medium | Ship as an optional mode and keep the existing single-level view available. |
 
 ## Open Questions
 
@@ -1258,6 +1615,13 @@ single-owner per file during implementation.
 
 | ID | Title | Status | Blocked By | Wave | Execution | Effort | Scope | Files Likely Touched |
 |---|---|---|---|---|---|---|---|---|
+| M01 | Lower Monster Marker Priority | todo | -- | priority-map-ux | Parallel | S | GUI | `tools/battle_estimator_gui/app.js`, GUI tests |
+| M02 | Subterranean Gate Click Level Toggle | todo | -- | priority-map-ux | Parallel | S | GUI | `tools/battle_estimator_gui/app.js`, GUI tests |
+| M03 | Cross-Level Ghost Portal Destinations | blocked | M02 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
+| M04 | Dual-Level View State And Geometry | todo | -- | priority-map-ux | Main | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
+| M05 | Render Dual-Level Map And Markers | blocked | M04 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
+| M06 | Dual-Level Interactions And Portal Links | blocked | M03, M05 | priority-map-ux | Main | M | GUI | `app.js`, `style.css`, GUI tests |
+| M07 | Map UX Follow-Up Verification | blocked | M01, M02, M03, M04, M05, M06 | priority-map-ux | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, planning doc |
 | T01 | Collect Local Save Evidence | todo | -- | research | Main | M | Research | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T02 | Document Save Ownership Hypothesis | blocked | T01 | research | Main | S | Docs | `tools/battle_estimator_save_parsing_checkpoint.md` |
 | T03 | Synthetic Current Town Ownership Fixtures | blocked | T02 | parser | Main | M | Test | `tests/test_h3_save_parser.py`, `tests/test_battle_estimator_gui.py` |
