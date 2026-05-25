@@ -570,6 +570,48 @@ select:disabled {
   font-size: 13px;
 }
 
+.target-detail {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.target-detail-heading {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #202833;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.portal-destination-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.portal-destination {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.portal-destination:hover,
+.portal-destination:focus-visible {
+  border-color: #758195;
+  background: #f3f6fa;
+  outline: none;
+}
+
+.portal-destination-note {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .map-overlay {
   position: absolute;
   right: 12px;

@@ -580,6 +580,14 @@
     return "";
   }
 
+  function portalRoleDisplay(role) {
+    const label = portalRoleLabel(role);
+    if (label) {
+      return `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+    }
+    return role === "both" ? "Both" : "Unknown";
+  }
+
   function portalMarkerLabel(portal) {
     const typeLabel = portalTypeLabel(portal.portal_type);
     const roleLabel = portalRoleLabel(portal.role);
@@ -599,7 +607,36 @@
     )).join("; ")}`;
   }
 
-  function portalSummaryParts(marker) {
+  function portalDestinationStatusText(marker, relation) {
+    if (!marker || marker.type !== "portal") {
+      return "";
+    }
+    const outgoingEdgeCount = relation ? relation.outgoingEdgeCount : (marker.destinations || []).length;
+    const destinationCount = relation ? relation.destinationCount : (marker.destinations || []).length;
+    const unresolvedCount = relation ? relation.unresolvedDestinationCount : 0;
+    if (marker.role === "exit" && outgoingEdgeCount === 0) {
+      return "Exit-only: no outgoing destinations.";
+    }
+    if (outgoingEdgeCount === 0) {
+      return "No known destinations.";
+    }
+
+    const parts = [];
+    if (destinationCount > 0) {
+      parts.push(`${destinationCount} known destination${destinationCount === 1 ? "" : "s"}`);
+    } else {
+      parts.push("No resolved destinations");
+    }
+    if (unresolvedCount > 0) {
+      parts.push(`${unresolvedCount} unresolved edge${unresolvedCount === 1 ? "" : "s"}`);
+    }
+    if (relation && relation.isNonDeterministic) {
+      parts.push("possible/non-deterministic exit");
+    }
+    return `${parts.join("; ")}.`;
+  }
+
+  function portalSummaryParts(marker, relation) {
     if (!marker || marker.type !== "portal") {
       return [];
     }
@@ -607,7 +644,8 @@
       `${portalTypeLabel(marker.portalType)}${portalRoleLabel(marker.role) ? ` ${portalRoleLabel(marker.role)}` : ""}`,
       typeof marker.h3mSubid === "number" ? `subid ${marker.h3mSubid}` : "",
       marker.channelKey ? `channel ${marker.channelKey}` : "",
-      portalDestinationText(marker)
+      portalDestinationText(marker),
+      portalDestinationStatusText(marker, relation)
     ].filter(Boolean);
   }
 
@@ -1401,6 +1439,14 @@
     return marker;
   }
 
+  function focusPortalDestinationFromPanel(sourceId, targetId) {
+    portalRelationState.hoveredSourceId = null;
+    if (sourceId) {
+      portalRelationState.pinnedSourceId = sourceId;
+    }
+    return focusPortalDestination(targetId);
+  }
+
   function positionForTargetId(snapshot, targetId) {
     if (!snapshot || !targetId) {
       return null;
@@ -1910,12 +1956,7 @@
     });
   }
 
-  function setTargetDetails(marker) {
-    if (!marker) {
-      elements.targetState.textContent = "No target selected.";
-      elements.targetState.title = "";
-      return;
-    }
+  function markerDetailText(marker, relation) {
     const flags = [];
     if (marker.selected) {
       flags.push("selected hero");
@@ -1937,11 +1978,107 @@
     } else if (marker.type === "town") {
       flags.push(...townSummaryParts(marker));
     } else if (marker.type === "portal") {
-      flags.push(...portalSummaryParts(marker));
+      flags.push(...portalSummaryParts(marker, relation));
     }
     const suffix = flags.length ? ` | ${flags.join(", ")}` : "";
-    elements.targetState.textContent = `${marker.type} ${marker.id} | ${marker.label} | ${positionText(marker.position)}${suffix}`;
+    return `${marker.type} ${marker.id} | ${marker.label} | ${positionText(marker.position)}${suffix}`;
+  }
+
+  function setTargetDetailsText(text, title, isEmpty) {
+    clearNode(elements.targetState);
+    elements.targetState.className = `target-detail ${isEmpty ? "empty-state" : ""}`.trim();
+    elements.targetState.textContent = text;
+    elements.targetState.title = title || text;
+  }
+
+  function appendPortalDestinationButton(parent, sourceId, relation, destination) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "list-item portal-destination";
+    button.dataset.portalSourceId = sourceId;
+    button.dataset.portalDestinationId = destination.id;
+    button.addEventListener("click", () => {
+      focusPortalDestinationFromPanel(sourceId, destination.id);
+    });
+
+    const title = document.createElement("div");
+    title.className = "item-title";
+    title.textContent = `${destination.label || "Portal"} ${positionText(destination.position)}`;
+    title.title = title.textContent;
+
+    const sameLevel = positionLevel(destination.position) === positionLevel(relation.sourcePosition);
+    const metaParts = [
+      sameLevel ? "same level" : `level ${positionLevel(destination.position)}`,
+      relation.isNonDeterministic ? "possible/non-deterministic" : "",
+      destination.edge && destination.edge.channel_key ? destination.edge.channel_key : ""
+    ].filter(Boolean);
+    const meta = document.createElement("div");
+    meta.className = "item-meta";
+    meta.textContent = metaParts.join(" | ") || "Destination";
+    meta.title = meta.textContent;
+
+    button.appendChild(title);
+    button.appendChild(meta);
+    parent.appendChild(button);
+  }
+
+  function renderPortalTargetDetails(marker, summaryText, relation) {
+    clearNode(elements.targetState);
+    elements.targetState.className = "target-detail portal-target-detail";
+    elements.targetState.textContent = "";
     elements.targetState.title = markerTooltipText(marker) || marker.label;
+
+    const heading = document.createElement("div");
+    heading.className = "target-detail-heading";
+    heading.textContent = summaryText;
+    heading.title = summaryText;
+    elements.targetState.appendChild(heading);
+
+    const grid = document.createElement("div");
+    grid.className = "estimate-grid";
+    appendEstimateRow(grid, "Type", portalTypeLabel(marker.portalType));
+    appendEstimateRow(grid, "Role", portalRoleDisplay(marker.role));
+    appendEstimateRow(grid, "Channel", marker.channelKey || "not available", "long-value");
+    appendEstimateRow(
+      grid,
+      "Subid",
+      typeof marker.h3mSubid === "number" ? String(marker.h3mSubid) : "not available"
+    );
+    appendEstimateRow(grid, "Status", portalDestinationStatusText(marker, relation), "long-value");
+    elements.targetState.appendChild(grid);
+
+    const destinations = relation ? relation.destinations : (marker.destinations || []);
+    if (destinations.length > 0 && relation) {
+      const list = document.createElement("div");
+      list.className = "portal-destination-list";
+      destinations.forEach((destination) => {
+        appendPortalDestinationButton(list, marker.id, relation, destination);
+      });
+      elements.targetState.appendChild(list);
+      return;
+    }
+
+    const note = document.createElement("div");
+    note.className = "portal-destination-note";
+    note.textContent = portalDestinationStatusText(marker, relation);
+    note.title = note.textContent;
+    elements.targetState.appendChild(note);
+  }
+
+  function setTargetDetails(marker) {
+    if (!marker) {
+      setTargetDetailsText("No target selected.", "", true);
+      return;
+    }
+    const relation = marker.type === "portal"
+      ? portalRelationForSource(mapView.snapshot, marker.id)
+      : null;
+    const detailText = markerDetailText(marker, relation);
+    if (marker.type === "portal") {
+      renderPortalTargetDetails(marker, detailText, relation);
+      return;
+    }
+    setTargetDetailsText(detailText, markerTooltipText(marker) || marker.label);
   }
 
   function clearNode(node) {
@@ -2807,8 +2944,10 @@
     if (marker) {
       setTargetDetails(marker);
     } else {
-      elements.targetState.textContent = `${result.target_type || "target"} ${result.target_id || "unknown"} | no map marker`;
-      elements.targetState.title = "Scan result has no marker in the current snapshot.";
+      setTargetDetailsText(
+        `${result.target_type || "target"} ${result.target_id || "unknown"} | no map marker`,
+        "Scan result has no marker in the current snapshot."
+      );
     }
     renderEstimateResult({
       hero_id: scanState.heroId || heroState.selectedHeroId,

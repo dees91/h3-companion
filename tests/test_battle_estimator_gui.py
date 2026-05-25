@@ -413,6 +413,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".path-result",
             ".path-segment-list",
             ".path-segment",
+            ".target-detail",
+            ".portal-destination",
             "#battle-map.path-mode",
             ".target-context-menu",
             ".context-menu-title",
@@ -430,6 +432,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "place-items: start center;",
         ):
             self.assertIn(expected, style_css)
+        self.assertNotIn("Portals only", index_html)
+        self.assertNotIn("Portals only", app_js)
 
     def test_frontend_estimate_helpers_cover_click_and_stale_edges(self):
         node = shutil.which("node")
@@ -1765,6 +1769,9 @@ function treeText(node) {{
   }}
   return [node.textContent || "", ...node.children.map((child) => treeText(child))].join(" ");
 }}
+function targetStateText() {{
+  return treeText(elements["target-state"]);
+}}
 function nodesWithClass(node, className) {{
   if (!node) {{
     return [];
@@ -1776,6 +1783,9 @@ function nodesWithClass(node, className) {{
 }}
 function pathSegmentButtons() {{
   return nodesWithClass(elements["path-state"], "path-segment");
+}}
+function targetDestinationButtons() {{
+  return nodesWithClass(elements["target-state"], "portal-destination");
 }}
 function skillSlotRows() {{
   return elements["hero-skill-slots"].children
@@ -1896,12 +1906,21 @@ const relationOverlaySnapshot = {{
       portal_type: "monolith_two_way",
       role: "both",
       channel_key: "monolith-two-way:20"
+    }},
+    {{
+      id: "portal:broken-ui",
+      object_index: 30,
+      position: {{ x: 7, y: 0, z: 0 }},
+      portal_type: "monolith_one_way",
+      role: "entrance",
+      channel_key: "monolith-one-way:30"
     }}
   ],
   portal_edges: [
     {{ source_id: "portal:source-a", destination_id: "portal:same-a" }},
     {{ source_id: "portal:source-a", destination_id: "portal:cross-a" }},
-    {{ source_id: "portal:source-b", destination_id: "portal:same-b" }}
+    {{ source_id: "portal:source-b", destination_id: "portal:same-b" }},
+    {{ source_id: "portal:broken-ui", destination_id: "portal:missing-ui" }}
   ]
 }};
 helpers.renderSnapshot(relationOverlaySnapshot, {{ preserveView: false }});
@@ -1974,6 +1993,49 @@ assert.ok(portalRelationStrokeOps().some((operation) => (
   operation.lineDash && operation.lineDash.length === 2
 )));
 assert.ok(portalRelationBadgeTexts().some((operation) => operation.text.includes("L1")));
+dispatchCanvasPointer("pointerdown", relationSourceBPoint, 704);
+dispatchCanvasPointer("pointerup", relationSourceBPoint, 704);
+let portalDetailText = targetStateText();
+assert.ok(portalDetailText.includes("portal portal:source-b"));
+assert.ok(portalDetailText.includes("Type Two-way monolith"));
+assert.ok(portalDetailText.includes("Role Both"));
+assert.ok(portalDetailText.includes("Channel monolith-two-way:20"));
+assert.ok(portalDetailText.includes("1 known destination"));
+let panelDestinationButtons = targetDestinationButtons();
+assert.strictEqual(panelDestinationButtons.length, 1);
+elements["path-mode-toggle"].checked = true;
+elements["path-mode-toggle"].dispatch("change", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().pathMode, true);
+const panelDestinationStart = fetchRequests.length;
+panelDestinationButtons[0].dispatch("click", {{}});
+let panelDestinationView = helpers.currentMapViewForTest();
+assert.strictEqual(panelDestinationView.level, 0);
+assert.strictEqual(panelDestinationView.activeMarkerId, "portal:same-b");
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, null);
+assert.strictEqual(relationState.pinnedSourceId, "portal:source-b");
+assert.strictEqual(relationState.activeSourceId, "portal:source-b");
+assert.strictEqual(pathRequestsSince(panelDestinationStart).length, 0);
+assert.strictEqual(
+  fetchRequests.slice(panelDestinationStart).filter((request) => request.path === "/api/simulate-target").length,
+  0
+);
+assert.strictEqual(helpers.currentMapViewForTest().pathMode, true);
+elements["path-mode-toggle"].checked = false;
+elements["path-mode-toggle"].dispatch("change", {{}});
+panelDestinationView = helpers.currentMapViewForTest();
+const brokenMarkerAfterPanelNavigation = panelDestinationView.markers.find((marker) => marker.id === "portal:broken-ui");
+const brokenPointAfterPanelNavigation = helpers.worldToScreen(
+  brokenMarkerAfterPanelNavigation.world,
+  panelDestinationView
+);
+dispatchCanvasPointer("pointerdown", brokenPointAfterPanelNavigation, 705);
+dispatchCanvasPointer("pointerup", brokenPointAfterPanelNavigation, 705);
+portalDetailText = targetStateText();
+assert.ok(portalDetailText.includes("portal portal:broken-ui"));
+assert.ok(portalDetailText.includes("No resolved destinations"));
+assert.ok(portalDetailText.includes("1 unresolved edge"));
+assert.strictEqual(targetDestinationButtons().length, 0);
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 const noSelectedSkillsSnapshot = {{
   ...markerSnapshot,
@@ -2162,7 +2224,7 @@ const heroesFilterView = helpers.currentMapViewForTest();
 assert.strictEqual(heroesFilterView.activeMarkerId, null);
 assert.ok(!heroesFilterView.markers.some((marker) => marker.type === "neutral"));
 assert.ok(heroesFilterView.markers.some((marker) => marker.type === "hero"));
-assert.ok(elements["target-state"].textContent.includes("No target selected"));
+assert.ok(targetStateText().includes("No target selected"));
 elements["scan-radius"].value = "3";
 let scanRequestStart = fetchRequests.length;
 elements["scan-button"].dispatch("click", {{}});
@@ -2256,7 +2318,7 @@ assert.ok(visibleScanRow);
 assert.ok(missingScanRow);
 const beforeHoverView = helpers.currentMapViewForTest();
 const beforeHoverFetchCalls = fetchCalls;
-const beforeHoverTargetText = elements["target-state"].textContent;
+const beforeHoverTargetText = targetStateText();
 const neutralHoverRingStart = drawOperations.length;
 visibleScanRow.dispatch("pointerenter", {{}});
 const neutralHoverRingOps = drawOperations.slice(neutralHoverRingStart);
@@ -2278,7 +2340,7 @@ assert.strictEqual(hoverView.activeMarkerId, beforeHoverView.activeMarkerId);
 assert.strictEqual(hoverView.level, beforeHoverView.level);
 assert.strictEqual(hoverView.zoom, beforeHoverView.zoom);
 assert.deepStrictEqual(hoverView.pan, beforeHoverView.pan);
-assert.strictEqual(elements["target-state"].textContent, beforeHoverTargetText);
+assert.strictEqual(targetStateText(), beforeHoverTargetText);
 assert.strictEqual(fetchCalls, beforeHoverFetchCalls);
 missingScanRow.dispatch("focus", {{}});
 hoverView = helpers.currentMapViewForTest();
@@ -2314,7 +2376,7 @@ assert.ok(neutralActiveRingOps.some((operation) => (
 const clickedScanView = helpers.currentMapViewForTest();
 assert.strictEqual(fetchCalls, beforeScanClickFetchCalls);
 assert.strictEqual(clickedScanView.activeMarkerId, "neutral:0");
-assert.ok(elements["target-state"].textContent.includes("neutral neutral:0"));
+assert.ok(targetStateText().includes("neutral neutral:0"));
 assert.ok(treeText(elements["estimate-state"]).includes("8x Gnoll"));
 assert.ok(treeText(elements["estimate-state"]).includes("scan visible"));
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
@@ -2346,8 +2408,8 @@ elements["battle-map"].dispatch("pointerup", {{
   clientY: renderedTownScreen.y
 }});
 assert.strictEqual(fetchCalls, fetchCallsBeforeTownClick);
-assert.ok(elements["target-state"].textContent.includes("town town:0"));
-assert.ok(elements["target-state"].textContent.includes("Initial owner: Red"));
+assert.ok(targetStateText().includes("town town:0"));
+assert.ok(targetStateText().includes("Initial owner: Red"));
 assert.ok(elements["estimate-state"].textContent.includes("Town target"));
 const renderedNeutral = renderedView.markers.find((marker) => marker.id === "neutral:0");
 const renderedNeutralScreen = helpers.worldToScreen(renderedNeutral.world, renderedView);
@@ -2409,8 +2471,8 @@ portalRelationState = helpers.currentPortalRelationStateForTest();
 assert.strictEqual(portalRelationState.hoveredSourceId, "portal:100");
 assert.strictEqual(portalRelationState.pinnedSourceId, "portal:100");
 assert.strictEqual(portalRelationState.relation.source.id, "portal:100");
-assert.ok(elements["target-state"].textContent.includes("portal portal:100"));
-assert.ok(elements["target-state"].textContent.includes("Destinations: 0,2,1; 1,2,1"));
+assert.ok(targetStateText().includes("portal portal:100"));
+assert.ok(targetStateText().includes("Destinations: 0,2,1; 1,2,1"));
 assert.ok(elements["estimate-state"].textContent.includes("Portal target"));
 elements["battle-map"].dispatch("pointerdown", {{
   button: 0,
@@ -2535,7 +2597,7 @@ destinationButtons[0].dispatch("click", {{}});
 const destinationView = helpers.currentMapViewForTest();
 assert.strictEqual(destinationView.level, 1);
 assert.strictEqual(destinationView.activeMarkerId, "portal:101");
-assert.ok(elements["target-state"].textContent.includes("portal portal:101"));
+assert.ok(targetStateText().includes("portal portal:101"));
 const renderedHeroTarget = destinationView.markers.find((marker) => marker.id === "hero:1");
 const renderedHeroTargetScreen = helpers.worldToScreen(renderedHeroTarget.world, destinationView);
 let heroContextMenuPrevented = 0;
@@ -2690,6 +2752,53 @@ const overlayFillsAfterToggleOn = drawOperations.filter((operation) => (
 ));
 assert.ok(overlayFillsAfterToggleOn.length >= 3);
 assert.strictEqual(fetchCalls, fetchCallsAfterContextActions);
+
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+const crossPanelPortal = helpers.centerOnMarkerId("portal:100");
+assert.ok(crossPanelPortal);
+const crossPanelView = helpers.currentMapViewForTest();
+const crossPanelPortalScreen = helpers.worldToScreen(crossPanelPortal.world, crossPanelView);
+elements["battle-map"].dispatch("pointerdown", {{
+  button: 0,
+  pointerId: 87,
+  clientX: crossPanelPortalScreen.x,
+  clientY: crossPanelPortalScreen.y
+}});
+elements["battle-map"].dispatch("pointerup", {{
+  button: 0,
+  pointerId: 87,
+  clientX: crossPanelPortalScreen.x,
+  clientY: crossPanelPortalScreen.y
+}});
+portalDetailText = targetStateText();
+assert.ok(portalDetailText.includes("Type One-way monolith"));
+assert.ok(portalDetailText.includes("Role Entrance"));
+assert.ok(portalDetailText.includes("Channel monolith-one-way:7"));
+assert.ok(portalDetailText.includes("Subid 7"));
+assert.ok(portalDetailText.includes("2 known destinations"));
+assert.ok(portalDetailText.includes("1 unresolved edge"));
+assert.ok(portalDetailText.includes("possible/non-deterministic"));
+panelDestinationButtons = targetDestinationButtons();
+assert.strictEqual(panelDestinationButtons.length, 2);
+const crossPanelStart = fetchRequests.length;
+panelDestinationButtons[0].dispatch("click", {{}});
+const crossPanelDestinationView = helpers.currentMapViewForTest();
+assert.strictEqual(crossPanelDestinationView.level, 1);
+assert.strictEqual(crossPanelDestinationView.activeMarkerId, "portal:101");
+relationState = helpers.currentPortalRelationStateForTest();
+assert.strictEqual(relationState.hoveredSourceId, null);
+assert.strictEqual(relationState.pinnedSourceId, "portal:100");
+assert.strictEqual(relationState.activeSourceId, "portal:100");
+portalDetailText = targetStateText();
+assert.ok(portalDetailText.includes("portal portal:101"));
+assert.ok(portalDetailText.includes("Exit-only"));
+assert.ok(portalDetailText.includes("no outgoing destinations"));
+assert.strictEqual(targetDestinationButtons().length, 0);
+assert.strictEqual(pathRequestsSince(crossPanelStart).length, 0);
+assert.strictEqual(
+  fetchRequests.slice(crossPanelStart).filter((request) => request.path === "/api/simulate-target").length,
+  0
+);
 
 const noHeroPathSnapshot = {{
   ...markerSnapshot,

@@ -1634,21 +1634,45 @@ user can quickly inspect type, role, channel, destination count, possible-exit
 status, and destination actions without adding a permanent portal list.
 
 **Acceptance criteria:**
-- [ ] Portal target details show type, role, channel/subid, and outgoing
+- [x] Portal target details show type, role, channel/subid, and outgoing
       destination status.
-- [ ] Destination rows are clickable and can switch level plus center the
+- [x] Destination rows are clickable and can switch level plus center the
       destination marker.
-- [ ] After following a destination action, the original source relation remains
+- [x] After following a destination action, the original source relation remains
       visible until the user explicitly inspects another portal.
-- [ ] No-known-destination and exit-only cases are clearly labeled in the panel.
-- [ ] There is no new global `Portals only` filter or permanent all-portals
+- [x] No-known-destination and exit-only cases are clearly labeled in the panel.
+- [x] There is no new global `Portals only` filter or permanent all-portals
       sidebar in this iteration.
 
 **Verification:**
-- [ ] Add GUI tests for target details and destination navigation.
-- [ ] Run `node --check tools/battle_estimator_gui/app.js`.
-- [ ] Run `python3 -m unittest tests.test_battle_estimator_gui`.
-- [ ] Manual GUI check for same-level and cross-level destination actions.
+- [x] Add GUI tests for target details and destination navigation.
+- [x] Run `node --check tools/battle_estimator_gui/app.js`.
+- [x] Run `python3 -m unittest tests.test_battle_estimator_gui`.
+- [x] Manual GUI check for same-level and cross-level destination actions.
+
+**Completion Notes (2026-05-25):**
+- Reworked the existing `Target` panel into a compact detail container for
+  portal markers. Portal details now show type, role, channel, subid, outgoing
+  destination status, unresolved edges, and possible/non-deterministic status.
+- Added portal destination rows inside the target panel. Rows center the
+  destination marker, switch level when needed, and pin the original source
+  relation while clearing stale hover state so the relation returns on the
+  source level until another portal is explicitly inspected.
+- No-known, unresolved, and exit-only portal states are labeled directly in the
+  panel; context-menu destination behavior remains unchanged and no global
+  `Portals only` filter/sidebar was added.
+- Added frontend smoke coverage for same-level and cross-level destination
+  rows, Path mode guard behavior for panel rows, preserved pinned source
+  relation, no-known/unresolved status, exit-only status, and absence of
+  `Portals only` UI.
+- Manual GUI check: started the local GUI against the current Diamond save
+  `343.GM2` and map `dees91,Danny96 2026.05.24 18;35 Diamond.h3m`; clicked
+  `portal:2566`, verified two destination rows, followed cross-level
+  `portal:2571` on level 0 and same-level `portal:2570` on level 1, and
+  confirmed the pinned source relation stayed `portal:2566`.
+- Verification: `node --check tools/battle_estimator_gui/app.js`;
+  `python3 -m unittest tests.test_battle_estimator_gui`;
+  `python3 -m unittest`; `git diff --check`.
 
 **Dependencies:** Task 28
 
@@ -1873,6 +1897,6 @@ After Tasks 9, 17, 25, and 31:
 | 26 | Add Portal Relation View State | done | 8 |
 | 27 | Redesign Portal Marker Symbols | done | 26 |
 | 28 | Render Portal Relation Overlay | done | 26, 27 |
-| 29 | Expand Portal Target Details And Navigation | todo | 28 |
-| 30 | Preserve Path Mode Portal Semantics | blocked | 29 |
+| 29 | Expand Portal Target Details And Navigation | done | 28 |
+| 30 | Preserve Path Mode Portal Semantics | todo | 29 |
 | 31 | End-To-End Portal Readability Verification | blocked | 26, 27, 28, 29, 30 |
