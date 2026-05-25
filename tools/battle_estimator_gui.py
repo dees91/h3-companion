@@ -35,6 +35,11 @@ PINNED_MODE = "pinned"
 DEFAULT_API_SIMULATIONS = battle_estimator.DEFAULT_SCAN_SIMULATIONS
 MAX_API_SIMULATIONS = 2000
 MAX_SCAN_RADIUS = 200
+CASTLE_ALERT_STATUS_OK = "ok"
+CASTLE_ALERT_STATUS_UNCONFIGURED = "unconfigured"
+CASTLE_ALERT_STATUS_OWNERSHIP_UNAVAILABLE = "ownership_unavailable"
+CASTLE_ALERT_STATUS_NO_OWNED_TOWNS = "no_owned_towns"
+CASTLE_ALERT_STATUS_NO_THREATS = "no_threats"
 MAX_JSON_BODY_BYTES = 64 * 1024
 STATIC_DIR = Path(__file__).with_name("battle_estimator_gui")
 STATIC_ROUTES = {
@@ -174,6 +179,32 @@ class HeroSkillApiContext:
     hero_metadata: object
     current_skills: tuple
     current_skills_source: str
+
+
+@dataclass(frozen=True)
+class CastleAlert:
+    """One enemy hero threatening the nearest owned town."""
+
+    id: str
+    enemy_hero_id: str
+    enemy_hero_name: str
+    enemy_color_id: int
+    enemy_color_name: str | None
+    town_id: str
+    town_name: str
+    distance: int
+    other_towns_in_radius: int
+    enemy_position: h3_save_parser.HeroPosition
+    town_position: h3_save_parser.HeroPosition
+
+
+@dataclass(frozen=True)
+class CastleAlertResult:
+    """Threat alert service result ready for later API serialization."""
+
+    status: str
+    status_detail: str | None = None
+    alerts: tuple[CastleAlert, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1384,6 +1415,135 @@ def _town_ownership_by_id(town_targets, ownership_observations) -> dict:
         _town_target_id(town): observation
         for town, observation in zip(towns, observations)
     }
+
+
+def build_castle_alerts(
+    domain_snapshot: DomainSnapshot,
+    config: h3_save_parser.BattleEstimatorConfig,
+) -> CastleAlertResult:
+    """Calculate enemy hero proximity alerts for currently owned towns."""
+
+    my_color_id = config.my_color_id
+    if my_color_id is None:
+        return CastleAlertResult(CASTLE_ALERT_STATUS_UNCONFIGURED)
+
+    town_targets = tuple(domain_snapshot.town_targets)
+    if not town_targets:
+        return CastleAlertResult(CASTLE_ALERT_STATUS_NO_OWNED_TOWNS)
+
+    town_ownership_pairs = tuple(
+        (
+            town,
+            domain_snapshot.town_ownership_by_id.get(_town_target_id(town)),
+        )
+        for town in town_targets
+    )
+    unavailable_town_ids = tuple(
+        _town_target_id(town)
+        for town, ownership in town_ownership_pairs
+        if (
+            ownership is None
+            or ownership.ownership_status
+            != h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY
+        )
+    )
+    if unavailable_town_ids:
+        return CastleAlertResult(
+            CASTLE_ALERT_STATUS_OWNERSHIP_UNAVAILABLE,
+            status_detail="unavailable town ownership: "
+            + ", ".join(unavailable_town_ids),
+        )
+
+    owned_towns = tuple(
+        town
+        for town, ownership in town_ownership_pairs
+        if ownership.current_owner_color_id == my_color_id
+    )
+    if not owned_towns:
+        return CastleAlertResult(CASTLE_ALERT_STATUS_NO_OWNED_TOWNS)
+
+    alerts = _castle_alerts_for_owned_towns(
+        domain_snapshot,
+        config,
+        owned_towns,
+    )
+    if not alerts:
+        return CastleAlertResult(CASTLE_ALERT_STATUS_NO_THREATS)
+    return CastleAlertResult(CASTLE_ALERT_STATUS_OK, alerts=alerts)
+
+
+def _castle_alerts_for_owned_towns(
+    domain_snapshot: DomainSnapshot,
+    config: h3_save_parser.BattleEstimatorConfig,
+    owned_towns,
+) -> tuple[CastleAlert, ...]:
+    alerts = []
+    for hero_id, hero in domain_snapshot.hero_entries:
+        if not _is_castle_alert_enemy_hero(
+            hero,
+            config.my_color_id,
+            domain_snapshot.team_by_color,
+        ):
+            continue
+        threatened_towns = _castle_alert_towns_in_radius(
+            hero,
+            owned_towns,
+            config.alert_radius,
+        )
+        if not threatened_towns:
+            continue
+        distance, town_id, town = threatened_towns[0]
+        alerts.append(
+            CastleAlert(
+                id=f"castle-threat:{hero_id}",
+                enemy_hero_id=hero_id,
+                enemy_hero_name=hero.hero_name,
+                enemy_color_id=hero.owner_color_id,
+                enemy_color_name=hero.owner_color_name,
+                town_id=town_id,
+                town_name=_town_alert_name(town),
+                distance=distance,
+                other_towns_in_radius=len(threatened_towns) - 1,
+                enemy_position=hero.position,
+                town_position=h3_save_parser.HeroPosition(town.x, town.y, town.z),
+            )
+        )
+    return tuple(sorted(alerts, key=lambda alert: (alert.distance, alert.enemy_hero_id)))
+
+
+def _is_castle_alert_enemy_hero(hero, my_color_id: int, team_by_color: dict) -> bool:
+    if hero.position is None:
+        return False
+    hero_color_id = hero.owner_color_id
+    if hero_color_id is None:
+        return False
+    if hero_color_id == my_color_id:
+        return False
+    my_team_id = team_by_color.get(my_color_id)
+    hero_team_id = team_by_color.get(hero_color_id)
+    if my_team_id is not None and hero_team_id is not None:
+        return hero_team_id != my_team_id
+    return True
+
+
+def _castle_alert_towns_in_radius(hero, owned_towns, alert_radius: int) -> tuple:
+    threatened = []
+    for town in owned_towns:
+        distance = _same_level_manhattan_distance(hero.position, town)
+        if distance is None or distance > alert_radius:
+            continue
+        threatened.append((distance, _town_target_id(town), town))
+    return tuple(sorted(threatened, key=lambda item: (item[0], item[1])))
+
+
+def _same_level_manhattan_distance(position, target) -> int | None:
+    if position.z != target.z:
+        return None
+    return abs(position.x - target.x) + abs(position.y - target.y)
+
+
+def _town_alert_name(town) -> str:
+    return getattr(town, "custom_name", None) or f"Town {town.object_index}"
 
 
 def _prefer_owned_heroes(heroes) -> tuple:

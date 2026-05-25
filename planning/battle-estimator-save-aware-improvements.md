@@ -1054,7 +1054,17 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Done in commit for T07. Added a backend-only castle alert service that
+  returns stable alert result/status dataclasses without exposing them through
+  `/api/state` yet. The service treats missing or non-proxy town ownership as
+  a snapshot-wide diagnostic, uses only save-derived current owner color for
+  owned towns, ignores own-color, same-team, unknown-owner, and unpositioned
+  heroes, and emits one same-level Manhattan-distance alert per enemy hero with
+  nearest-town tie-breaking and extra threatened-town counts. Added focused GUI
+  backend tests for unconfigured color, unavailable ownership, no owned towns,
+  no threats, same-team/unknown-owner exclusions, unknown team fallback enemy
+  classification, nearest-town selection, and deterministic equal-distance
+  alert ordering.
 
 ---
 
@@ -1765,8 +1775,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T04 | Parse Current Town Ownership | done | T03 | parser | Main | M | Core | `tools/h3_save_parser.py`, `tests/test_h3_save_parser.py` |
 | T05 | Join Save Ownership To H3M Town Targets | done | T04 | backend | Main | M | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
 | T06 | Persist My Color And Alert Radius | done | -- | backend | Parallel | S | Config | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
-| T07 | Build Threat Alert Service | todo | T05, T06 | backend | Main | M | Core/API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
-| T08 | Expose Snapshot Contract | blocked | T07 | backend | Main | S | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
+| T07 | Build Threat Alert Service | done | T05, T06 | backend | Main | M | Core/API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
+| T08 | Expose Snapshot Contract | todo | T07 | backend | Main | S | API | `tools/battle_estimator_gui.py`, `tests/test_battle_estimator_gui.py` |
 | T09 | Render My Color And Alert Radius Controls | blocked | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | T10 | Render Alerts Sidebar Section | blocked | T08 | frontend | Parallel | M | GUI | `index.html`, `app.js`, `style.css`, GUI tests |
 | T11 | Center And Activate Alert Target | blocked | T10 | frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |

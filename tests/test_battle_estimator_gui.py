@@ -9,6 +9,7 @@ import threading
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -6780,6 +6781,224 @@ assert.ok(pathSegmentButtons().length >= 4);
             self._with_server(check, app_state=app_state)
 
 
+class BattleEstimatorGuiCastleAlertTests(unittest.TestCase):
+    def test_castle_alerts_require_configured_player_color(self):
+        town, ownership = _alert_town(1, (5, 5, 0), owner_color_id=0)
+        enemy = _alert_hero("Marius", (7, 5, 0), owner_color_id=2)
+        snapshot = _alert_snapshot(
+            towns=(town,),
+            ownerships=(ownership,),
+            hero_entries=(("hero:200", enemy),),
+        )
+
+        result = battle_estimator_gui.build_castle_alerts(
+            snapshot,
+            h3_save_parser.BattleEstimatorConfig(my_color_id=None),
+        )
+
+        self.assertEqual(
+            result.status,
+            battle_estimator_gui.CASTLE_ALERT_STATUS_UNCONFIGURED,
+        )
+        self.assertEqual(result.alerts, ())
+
+    def test_castle_alerts_report_unavailable_town_ownership(self):
+        town, ownership = _alert_town(
+            1,
+            (5, 5, 0),
+            owner_color_id=None,
+            ownership_status=h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+        )
+        snapshot = _alert_snapshot(towns=(town,), ownerships=(ownership,))
+
+        result = battle_estimator_gui.build_castle_alerts(
+            snapshot,
+            h3_save_parser.BattleEstimatorConfig(my_color_id=0),
+        )
+
+        self.assertEqual(
+            result.status,
+            battle_estimator_gui.CASTLE_ALERT_STATUS_OWNERSHIP_UNAVAILABLE,
+        )
+        self.assertIn("town:1", result.status_detail)
+        self.assertEqual(result.alerts, ())
+
+    def test_castle_alerts_report_unavailable_missing_observation(self):
+        town = _alert_town_target(1, (5, 5, 0))
+        snapshot = _alert_snapshot(towns=(town,), ownerships=())
+
+        result = battle_estimator_gui.build_castle_alerts(
+            snapshot,
+            h3_save_parser.BattleEstimatorConfig(my_color_id=0),
+        )
+
+        self.assertEqual(
+            result.status,
+            battle_estimator_gui.CASTLE_ALERT_STATUS_OWNERSHIP_UNAVAILABLE,
+        )
+
+    def test_castle_alerts_report_no_owned_towns(self):
+        enemy_town, enemy_ownership = _alert_town(1, (5, 5, 0), owner_color_id=2)
+        empty_snapshot = _alert_snapshot()
+        enemy_town_snapshot = _alert_snapshot(
+            towns=(enemy_town,),
+            ownerships=(enemy_ownership,),
+        )
+
+        for snapshot in (empty_snapshot, enemy_town_snapshot):
+            with self.subTest(towns=len(snapshot.town_targets)):
+                result = battle_estimator_gui.build_castle_alerts(
+                    snapshot,
+                    h3_save_parser.BattleEstimatorConfig(my_color_id=0),
+                )
+
+                self.assertEqual(
+                    result.status,
+                    battle_estimator_gui.CASTLE_ALERT_STATUS_NO_OWNED_TOWNS,
+                )
+                self.assertEqual(result.alerts, ())
+
+    def test_castle_alerts_report_no_threats_on_range_or_level_mismatch(self):
+        owned_town, ownership = _alert_town(1, (5, 5, 0), owner_color_id=0)
+        far_enemy = _alert_hero("Marius", (20, 5, 0), owner_color_id=2)
+        underground_enemy = _alert_hero("Tamika", (6, 5, 1), owner_color_id=2)
+        snapshot = _alert_snapshot(
+            towns=(owned_town,),
+            ownerships=(ownership,),
+            hero_entries=(
+                ("hero:200", far_enemy),
+                ("hero:300", underground_enemy),
+            ),
+        )
+
+        result = battle_estimator_gui.build_castle_alerts(
+            snapshot,
+            h3_save_parser.BattleEstimatorConfig(my_color_id=0, alert_radius=3),
+        )
+
+        self.assertEqual(
+            result.status,
+            battle_estimator_gui.CASTLE_ALERT_STATUS_NO_THREATS,
+        )
+        self.assertEqual(result.alerts, ())
+
+    def test_castle_alerts_ignore_own_same_team_and_unknown_owner_heroes(self):
+        owned_town, ownership = _alert_town(1, (5, 5, 0), owner_color_id=0)
+        own_hero = _alert_hero("Christian", (6, 5, 0), owner_color_id=0)
+        ally = _alert_hero("Adelaide", (7, 5, 0), owner_color_id=1)
+        unknown_owner = _alert_hero("Mystery", (8, 5, 0), owner_color_id=None)
+        snapshot = _alert_snapshot(
+            towns=(owned_town,),
+            ownerships=(ownership,),
+            hero_entries=(
+                ("hero:100", own_hero),
+                ("hero:200", ally),
+                ("hero:300", unknown_owner),
+            ),
+            team_by_color={0: 10, 1: 10},
+        )
+
+        result = battle_estimator_gui.build_castle_alerts(
+            snapshot,
+            h3_save_parser.BattleEstimatorConfig(my_color_id=0, alert_radius=10),
+        )
+
+        self.assertEqual(
+            result.status,
+            battle_estimator_gui.CASTLE_ALERT_STATUS_NO_THREATS,
+        )
+
+    def test_castle_alerts_treat_unknown_team_enemy_color_as_enemy(self):
+        owned_town, ownership = _alert_town(1, (5, 5, 0), owner_color_id=0)
+        enemy = _alert_hero("Marius", (6, 5, 0), owner_color_id=2)
+        snapshot = _alert_snapshot(
+            towns=(owned_town,),
+            ownerships=(ownership,),
+            hero_entries=(("hero:200", enemy),),
+            team_by_color={0: 10},
+        )
+
+        result = battle_estimator_gui.build_castle_alerts(
+            snapshot,
+            h3_save_parser.BattleEstimatorConfig(my_color_id=0, alert_radius=10),
+        )
+
+        self.assertEqual(result.status, battle_estimator_gui.CASTLE_ALERT_STATUS_OK)
+        self.assertEqual(result.alerts[0].enemy_hero_id, "hero:200")
+
+    def test_castle_alerts_select_nearest_owned_town_once_per_enemy(self):
+        first_town, first_ownership = _alert_town(
+            1,
+            (0, 0, 0),
+            owner_color_id=0,
+            custom_name="Castle Keep",
+        )
+        second_town, second_ownership = _alert_town(
+            2,
+            (2, 0, 0),
+            owner_color_id=0,
+            custom_name="Second Castle",
+        )
+        third_town, third_ownership = _alert_town(3, (7, 0, 0), owner_color_id=0)
+        nearby_enemy = _alert_hero("Marius", (1, 0, 0), owner_color_id=2)
+        farther_enemy = _alert_hero("Tamika", (5, 0, 0), owner_color_id=3)
+        snapshot = _alert_snapshot(
+            towns=(first_town, second_town, third_town),
+            ownerships=(first_ownership, second_ownership, third_ownership),
+            hero_entries=(
+                ("hero:300", farther_enemy),
+                ("hero:200", nearby_enemy),
+            ),
+            team_by_color={0: 1, 2: 2, 3: 3},
+        )
+
+        result = battle_estimator_gui.build_castle_alerts(
+            snapshot,
+            h3_save_parser.BattleEstimatorConfig(my_color_id=0, alert_radius=2),
+        )
+
+        self.assertEqual(result.status, battle_estimator_gui.CASTLE_ALERT_STATUS_OK)
+        self.assertEqual(len(result.alerts), 2)
+        first_alert, second_alert = result.alerts
+        self.assertEqual(first_alert.enemy_hero_id, "hero:200")
+        self.assertEqual(first_alert.enemy_hero_name, "Marius")
+        self.assertEqual(first_alert.enemy_color_id, 2)
+        self.assertEqual(first_alert.enemy_color_name, "tan")
+        self.assertEqual(first_alert.town_id, "town:1")
+        self.assertEqual(first_alert.town_name, "Castle Keep")
+        self.assertEqual(first_alert.distance, 1)
+        self.assertEqual(first_alert.other_towns_in_radius, 1)
+        self.assertEqual(first_alert.enemy_position, h3_save_parser.HeroPosition(1, 0, 0))
+        self.assertEqual(first_alert.town_position, h3_save_parser.HeroPosition(0, 0, 0))
+        self.assertEqual(second_alert.enemy_hero_id, "hero:300")
+        self.assertEqual(second_alert.town_id, "town:3")
+        self.assertEqual(second_alert.distance, 2)
+
+    def test_castle_alerts_order_equal_distance_alerts_by_hero_id(self):
+        owned_town, ownership = _alert_town(1, (5, 5, 0), owner_color_id=0)
+        later_id_enemy = _alert_hero("Marius", (7, 5, 0), owner_color_id=2)
+        earlier_id_enemy = _alert_hero("Tamika", (3, 5, 0), owner_color_id=3)
+        snapshot = _alert_snapshot(
+            towns=(owned_town,),
+            ownerships=(ownership,),
+            hero_entries=(
+                ("hero:300", later_id_enemy),
+                ("hero:200", earlier_id_enemy),
+            ),
+        )
+
+        result = battle_estimator_gui.build_castle_alerts(
+            snapshot,
+            h3_save_parser.BattleEstimatorConfig(my_color_id=0, alert_radius=2),
+        )
+
+        self.assertEqual(result.status, battle_estimator_gui.CASTLE_ALERT_STATUS_OK)
+        self.assertEqual(
+            [alert.enemy_hero_id for alert in result.alerts],
+            ["hero:200", "hero:300"],
+        )
+
+
 class BattleEstimatorGuiPathfindingContractTests(unittest.TestCase):
     def test_pathfinding_request_builder_normalizes_route_map_and_positions(self):
         request = battle_estimator_gui.build_pathfinding_request(
@@ -7972,6 +8191,93 @@ class BattleEstimatorGuiSnapshotTests(unittest.TestCase):
                         autosave_dir=game_dir,
                         map_file=map_path,
                     )
+
+
+def _alert_snapshot(
+    towns=(),
+    ownerships=(),
+    hero_entries=(),
+    team_by_color=None,
+) -> battle_estimator_gui.DomainSnapshot:
+    hero_entries = tuple(hero_entries)
+    return battle_estimator_gui.DomainSnapshot(
+        mode=battle_estimator_gui.FOLLOW_LATEST_MODE,
+        save_context=h3_save_parser.SaveContext(),
+        map_file=Path("synthetic.h3m"),
+        state={},
+        heroes=tuple(hero for _, hero in hero_entries),
+        hero_entries=hero_entries,
+        hero_by_id=dict(hero_entries),
+        neutral_targets=(),
+        visible_neutral_targets=(),
+        neutral_by_id={},
+        town_targets=tuple(towns),
+        town_ownership_by_id={
+            f"town:{ownership.object_index}": ownership
+            for ownership in ownerships
+        },
+        portal_targets=(),
+        portal_edges=(),
+        removed_records=(),
+        team_by_color=dict(team_by_color or {}),
+    )
+
+
+def _alert_town(
+    object_index: int,
+    position,
+    owner_color_id: int | None,
+    ownership_status: str = h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY,
+    custom_name: str | None = None,
+):
+    town = _alert_town_target(object_index, position, custom_name=custom_name)
+    ownership = h3_save_parser.TownOwnershipObservation(
+        object_index=object_index,
+        h3m_subid=3,
+        position=h3_save_parser.HeroPosition(*position),
+        current_owner_color_id=owner_color_id,
+        ownership_status=ownership_status,
+        ownership_source=(
+            h3_save_parser.TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY
+            if ownership_status == h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY
+            else None
+        ),
+        ownership_confidence=ownership_status,
+        reason=None
+        if ownership_status == h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY
+        else "test_unavailable",
+    )
+    return town, ownership
+
+
+def _alert_town_target(
+    object_index: int,
+    position,
+    custom_name: str | None = None,
+):
+    x, y, z = position
+    return SimpleNamespace(
+        object_index=object_index,
+        x=x,
+        y=y,
+        z=z,
+        custom_name=custom_name,
+    )
+
+
+def _alert_hero(
+    hero_name: str,
+    position,
+    owner_color_id: int | None,
+    source_offset: int = 0,
+) -> h3_save_parser.HeroArmy:
+    return h3_save_parser.HeroArmy(
+        hero_name=hero_name,
+        stacks=(h3_save_parser.HeroStack.from_creature_id(57, 10),),
+        source_offset=source_offset,
+        position=h3_save_parser.HeroPosition(*position),
+        owner_color_id=owner_color_id,
+    )
 
 
 def _write_gui_save(
