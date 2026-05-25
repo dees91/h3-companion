@@ -1120,6 +1120,76 @@ assert.ok(!myColorControl.children.some((button) => button.dataset.colorId === "
 assert.ok(myColorControl.children[0].className.includes("active"));
 assert.strictEqual(alertRadiusInput.value, "10");
 assert.strictEqual(alertRadiusInput.disabled, false);
+const sampleCombatModel = {{
+  player: {{
+    status: "primary+secondary",
+    source: "save",
+    reason: null,
+    applied: [
+      {{
+        id: "primary_attack_defense",
+        reason: "parsed",
+        value: {{ attack: 8, defense: 6 }}
+      }},
+      {{ id: "offence", reason: "parsed", value: 30 }},
+      {{ id: "armorer", reason: "parsed", value: 10 }}
+    ],
+    omitted: [
+      {{ id: "archery", reason: "not_present" }}
+    ],
+    modifiers: {{
+      attack: 8,
+      defense: 6,
+      offence_melee_pct: 30,
+      armorer_all_pct: 10,
+      archery_ranged_pct: 0
+    }}
+  }},
+  enemy: {{
+    status: "army-only",
+    source: null,
+    reason: null,
+    applied: [],
+    omitted: [
+      {{ id: "primary_attack_defense", reason: "not_applicable" }},
+      {{ id: "offence", reason: "not_applicable" }}
+    ],
+    modifiers: {{
+      attack: 0,
+      defense: 0,
+      offence_melee_pct: 0,
+      armorer_all_pct: 0,
+      archery_ranged_pct: 0
+    }}
+  }},
+  omitted_model_components: [
+    {{ id: "artifacts", reason: "not_modeled" }},
+    {{ id: "active_spells", reason: "not_modeled" }},
+    {{ id: "morale_luck", reason: "not_modeled" }},
+    {{ id: "tactics", reason: "not_modeled" }}
+  ]
+}};
+assert.strictEqual(
+  helpers.formatCombatModelSummary(sampleCombatModel),
+  "player primary+secondary, enemy army-only"
+);
+assert.strictEqual(
+  helpers.formatCombatComponent(sampleCombatModel.player.applied[0]),
+  "A/D 8/6"
+);
+assert.strictEqual(
+  helpers.formatCombatComponent({{ id: "unknown_component", reason: "not_modeled" }}),
+  "Unknown Component"
+);
+assert.strictEqual(helpers.formatCombatModelSummary(null), "model not available");
+assert.strictEqual(
+  helpers.formatCombatModelSummary({{ player: {{}}, enemy: {{ status: "partial" }} }}),
+  "player not available, enemy partial"
+);
+assert.strictEqual(
+  helpers.formatCombatComponent({{ id: "primary_attack_defense", value: "bad" }}),
+  "A/D"
+);
 const scanRadiusValueBeforeAlertSettings = elements["scan-radius"].value;
 assert.strictEqual(alertSettingsStatus.textContent, "Choose your color");
 const scanRequestCountBeforeAlertSettings = fetchRequests
@@ -3611,7 +3681,8 @@ nextScanResults = [
     win_pct: 68,
     enemy_ai_value: 120,
     note: "scan visible",
-    target: {{ name: "Visible Gnoll", creature_name: "Gnoll", count: 8 }}
+    target: {{ name: "Visible Gnoll", creature_name: "Gnoll", count: 8 }},
+    combat_model: sampleCombatModel
   }},
   {{
     target_id: "neutral:not-visible",
@@ -3709,6 +3780,16 @@ assert.strictEqual(clickedScanView.activeMarkerId, "neutral:0");
 assert.ok(targetStateText().includes("neutral neutral:0"));
 assert.ok(treeText(elements["estimate-state"]).includes("8x Gnoll"));
 assert.ok(treeText(elements["estimate-state"]).includes("scan visible"));
+assert.ok(treeText(elements["estimate-state"]).includes("player primary+secondary, enemy army-only"));
+assert.ok(treeText(elements["estimate-state"]).includes("A/D 8/6"));
+assert.ok(treeText(elements["estimate-state"]).includes("Offence +30%"));
+assert.ok(treeText(elements["estimate-state"]).includes("Armorer -10%"));
+assert.ok(treeText(elements["estimate-state"]).includes("Artifacts"));
+assert.ok(treeText(elements["estimate-state"]).includes("Active spells"));
+assert.ok(treeText(elements["estimate-state"]).includes("Morale/luck"));
+assert.ok(treeText(elements["estimate-state"]).includes("Tactics"));
+assert.strictEqual(nodesWithClass(elements["estimate-state"], "estimate-model-details").length, 1);
+assert.strictEqual(nodesWithClass(elements["scan-state"], "estimate-model-details").length, 0);
 helpers.renderSnapshot(dualInteractionSnapshot, {{ preserveView: false }});
 targetFilterButtons()[0].dispatch("click", {{}});
 elements["dual-level-toggle"].checked = true;

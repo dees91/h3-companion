@@ -3039,6 +3039,170 @@
     return typeof winPct === "number" ? `${winPct.toFixed(1)}%` : "not available";
   }
 
+  function wordsFromId(id) {
+    return String(id || "unknown")
+      .replace(/[_-]+/g, " ")
+      .replace(/\b\w/g, (match) => match.toUpperCase());
+  }
+
+  function combatSideStatus(side) {
+    return side && typeof side.status === "string" && side.status
+      ? side.status
+      : "not available";
+  }
+
+  function formatCombatModelSummary(model) {
+    if (!model || typeof model !== "object") {
+      return "model not available";
+    }
+    return `player ${combatSideStatus(model.player)}, enemy ${combatSideStatus(model.enemy)}`;
+  }
+
+  function combatComponentLabel(id) {
+    if (id === "primary_attack_defense") {
+      return "A/D";
+    }
+    if (id === "offence") {
+      return "Offence";
+    }
+    if (id === "armorer") {
+      return "Armorer";
+    }
+    if (id === "archery") {
+      return "Archery";
+    }
+    if (id === "active_spells") {
+      return "Active spells";
+    }
+    if (id === "morale_luck") {
+      return "Morale/luck";
+    }
+    return wordsFromId(id);
+  }
+
+  function formatCombatComponentValue(component) {
+    if (!component || typeof component !== "object") {
+      return "";
+    }
+    if (
+      component.id === "primary_attack_defense"
+      && component.value
+      && typeof component.value === "object"
+    ) {
+      const attack = formatNumber(component.value.attack);
+      const defense = formatNumber(component.value.defense);
+      return `${attack}/${defense}`;
+    }
+    if (typeof component.value === "number") {
+      const sign = component.id === "armorer" ? "-" : "+";
+      return `${sign}${component.value}%`;
+    }
+    return "";
+  }
+
+  function formatCombatComponent(component) {
+    const label = combatComponentLabel(component && component.id);
+    const value = formatCombatComponentValue(component);
+    return value ? `${label} ${value}` : label;
+  }
+
+  function combatComponentTitle(component) {
+    if (!component || typeof component !== "object") {
+      return "";
+    }
+    const parts = [
+      component.id ? `id: ${component.id}` : "",
+      component.reason ? `reason: ${component.reason}` : ""
+    ].filter(Boolean);
+    return parts.join(" | ");
+  }
+
+  function appendCombatChip(parent, component, className) {
+    const chip = document.createElement("span");
+    chip.className = `estimate-model-chip ${className || ""}`.trim();
+    chip.textContent = formatCombatComponent(component);
+    chip.title = combatComponentTitle(component) || chip.textContent;
+    parent.appendChild(chip);
+  }
+
+  function combatSideDiagnostic(side) {
+    if (!side || typeof side !== "object") {
+      return "";
+    }
+    if (side.reason) {
+      return `Reason: ${side.reason}`;
+    }
+    const omitted = Array.isArray(side.omitted) ? side.omitted : [];
+    if (omitted.some((component) => component.reason === "not_parsed")) {
+      return "Passives not parsed";
+    }
+    return "";
+  }
+
+  function appendCombatSideDetails(parent, label, side) {
+    const block = document.createElement("div");
+    block.className = "estimate-model-side";
+
+    const header = document.createElement("div");
+    header.className = "estimate-model-side-header";
+    const status = combatSideStatus(side);
+    header.textContent = `${label}: ${status}`;
+    header.title = side && side.reason ? `${label}: ${status} | ${side.reason}` : header.textContent;
+    block.appendChild(header);
+
+    const chips = document.createElement("div");
+    chips.className = "estimate-model-chip-row";
+    const applied = side && Array.isArray(side.applied) ? side.applied : [];
+    applied.forEach((component) => appendCombatChip(chips, component, "applied"));
+    const diagnostic = combatSideDiagnostic(side);
+    if (diagnostic) {
+      const diagnosticChip = document.createElement("span");
+      diagnosticChip.className = "estimate-model-chip omitted";
+      diagnosticChip.textContent = diagnostic;
+      diagnosticChip.title = header.title;
+      chips.appendChild(diagnosticChip);
+    }
+    if (!applied.length && !diagnostic) {
+      const empty = document.createElement("span");
+      empty.className = "estimate-model-muted";
+      empty.textContent = "No save modifiers";
+      chips.appendChild(empty);
+    }
+    block.appendChild(chips);
+    parent.appendChild(block);
+  }
+
+  function appendCombatGlobalOmissions(parent, components) {
+    const omitted = Array.isArray(components) ? components : [];
+    if (!omitted.length) {
+      return;
+    }
+    const row = document.createElement("div");
+    row.className = "estimate-model-omissions";
+    const label = document.createElement("span");
+    label.className = "estimate-model-omissions-label";
+    label.textContent = "Omitted";
+    row.appendChild(label);
+
+    const chips = document.createElement("div");
+    chips.className = "estimate-model-chip-row";
+    omitted.forEach((component) => appendCombatChip(chips, component, "omitted"));
+    row.appendChild(chips);
+    parent.appendChild(row);
+  }
+
+  function appendCombatModelDetails(parent, model) {
+    if (!model || typeof model !== "object") {
+      return;
+    }
+    const details = document.createElement("div");
+    details.className = "estimate-model-details";
+    appendCombatSideDetails(details, "Player", model.player);
+    appendCombatSideDetails(details, "Enemy", model.enemy);
+    appendCombatGlobalOmissions(details, model.omitted_model_components);
+    parent.appendChild(details);
+  }
+
   function verdictForWinPct(winPct) {
     if (typeof winPct !== "number") {
       return "Unsupported target";
@@ -3217,8 +3381,17 @@
     appendEstimateRow(grid, "Enemy AI", formatNumber(estimate.enemy_ai_value));
     appendEstimateRow(grid, "Win", formatWinPct(estimate.win_pct), "estimate-win");
     appendEstimateRow(grid, "Verdict", verdictForWinPct(estimate.win_pct));
+    if (estimate.combat_model) {
+      appendEstimateRow(
+        grid,
+        "Model",
+        formatCombatModelSummary(estimate.combat_model),
+        "long-value model-value"
+      );
+    }
     appendEstimateRow(grid, "Note", estimate.note || "No note.", "long-value");
     elements.estimateState.appendChild(grid);
+    appendCombatModelDetails(elements.estimateState, estimate.combat_model);
   }
 
   function isFreshPathPayload(payload, request, currentRequestId, selectedHeroId) {
@@ -5688,6 +5861,8 @@
     buildMarkerCache,
     clampZoom,
     defaultLevelForSnapshot,
+    formatCombatComponent,
+    formatCombatModelSummary,
     estimateTargetLabel,
     filterHeroesForQuery,
     formatWinPct,

@@ -1735,7 +1735,19 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Estimate results now show a compact model summary row such as `player
+  primary+secondary, enemy army-only`.
+- The Estimate panel renders side-specific applied model chips for parsed
+  primary A/D and passive Offence, Armorer, and Archery modifiers.
+- Global omitted model components are visible as compact chips for artifacts,
+  active spells, morale/luck, and tactics.
+- Per-side missing parser details remain compact: army-only sides show no save
+  modifiers and not-parsed passives use a short diagnostic chip/title instead of
+  expanding every omitted component.
+- CSS keeps model details inside the existing Estimate panel with wrapping
+  chips and no changes to hero lists or radius scan rows.
+- Verified with `node --check tools/battle_estimator_gui/app.js` and
+  `python3 -m unittest tests.test_battle_estimator_gui`.
 
 ---
 
@@ -1932,5 +1944,5 @@ side-by-side view changes map geometry, rendering, and hit testing.
 | T18 | Build Combat Context Contract | done | T17 | hero-combat-backend | Main | M | API/Core | `tools/h3_save_parser.py`, `tools/battle_estimator_gui.py`, tests |
 | T19 | Apply Passive Combat Modifiers | done | T18 | hero-combat-estimator | Main | M | Core | `tools/battle_estimator.py`, estimator tests |
 | T20 | Expose Combat Model Notes | done | T19 | hero-combat-api | Main | S | API/CLI | `tools/battle_estimator.py`, `tools/battle_estimator_gui.py`, tests |
-| T21 | Render Estimate Model Details | todo | T20 | hero-combat-frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
-| T22 | Hero Combat Docs And Verification | blocked | T21 | hero-combat-quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint doc |
+| T21 | Render Estimate Model Details | done | T20 | hero-combat-frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
+| T22 | Hero Combat Docs And Verification | todo | T21 | hero-combat-quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint doc |
