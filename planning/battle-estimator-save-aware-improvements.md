@@ -1954,7 +1954,7 @@ of truth for highlighted towns.
 | ID | Title | Status | Completion Notes |
 |---|---|---|---|
 | A01 | Backend Threatened Town Payload | done | Added a `CastleAlertTown` payload and serialized `threatened_towns` list for each alert while preserving nearest-town fields. Backend tests cover sorted threatened towns, nearest-field compatibility, and `/api/state` serialization. |
-| A02 | Frontend Alert Hover Overlay | pending | -- |
+| A02 | Frontend Alert Hover Overlay | done | Added alert-row hover/focus preview state, canvas radius overlays around threatening heroes, and highlighted rings for every backend-reported threatened town. Frontend tests cover pointer and keyboard preview state, dashed radius rendering, multi-town highlighting, stale preview clearing, and existing click behavior. README and CHANGELOG now describe the hover preview. |
 
 ## Summary Table
 
@@ -1990,4 +1990,4 @@ of truth for highlighted towns.
 | T21 | Render Estimate Model Details | done | T20 | hero-combat-frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
 | T22 | Hero Combat Docs And Verification | done | T21 | hero-combat-quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint doc |
 | A01 | Backend Threatened Town Payload | done | -- | alert-hover-preview | Main | S | API/Test | `tools/battle_estimator_gui.py`, GUI backend tests, planning doc |
-| A02 | Frontend Alert Hover Overlay | pending | A01 | alert-hover-preview | Main | M | GUI/Docs/Test | `app.js`, `style.css`, GUI tests, README/CHANGELOG/planning doc |
+| A02 | Frontend Alert Hover Overlay | done | A01 | alert-hover-preview | Main | M | GUI/Docs/Test | `app.js`, `style.css`, GUI tests, README/CHANGELOG/planning doc |

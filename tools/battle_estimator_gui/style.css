@@ -660,7 +660,8 @@ select:disabled {
 }
 
 .alert-row:hover,
-.alert-row:focus-visible {
+.alert-row:focus-visible,
+.alert-row.preview {
   border-color: #758195;
   background: #f3f6fa;
   outline: none;

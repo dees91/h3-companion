@@ -1577,7 +1577,21 @@ const alertSnapshot = {{
       distance: 4,
       other_towns_in_radius: 0,
       enemy_position: {{ x: 2, y: 3, z: 1 }},
-      town_position: {{ x: 0, y: 0, z: 1 }}
+      town_position: {{ x: 0, y: 0, z: 1 }},
+      threatened_towns: [
+        {{
+          town_id: "town:0",
+          town_name: "Castle Keep",
+          distance: 4,
+          position: {{ x: 0, y: 0, z: 1 }}
+        }},
+        {{
+          town_id: "town:1",
+          town_name: "Second Castle",
+          distance: 4,
+          position: {{ x: 3, y: 0, z: 1 }}
+        }}
+      ]
     }}
   ]
 }};
@@ -2486,7 +2500,21 @@ const renderedAlertSnapshot = {{
       distance: 4,
       other_towns_in_radius: 2,
       enemy_position: {{ x: 2, y: 3, z: 1 }},
-      town_position: {{ x: 0, y: 0, z: 0 }}
+      town_position: {{ x: 0, y: 0, z: 0 }},
+      threatened_towns: [
+        {{
+          town_id: "town:0",
+          town_name: "Castle Keep",
+          distance: 4,
+          position: {{ x: 0, y: 0, z: 0 }}
+        }},
+        {{
+          town_id: "town:1",
+          town_name: "Second Castle",
+          distance: 4,
+          position: {{ x: 3, y: 0, z: 0 }}
+        }}
+      ]
     }}
   ]
 }};
@@ -2539,7 +2567,15 @@ const hiddenAlertSnapshot = {{
       distance: 2,
       other_towns_in_radius: 0,
       enemy_position: {{ x: 3, y: 2, z: 0 }},
-      town_position: {{ x: 0, y: 0, z: 0 }}
+      town_position: {{ x: 0, y: 0, z: 0 }},
+      threatened_towns: [
+        {{
+          town_id: "town:0",
+          town_name: "Castle Keep",
+          distance: 2,
+          position: {{ x: 0, y: 0, z: 0 }}
+        }}
+      ]
     }}
   ]
 }};
@@ -2551,6 +2587,118 @@ assert.ok(targetStateText().includes("hero hero:hidden"));
 assert.ok(targetStateText().includes("no visible marker"));
 assert.ok(!hiddenAlertRow.className.includes("active"));
 helpers.setPathMode(false);
+const hoverAlertSnapshot = {{
+  ...markerSnapshot,
+  alert_settings: {{
+    my_color_id: 0,
+    my_color_name: "red",
+    my_team_id: null,
+    alert_radius: 2
+  }},
+  castle_alerts_status: "ok",
+  castle_alerts_status_detail: null,
+  castle_alerts: [
+    {{
+      id: "castle-threat:hero:hover",
+      enemy_hero_id: "hero:hover",
+      enemy_hero_name: "Hover Threat",
+      enemy_color_id: 2,
+      enemy_color_name: "tan",
+      town_id: "town:0",
+      town_name: "Castle Keep",
+      distance: 2,
+      other_towns_in_radius: 1,
+      enemy_position: {{ x: 1, y: 1, z: 0 }},
+      town_position: {{ x: 0, y: 0, z: 0 }},
+      threatened_towns: [
+        {{
+          town_id: "town:0",
+          town_name: "Castle Keep",
+          distance: 2,
+          position: {{ x: 0, y: 0, z: 0 }}
+        }},
+        {{
+          town_id: "town:1",
+          town_name: "Second Castle",
+          distance: 2,
+          position: {{ x: 3, y: 0, z: 0 }}
+        }}
+      ]
+    }}
+  ]
+}};
+helpers.renderSnapshot(hoverAlertSnapshot, {{ preserveView: false }});
+const hoverAlertRow = nodesWithClass(elements["castle-alerts-state"], "alert-row")[0];
+assert.ok(hoverAlertRow.events.pointerenter.length > 0);
+assert.ok(hoverAlertRow.events.pointerleave.length > 0);
+assert.ok(hoverAlertRow.events.focus.length > 0);
+assert.ok(hoverAlertRow.events.blur.length > 0);
+assert.deepStrictEqual(
+  helpers.castleAlertThreatenedTownIds({{ town_id: "town:legacy" }}),
+  ["town:legacy"]
+);
+drawOperations.length = 0;
+hoverAlertRow.dispatch("pointerenter", {{}});
+let previewState = helpers.currentCastleAlertPreviewStateForTest();
+assert.strictEqual(previewState.hoveredAlertId, "castle-threat:hero:hover");
+assert.strictEqual(previewState.activeAlertId, "castle-threat:hero:hover");
+assert.strictEqual(helpers.activeCastleAlertPreview().enemy_hero_id, "hero:hover");
+assert.ok(hoverAlertRow.className.includes("preview"));
+const alertHoverView = helpers.currentMapViewForTest();
+const hoverCenter = mapTileScreenPoint(1, 1, alertHoverView);
+const circleOps = alertPreviewCircleOps();
+assert.ok(circleOps.some((operation) => (
+  Math.abs(operation.arc.x - hoverCenter.x) <= 1
+  && Math.abs(operation.arc.y - hoverCenter.y) <= 1
+  && Math.abs(operation.arc.radius - (2 * 28 * alertHoverView.zoom)) <= 1
+)), "alert hover should draw a radius circle around the enemy hero");
+assert.ok(drawOperations.some((operation) => (
+  operation.op === "setLineDash"
+  && Array.isArray(operation.value)
+  && operation.value.length === 0
+)), "alert hover should reset canvas line dash");
+assert.ok(alertTownHighlightOpsNear(mapTileScreenPoint(0, 0, alertHoverView)).length > 0);
+assert.ok(alertTownHighlightOpsNear(mapTileScreenPoint(3, 0, alertHoverView)).length > 0);
+hoverAlertRow.dispatch("focus", {{}});
+hoverAlertRow.dispatch("pointerleave", {{}});
+previewState = helpers.currentCastleAlertPreviewStateForTest();
+assert.strictEqual(previewState.hoveredAlertId, null);
+assert.strictEqual(previewState.focusedAlertId, "castle-threat:hero:hover");
+assert.strictEqual(previewState.activeAlertId, "castle-threat:hero:hover");
+assert.ok(hoverAlertRow.className.includes("preview"));
+hoverAlertRow.dispatch("blur", {{}});
+previewState = helpers.currentCastleAlertPreviewStateForTest();
+assert.strictEqual(previewState.hoveredAlertId, null);
+assert.strictEqual(previewState.focusedAlertId, null);
+assert.strictEqual(previewState.activeAlertId, null);
+assert.ok(!hoverAlertRow.className.includes("preview"));
+helpers.renderSnapshot(hoverAlertSnapshot, {{ preserveView: false }});
+nodesWithClass(elements["castle-alerts-state"], "alert-row")[0].dispatch("pointerenter", {{}});
+assert.strictEqual(
+  helpers.currentCastleAlertPreviewStateForTest().activeAlertId,
+  "castle-threat:hero:hover"
+);
+helpers.renderSnapshot({{
+  ...hoverAlertSnapshot,
+  castle_alerts: [
+    {{
+      ...hoverAlertSnapshot.castle_alerts[0],
+      id: "castle-threat:hero:changed"
+    }}
+  ]
+}}, {{ preserveView: true }});
+assert.strictEqual(helpers.currentCastleAlertPreviewStateForTest().activeAlertId, null);
+nodesWithClass(elements["castle-alerts-state"], "alert-row")[0].dispatch("pointerenter", {{}});
+assert.strictEqual(
+  helpers.currentCastleAlertPreviewStateForTest().activeAlertId,
+  "castle-threat:hero:changed"
+);
+helpers.renderSnapshot({{
+  ...hoverAlertSnapshot,
+  castle_alerts_status: "no_threats",
+  castle_alerts: []
+}}, {{ preserveView: true }});
+assert.strictEqual(helpers.currentCastleAlertPreviewStateForTest().activeAlertId, null);
 helpers.renderSnapshot({{
   ...markerSnapshot,
   castle_alerts_status: "ok",
@@ -2727,6 +2875,24 @@ function pathRouteLineOps() {{
     (operation.op === "moveTo" || operation.op === "lineTo")
     && operation.strokeStyle === "#ffffff"
     && operation.lineWidth === 7
+  ));
+}}
+function alertPreviewCircleOps() {{
+  return drawOperations.filter((operation) => (
+    operation.op === "stroke"
+    && operation.strokeStyle === "#dc2626"
+    && operation.lineWidth === 2
+    && operation.arc
+  ));
+}}
+function alertTownHighlightOpsNear(point) {{
+  return drawOperations.filter((operation) => (
+    operation.op === "stroke"
+    && operation.strokeStyle === "#dc2626"
+    && operation.lineWidth === 3
+    && operation.arc
+    && Math.abs(operation.arc.x - point.x) <= 1
+    && Math.abs(operation.arc.y - point.y) <= 1
   ));
 }}
 function screenXInLane(x, lane, view) {{

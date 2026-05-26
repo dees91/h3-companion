@@ -136,6 +136,10 @@
     hoveredSourceId: null,
     pinnedSourceId: null
   };
+  const castleAlertPreviewState = {
+    hoveredAlertId: null,
+    focusedAlertId: null
+  };
   const heroSkillsState = {
     requestId: 0,
     heroId: null,
@@ -1129,6 +1133,7 @@
   }
 
   function setCastleAlertDiagnostic(message, className) {
+    clearCastleAlertPreview(false);
     clearNode(elements.castleAlertsState);
     elements.castleAlertsState.className = [
       "alert-diagnostic",
@@ -1154,6 +1159,115 @@
       parts.push(`+${alert.other_towns_in_radius} other towns in radius`);
     }
     return parts.join(" | ");
+  }
+
+  function castleAlertById(snapshot, alertId) {
+    if (!snapshot || !alertId || !Array.isArray(snapshot.castle_alerts)) {
+      return null;
+    }
+    return snapshot.castle_alerts.find((alert) => alert.id === alertId) || null;
+  }
+
+  function activeCastleAlertPreviewId() {
+    return (
+      castleAlertPreviewState.hoveredAlertId
+      || castleAlertPreviewState.focusedAlertId
+      || null
+    );
+  }
+
+  function activeCastleAlertPreview(snapshot) {
+    return castleAlertById(snapshot || mapView.snapshot, activeCastleAlertPreviewId());
+  }
+
+  function castleAlertThreatenedTownIds(alert) {
+    if (!alert) {
+      return [];
+    }
+    const ids = Array.isArray(alert.threatened_towns)
+      ? alert.threatened_towns
+        .map((town) => town && town.town_id)
+        .filter(Boolean)
+      : [];
+    if (ids.length === 0 && alert.town_id) {
+      ids.push(alert.town_id);
+    }
+    return ids;
+  }
+
+  function activeCastleAlertThreatenedTownIdSet() {
+    return new Set(castleAlertThreatenedTownIds(activeCastleAlertPreview()));
+  }
+
+  function syncCastleAlertPreviewRows() {
+    const previewId = activeCastleAlertPreviewId() || "";
+    elementsWithClass(elements.castleAlertsState, "alert-row").forEach((row) => {
+      const isPreviewed = Boolean(
+        row.dataset
+        && row.dataset.alertId
+        && row.dataset.alertId === previewId
+      );
+      row.classList.toggle("preview", isPreviewed);
+    });
+  }
+
+  function setCastleAlertHover(alert, hovered) {
+    const alertId = alert && alert.id ? alert.id : null;
+    let changed = false;
+    if (hovered) {
+      if (castleAlertPreviewState.hoveredAlertId !== alertId) {
+        castleAlertPreviewState.hoveredAlertId = alertId;
+        changed = true;
+      }
+    } else if (!alertId || castleAlertPreviewState.hoveredAlertId === alertId) {
+      changed = castleAlertPreviewState.hoveredAlertId !== null;
+      castleAlertPreviewState.hoveredAlertId = null;
+    }
+    if (changed) {
+      syncCastleAlertPreviewRows();
+      drawMap();
+    }
+  }
+
+  function setCastleAlertFocus(alert, focused) {
+    const alertId = alert && alert.id ? alert.id : null;
+    let changed = false;
+    if (focused) {
+      if (castleAlertPreviewState.focusedAlertId !== alertId) {
+        castleAlertPreviewState.focusedAlertId = alertId;
+        changed = true;
+      }
+    } else if (!alertId || castleAlertPreviewState.focusedAlertId === alertId) {
+      changed = castleAlertPreviewState.focusedAlertId !== null;
+      castleAlertPreviewState.focusedAlertId = null;
+    }
+    if (changed) {
+      syncCastleAlertPreviewRows();
+      drawMap();
+    }
+  }
+
+  function clearCastleAlertPreview(redraw) {
+    const changed = Boolean(
+      castleAlertPreviewState.hoveredAlertId
+      || castleAlertPreviewState.focusedAlertId
+    );
+    castleAlertPreviewState.hoveredAlertId = null;
+    castleAlertPreviewState.focusedAlertId = null;
+    if (changed) {
+      syncCastleAlertPreviewRows();
+      if (redraw) {
+        drawMap();
+      }
+    }
+  }
+
+  function currentCastleAlertPreviewStateForTest() {
+    return {
+      hoveredAlertId: castleAlertPreviewState.hoveredAlertId,
+      focusedAlertId: castleAlertPreviewState.focusedAlertId,
+      activeAlertId: activeCastleAlertPreviewId()
+    };
   }
 
   function elementsWithClass(node, className) {
@@ -1253,6 +1367,10 @@
       row.dataset.alertId = alert.id || "";
       row.dataset.enemyHeroId = alert.enemy_hero_id || "";
       row.addEventListener("click", () => focusCastleAlert(alert));
+      row.addEventListener("pointerenter", () => setCastleAlertHover(alert, true));
+      row.addEventListener("pointerleave", () => setCastleAlertHover(alert, false));
+      row.addEventListener("focus", () => setCastleAlertFocus(alert, true));
+      row.addEventListener("blur", () => setCastleAlertFocus(alert, false));
 
       const title = document.createElement("div");
       title.className = "alert-row-title";
@@ -1275,6 +1393,7 @@
       elements.castleAlertsState.appendChild(item);
     });
     syncCastleAlertSelection();
+    syncCastleAlertPreviewRows();
   }
 
   function markerTooltipText(marker) {
@@ -2202,6 +2321,7 @@
       });
       drawPortalRelationOverlay(tileSize);
       drawPathRoute();
+      drawCastleAlertPreviewOverlay(tileSize);
       drawMarkers();
       elements.zoom.textContent = `Zoom ${Math.round(mapView.zoom * 100)}%`;
       return;
@@ -2242,6 +2362,7 @@
 
     drawPortalRelationOverlay(tileSize);
     drawPathRoute();
+    drawCastleAlertPreviewOverlay(tileSize);
     drawMarkers();
     elements.zoom.textContent = `Zoom ${Math.round(mapView.zoom * 100)}%`;
   }
@@ -2652,6 +2773,40 @@
     canvasContext.stroke();
   }
 
+  function drawCastleAlertPreviewOverlay(tileSize) {
+    const alert = activeCastleAlertPreview();
+    if (!alert || !alert.enemy_position) {
+      return;
+    }
+    const center = screenPointForPositionInView(
+      alert.enemy_position,
+      mapView.snapshot,
+      mapView
+    );
+    if (!center) {
+      return;
+    }
+    const settings = snapshotAlertSettings(mapView.snapshot);
+    const screenRadius = Math.max(1, settings.alertRadius * tileSize * mapView.zoom);
+
+    canvasContext.save();
+    canvasContext.globalAlpha = 0.72;
+    canvasContext.fillStyle = "rgba(220, 38, 38, 0.08)";
+    canvasContext.strokeStyle = "#dc2626";
+    canvasContext.lineWidth = 2;
+    canvasContext.setLineDash([7, 5]);
+    canvasContext.beginPath();
+    canvasContext.arc(center.x, center.y, screenRadius, 0, Math.PI * 2);
+    canvasContext.fill();
+    canvasContext.stroke();
+    canvasContext.setLineDash([]);
+    canvasContext.restore();
+  }
+
+  function drawCastleAlertTownHighlight(screen, radius) {
+    drawMarkerRing(screen, radius + 10, "#dc2626", 3);
+  }
+
   function portalSymbolStrokeWidth(radius) {
     return clamp(radius * 0.2, 2, 4);
   }
@@ -2736,11 +2891,13 @@
   }
 
   function drawMarkers() {
+    const alertTownIds = activeCastleAlertThreatenedTownIdSet();
     mapView.markers.forEach((marker) => {
       const screen = worldToScreen(marker.world, mapView);
       const radius = markerScreenRadius(marker, mapView) - 3;
       const isActive = marker.id === mapView.activeMarkerId;
       const isHover = marker.id === mapView.hoveredMarkerId;
+      const isAlertTown = marker.type === "town" && alertTownIds.has(marker.id);
       const scanColors = scanColorsForMarker(marker);
       const ownerColors = playerColorStyle(marker.ownerColorName);
 
@@ -2801,6 +2958,9 @@
           radius * 2,
           radius * 1.36
         );
+        if (isAlertTown) {
+          drawCastleAlertTownHighlight(screen, radius);
+        }
       } else if (marker.type === "portal") {
         const portalStyle = portalStyleForType(marker.portalType);
         canvasContext.fillStyle = portalStyle.fill;
@@ -5437,6 +5597,7 @@
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
     clearPortalRelationState();
+    clearCastleAlertPreview(false);
     elements.canvas.classList.remove("has-marker-hover");
     hideMapTooltip();
     hideTargetContextMenu();
@@ -5491,6 +5652,7 @@
     mapView.hoveredMarkerId = null;
     mapView.activeMarkerId = null;
     clearPortalRelationState();
+    clearCastleAlertPreview(false);
     elements.canvas.classList.remove("has-marker-hover");
     elements.showHiddenToggle.checked = false;
     elements.showHiddenToggle.disabled = true;
@@ -5905,7 +6067,10 @@
     recentHeroChipState,
     renderSnapshot,
     loadState,
+    activeCastleAlertPreview,
+    castleAlertThreatenedTownIds,
     focusCastleAlert,
+    currentCastleAlertPreviewStateForTest,
     syncCastleAlertSelection,
     resolveSelectedHeroId,
     routeRowsForLevel,

@@ -19,7 +19,8 @@ defined in [docs/release-policy.md](docs/release-policy.md).
   alerts; invalid or ambiguous ownership remains unavailable rather than
   falling back to initial H3M owners.
 - Defensive owned-town alerts in the GUI, configured with `My color` and
-  `Alert radius`, with alert rows that focus the threatening enemy hero.
+  `Alert radius`, with alert rows that focus the threatening enemy hero and
+  hover previews that show the alert radius plus every threatened town.
 - Save-derived hero combat context for verified GM1 records, exposing current
   primary and secondary skills in hero snapshots plus applied passive combat
   modifiers and per-side model labels in estimate payloads, CLI output, and the
