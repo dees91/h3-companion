@@ -4843,6 +4843,152 @@ assert.ok(pathSegmentButtons().length >= 4);
 
             self._with_server(check, app_state=app_state)
 
+    def test_state_endpoint_includes_exact_current_town_owner(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (),
+                town_state_records=(
+                    _gui_town_state_record_bytes(3),
+                ),
+            )
+            map_path = _write_h3m_map_with_town(
+                temp_path / "town-map.h3m",
+                owner=0,
+            )
+            config_path = temp_path / "config.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["heroes"], [])
+                town = payload["town_targets"][0]
+                self.assertEqual(town["initial_owner"], 0)
+                self.assertEqual(town["initial_owner_color_name"], "red")
+                self.assertEqual(town["current_owner_color_id"], 3)
+                self.assertEqual(town["current_owner_color_name"], "green")
+                self.assertEqual(
+                    town["ownership_status"],
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT,
+                )
+                self.assertEqual(
+                    town["ownership_source"],
+                    h3_save_parser.TOWN_OWNERSHIP_SOURCE_SAVE_TOWN_STATE_RECORD,
+                )
+                self.assertEqual(
+                    town["ownership_confidence"],
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT,
+                )
+                self.assertIsNone(town["ownership_reason"])
+                self.assertEqual(town["ownership_matching_hero_count"], 0)
+                self.assertEqual(town["ownership_matching_hero_names"], [])
+
+            self._with_server(check, app_state=app_state)
+
+    def test_state_endpoint_exact_owner_overrides_conflicting_town_proxy(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 256,
+                        "position": (6, 5, 0),
+                        "owner_color_id": 2,
+                    },
+                ),
+                town_state_records=(
+                    _gui_town_state_record_bytes(3),
+                ),
+            )
+            map_path = _write_h3m_map_with_town(
+                temp_path / "town-map.h3m",
+                owner=0,
+            )
+            config_path = temp_path / "config.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                town = payload["town_targets"][0]
+                hero = payload["heroes"][0]
+                self.assertEqual(hero["owner_color_id"], 2)
+                self.assertEqual(hero["position"], town["position"])
+                self.assertEqual(town["current_owner_color_id"], 3)
+                self.assertEqual(town["current_owner_color_name"], "green")
+                self.assertEqual(
+                    town["ownership_status"],
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT,
+                )
+                self.assertEqual(town["ownership_matching_hero_count"], 0)
+
+            self._with_server(check, app_state=app_state)
+
+    def test_state_endpoint_includes_exact_neutral_town_owner(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (),
+                town_state_records=(
+                    _gui_town_state_record_bytes(h3_save_parser.HERO_OWNER_UNOWNED),
+                ),
+            )
+            map_path = _write_h3m_map_with_town(
+                temp_path / "town-map.h3m",
+                owner=0,
+            )
+            config_path = temp_path / "config.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            def check(base_url):
+                status, payload = self._get_json(base_url, "/api/state")
+
+                self.assertEqual(status, 200)
+                town = payload["town_targets"][0]
+                self.assertIsNone(town["current_owner_color_id"])
+                self.assertIsNone(town["current_owner_color_name"])
+                self.assertEqual(
+                    town["ownership_status"],
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT,
+                )
+                self.assertEqual(
+                    town["ownership_source"],
+                    h3_save_parser.TOWN_OWNERSHIP_SOURCE_SAVE_TOWN_STATE_RECORD,
+                )
+
+            self._with_server(check, app_state=app_state)
+
     def test_state_endpoint_includes_current_town_owner_proxy(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -7607,6 +7753,36 @@ class BattleEstimatorGuiCastleAlertTests(unittest.TestCase):
             battle_estimator_gui.CASTLE_ALERT_STATUS_OWNERSHIP_UNAVAILABLE,
         )
 
+    def test_castle_alerts_accept_exact_and_ignore_exact_neutral_towns(self):
+        owned_town, owned_ownership = _alert_town(
+            1,
+            (5, 5, 0),
+            owner_color_id=0,
+            ownership_status=h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT,
+        )
+        neutral_town, neutral_ownership = _alert_town(
+            2,
+            (6, 5, 0),
+            owner_color_id=None,
+            ownership_status=h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT,
+        )
+        enemy = _alert_hero("Marius", (7, 5, 0), owner_color_id=2)
+        snapshot = _alert_snapshot(
+            towns=(owned_town, neutral_town),
+            ownerships=(owned_ownership, neutral_ownership),
+            hero_entries=(("hero:200", enemy),),
+        )
+
+        result = battle_estimator_gui.build_castle_alerts(
+            snapshot,
+            h3_save_parser.BattleEstimatorConfig(my_color_id=0, alert_radius=3),
+        )
+
+        self.assertEqual(result.status, battle_estimator_gui.CASTLE_ALERT_STATUS_OK)
+        self.assertEqual(len(result.alerts), 1)
+        self.assertEqual(result.alerts[0].town_id, "town:1")
+        self.assertEqual(result.alerts[0].other_towns_in_radius, 0)
+
     def test_castle_alerts_report_no_owned_towns(self):
         enemy_town, enemy_ownership = _alert_town(1, (5, 5, 0), owner_color_id=2)
         empty_snapshot = _alert_snapshot()
@@ -9197,21 +9373,24 @@ def _alert_town(
     custom_name: str | None = None,
 ):
     town = _alert_town_target(object_index, position, custom_name=custom_name)
+    if ownership_status == h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT:
+        ownership_source = h3_save_parser.TOWN_OWNERSHIP_SOURCE_SAVE_TOWN_STATE_RECORD
+        reason = None
+    elif ownership_status == h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY:
+        ownership_source = h3_save_parser.TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY
+        reason = None
+    else:
+        ownership_source = None
+        reason = "test_unavailable"
     ownership = h3_save_parser.TownOwnershipObservation(
         object_index=object_index,
         h3m_subid=3,
         position=h3_save_parser.HeroPosition(*position),
         current_owner_color_id=owner_color_id,
         ownership_status=ownership_status,
-        ownership_source=(
-            h3_save_parser.TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY
-            if ownership_status == h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY
-            else None
-        ),
+        ownership_source=ownership_source,
         ownership_confidence=ownership_status,
-        reason=None
-        if ownership_status == h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY
-        else "test_unavailable",
+        reason=reason,
     )
     return town, ownership
 
@@ -9327,6 +9506,27 @@ def _write_h3m_map_with_town(path: Path, owner=2) -> Path:
     return path
 
 
+def _gui_town_state_record_bytes(
+    owner_color_id,
+    sequence_index=0,
+    position=(6, 5, 0),
+    h3m_subid=3,
+):
+    x, y, z = position
+    return bytes((
+        int(sequence_index),
+        int(owner_color_id),
+        0,
+        0,
+        int(h3m_subid),
+        int(x),
+        int(y),
+        int(z),
+        0xFF,
+        0xFF,
+    ))
+
+
 def _write_h3m_map_with_portals(path: Path) -> Path:
     visit_mask = bytes((0x01, 0x00, 0x00, 0x00, 0x00, 0x40))
     payload = _minimal_h3m_with_templates_and_objects(
@@ -9369,9 +9569,18 @@ def _write_empty_h3m_map(path: Path, map_size=1, levels=1) -> Path:
     return path
 
 
-def _write_multi_gui_save(game_dir: Path, name: str, hero_specs) -> Path:
-    max_name_offset = max(spec["name_offset"] for spec in hero_specs)
-    data = bytearray(max_name_offset + 256)
+def _write_multi_gui_save(
+    game_dir: Path,
+    name: str,
+    hero_specs,
+    town_state_records=(),
+) -> Path:
+    hero_specs = tuple(hero_specs)
+    max_name_offset = max(
+        (spec["name_offset"] for spec in hero_specs),
+        default=0,
+    )
+    data = bytearray(max(max_name_offset + 256, 96))
     data[0:len(battle_estimator_gui.h3_save_parser.H3SVG_SIGNATURE)] = (
         battle_estimator_gui.h3_save_parser.H3SVG_SIGNATURE
     )
@@ -9383,6 +9592,8 @@ def _write_multi_gui_save(game_dir: Path, name: str, hero_specs) -> Path:
             position=spec.get("position"),
             owner_color_id=spec.get("owner_color_id", 0),
         )
+    for record in town_state_records:
+        data.extend(b"\xFF" + record + b"\x00" * 17)
     save_path = game_dir / name
     save_path.write_bytes(gzip.compress(bytes(data)))
     return save_path

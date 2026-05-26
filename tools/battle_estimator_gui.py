@@ -1222,9 +1222,9 @@ def _build_domain_snapshot_from_source(
     hero_entries = _hero_entries(heroes)
     town_ownership_by_id = _town_ownership_by_id(
         loaded_map.town_targets,
-        h3_save_parser.infer_current_town_ownership(
+        h3_save_parser.detect_current_town_ownership(
+            loaded_save.data,
             loaded_map.town_targets,
-            detected_heroes,
         ),
     )
     state = {
@@ -1441,11 +1441,7 @@ def build_castle_alerts(
     unavailable_town_ids = tuple(
         _town_target_id(town)
         for town, ownership in town_ownership_pairs
-        if (
-            ownership is None
-            or ownership.ownership_status
-            != h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY
-        )
+        if not _town_ownership_is_available(ownership)
     )
     if unavailable_town_ids:
         return CastleAlertResult(
@@ -1470,6 +1466,16 @@ def build_castle_alerts(
     if not alerts:
         return CastleAlertResult(CASTLE_ALERT_STATUS_NO_THREATS)
     return CastleAlertResult(CASTLE_ALERT_STATUS_OK, alerts=alerts)
+
+
+def _town_ownership_is_available(ownership) -> bool:
+    return (
+        ownership is not None
+        and ownership.ownership_status in {
+            h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT,
+            h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY,
+        }
+    )
 
 
 def _castle_alerts_for_owned_towns(
