@@ -1929,6 +1929,20 @@ side-by-side view changes map geometry, rendering, and hit testing.
 - If artifacts or spellbook data are parsed later, which extra VCMI config
   files are needed for truthful modeling and attribution?
 
+## Direct Town Ownership Follow-Up
+
+These tasks replace the bounded hero-on-town proxy with a direct current town
+state parser while keeping the work split into reviewable atomic commits. Each
+implementation task must use a plan review subagent, a code review subagent,
+focused tests, completion notes, and an atomic commit before the next task.
+
+| ID | Title | Status | Completion Notes |
+|---|---|---|---|
+| D01 | Direct Town-State Parser + Contract Tests | done | Added exact save-town-state ownership parsing in `h3_save_parser`, including owner `0..7`, neutral `0xff`, duplicate/invalid record diagnostics, proxy fallback when no direct record exists, and focused synthetic parser coverage. Local verification against the observed Diamond save resolved 24/24 towns as `exact`. |
+| D02 | Backend Snapshot And Castle Alerts | pending | -- |
+| D03 | Frontend Current Owner Rendering | pending | -- |
+| D04 | Documentation And Final Notes | pending | -- |
+
 ## Summary Table
 
 | ID | Title | Status | Blocked By | Wave | Execution | Effort | Scope | Files Likely Touched |

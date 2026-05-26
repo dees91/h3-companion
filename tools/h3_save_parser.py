@@ -155,12 +155,18 @@ HERO_COMBAT_PASSIVE_MODIFIERS = {
     },
 }
 H3M_TOWN_OBJECT_ID = 98
+TOWN_OWNERSHIP_SOURCE_SAVE_TOWN_STATE_RECORD = "save_town_state_record"
 TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY = "hero_on_town_tile_proxy"
+TOWN_OWNERSHIP_STATUS_EXACT = "exact"
 TOWN_OWNERSHIP_STATUS_PROXY = "proxy"
 TOWN_OWNERSHIP_STATUS_UNAVAILABLE = "ownership_unavailable"
 TOWN_OWNERSHIP_REASON_NOT_STANDARD_TOWN_TARGET = "not_standard_town_target"
 TOWN_OWNERSHIP_REASON_MISSING_TOWN_IDENTITY = "missing_town_identity"
 TOWN_OWNERSHIP_REASON_MISSING_TOWN_POSITION = "missing_town_position"
+TOWN_OWNERSHIP_REASON_AMBIGUOUS_TOWN_STATE_RECORD = (
+    "ambiguous_town_state_record"
+)
+TOWN_OWNERSHIP_REASON_INVALID_TOWN_STATE_OWNER = "invalid_town_state_owner"
 TOWN_OWNERSHIP_REASON_NO_VISIBLE_HERO = "no_visible_hero_on_town_tile"
 TOWN_OWNERSHIP_REASON_AMBIGUOUS_VISIBLE_HEROES = (
     "ambiguous_visible_heroes_on_town_tile"
@@ -1169,10 +1175,155 @@ def detect_current_town_ownership(
 ) -> tuple[TownOwnershipObservation, ...]:
     """Infer current town ownership from save bytes and parsed H3M towns."""
 
-    return infer_current_town_ownership(
-        town_targets,
+    towns = tuple(town_targets or ())
+    if not towns:
+        return ()
+
+    h3svg_offset = find_h3svg_offset(data)
+    if h3svg_offset is None:
+        direct_observations = (None,) * len(towns)
+    else:
+        direct_observations = tuple(
+            _detect_current_town_state_ownership_for_target(
+                data,
+                target,
+                sequence_index,
+                len(towns),
+                scan_start=h3svg_offset + len(H3SVG_SIGNATURE),
+            )
+            for sequence_index, target in enumerate(towns)
+        )
+    if all(observation is not None for observation in direct_observations):
+        return direct_observations
+
+    proxy_observations = infer_current_town_ownership(
+        towns,
         scan_xor01_hero_armies(data),
     )
+    return tuple(
+        proxy if direct is None else direct
+        for direct, proxy in zip(direct_observations, proxy_observations)
+    )
+
+
+def _detect_current_town_state_ownership_for_target(
+    data: bytes,
+    target,
+    sequence_index: int,
+    town_count: int,
+    scan_start: int = 5,
+) -> TownOwnershipObservation | None:
+    object_index = _town_target_int_attr(target, "object_index")
+    h3m_subid = _town_target_int_attr(target, "h3m_subid")
+    position = _town_target_position(target)
+
+    if _town_target_int_attr(target, "object_id") != H3M_TOWN_OBJECT_ID:
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            position,
+            TOWN_OWNERSHIP_REASON_NOT_STANDARD_TOWN_TARGET,
+        )
+    if (
+        object_index is None
+        or h3m_subid is None
+        or not _town_target_has_anchor_identity(target)
+    ):
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            position,
+            TOWN_OWNERSHIP_REASON_MISSING_TOWN_IDENTITY,
+        )
+    if position is None:
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            None,
+            TOWN_OWNERSHIP_REASON_MISSING_TOWN_POSITION,
+        )
+
+    matches = _find_current_town_state_record_matches(
+        data,
+        sequence_index,
+        town_count,
+        h3m_subid,
+        position,
+        scan_start,
+    )
+    if not matches:
+        return None
+    if len(matches) != 1:
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            position,
+            TOWN_OWNERSHIP_REASON_AMBIGUOUS_TOWN_STATE_RECORD,
+        )
+
+    owner_color_id = matches[0]
+    if owner_color_id == HERO_OWNER_UNOWNED:
+        owner_color_id = None
+    elif owner_color_id < 0 or owner_color_id >= len(PLAYER_COLOR_NAMES):
+        return _unavailable_town_ownership_observation(
+            object_index,
+            h3m_subid,
+            position,
+            TOWN_OWNERSHIP_REASON_INVALID_TOWN_STATE_OWNER,
+        )
+
+    return TownOwnershipObservation(
+        object_index=object_index,
+        h3m_subid=h3m_subid,
+        position=position,
+        current_owner_color_id=owner_color_id,
+        ownership_status=TOWN_OWNERSHIP_STATUS_EXACT,
+        ownership_source=TOWN_OWNERSHIP_SOURCE_SAVE_TOWN_STATE_RECORD,
+        ownership_confidence=TOWN_OWNERSHIP_STATUS_EXACT,
+        reason=None,
+    )
+
+
+def _find_current_town_state_record_matches(
+    data: bytes,
+    sequence_index: int,
+    town_count: int,
+    h3m_subid: int,
+    position: HeroPosition,
+    scan_start: int = 5,
+) -> tuple[int, ...]:
+    if sequence_index < 0 or sequence_index > 0xFF or h3m_subid > 0xFF:
+        return ()
+    if (
+        position.x < 0
+        or position.x > 0xFF
+        or position.y < 0
+        or position.y > 0xFF
+        or position.z < 0
+        or position.z > 0xFF
+    ):
+        return ()
+
+    position_bytes = bytes((position.x & 0xFF, position.y & 0xFF, position.z & 0xFF))
+    matches = []
+    town_count_prefix = town_count if 0 <= town_count <= 0xFF else None
+    start = max(6, scan_start)
+    while True:
+        offset = data.find(position_bytes, start)
+        if offset == -1:
+            break
+        if offset + len(position_bytes) + 2 > len(data):
+            break
+        previous_byte = data[offset - 6]
+        if (
+            (previous_byte == HERO_OWNER_UNOWNED or previous_byte == town_count_prefix)
+            and data[offset - 5] == sequence_index
+            and data[offset - 1] == h3m_subid
+            and data[offset + 3:offset + 5] == b"\xFF\xFF"
+        ):
+            matches.append(data[offset - 4])
+        start = offset + 1
+    return tuple(matches)
 
 
 def infer_current_town_ownership(

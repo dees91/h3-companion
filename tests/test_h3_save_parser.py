@@ -378,6 +378,47 @@ def _build_town_proxy_fixture_heroes(hero_specs):
     return _build_multi_xor_hero_fixture(hero_specs)
 
 
+def _town_state_record_bytes(
+    sequence_index,
+    town,
+    owner_color_id,
+    position=None,
+    h3m_subid=None,
+    flags=(0, 0),
+):
+    x, y, z = position if position is not None else (town.x, town.y, town.z)
+    return bytes((
+        int(sequence_index),
+        int(owner_color_id),
+        int(flags[0]),
+        int(flags[1]),
+        int(town.h3m_subid if h3m_subid is None else h3m_subid),
+        int(x),
+        int(y),
+        int(z),
+        0xFF,
+        0xFF,
+    ))
+
+
+def _build_town_state_fixture(towns, owner_color_ids, hero_specs=()):
+    records = [
+        _town_state_record_bytes(sequence_index, town, owner_color_id)
+        for sequence_index, (town, owner_color_id) in enumerate(
+            zip(towns, owner_color_ids),
+        )
+        if owner_color_id is not None
+    ]
+    return b"".join((
+        h3_save_parser.H3SVG_SIGNATURE,
+        b"\x00" * 32,
+        b"\x00\x01\x02\x03\x04\x05\x06\x07",
+        b"\x00" * 32,
+        b"".join(b"\xFF" + record + b"\x00" * 17 for record in records),
+        _build_multi_xor_hero_fixture(hero_specs) if hero_specs else b"",
+    ))
+
+
 def _synthetic_town_target(
     position=(6, 5, 0),
     initial_owner=0,
@@ -2874,6 +2915,248 @@ class H3SaveParserContractTests(unittest.TestCase):
             hero.combat_context.reason,
             h3_save_parser.HERO_COMBAT_REASON_TRUNCATED_PRIMARY,
         )
+
+    def test_detect_current_town_ownership_uses_exact_town_state_records(self):
+        towns = (
+            _synthetic_town_target(
+                position=(6, 5, 0),
+                initial_owner=0,
+                object_index=17,
+                h3m_subid=3,
+            ),
+            _synthetic_town_target(
+                position=(12, 8, 1),
+                initial_owner=None,
+                object_index=18,
+                h3m_subid=4,
+            ),
+            _synthetic_town_target(
+                position=(20, 9, 0),
+                initial_owner=2,
+                object_index=19,
+                h3m_subid=7,
+            ),
+        )
+        data = _build_town_state_fixture(
+            towns,
+            (
+                3,
+                h3_save_parser.HERO_OWNER_UNOWNED,
+                1,
+            ),
+        )
+
+        observations = h3_save_parser.detect_current_town_ownership(data, towns)
+
+        self.assertEqual(len(observations), 3)
+        self.assertEqual(
+            [observation.ownership_status for observation in observations],
+            [h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT] * 3,
+        )
+        self.assertEqual(
+            [observation.ownership_source for observation in observations],
+            [h3_save_parser.TOWN_OWNERSHIP_SOURCE_SAVE_TOWN_STATE_RECORD] * 3,
+        )
+        self.assertEqual(
+            [observation.ownership_confidence for observation in observations],
+            [h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT] * 3,
+        )
+        self.assertEqual(
+            [observation.current_owner_color_id for observation in observations],
+            [3, None, 1],
+        )
+        self.assertEqual(
+            [observation.current_owner_color_name for observation in observations],
+            ["green", None, "blue"],
+        )
+        self.assertEqual([observation.reason for observation in observations], [None] * 3)
+        self.assertNotEqual(towns[0].initial_owner, observations[0].current_owner_color_id)
+
+    def test_detect_current_town_ownership_exact_overrides_conflicting_proxy(self):
+        town = _synthetic_town_target(initial_owner=0)
+        data = _build_town_state_fixture(
+            (town,),
+            (3,),
+            hero_specs=(
+                {
+                    "hero_name": "Marius",
+                    "position": (town.x, town.y, town.z),
+                    "owner_color_id": 2,
+                },
+            ),
+        )
+
+        observation = h3_save_parser.detect_current_town_ownership(
+            data,
+            (town,),
+        )[0]
+
+        self.assertEqual(
+            observation.ownership_status,
+            h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT,
+        )
+        self.assertEqual(
+            observation.ownership_source,
+            h3_save_parser.TOWN_OWNERSHIP_SOURCE_SAVE_TOWN_STATE_RECORD,
+        )
+        self.assertEqual(observation.current_owner_color_id, 3)
+        self.assertEqual(observation.current_owner_color_name, "green")
+        self.assertEqual(observation.matching_hero_names, ())
+
+    def test_detect_current_town_ownership_falls_back_to_proxy_when_exact_missing(self):
+        town = _synthetic_town_target(initial_owner=0)
+        data = _build_town_state_fixture(
+            (town,),
+            (None,),
+            hero_specs=(
+                {
+                    "hero_name": "Marius",
+                    "position": (town.x, town.y, town.z),
+                    "owner_color_id": 2,
+                },
+            ),
+        )
+
+        observation = h3_save_parser.detect_current_town_ownership(
+            data,
+            (town,),
+        )[0]
+
+        self.assertEqual(
+            observation.ownership_status,
+            h3_save_parser.TOWN_OWNERSHIP_STATUS_PROXY,
+        )
+        self.assertEqual(
+            observation.ownership_source,
+            h3_save_parser.TOWN_OWNERSHIP_SOURCE_HERO_ON_TOWN_TILE_PROXY,
+        )
+        self.assertEqual(observation.current_owner_color_id, 2)
+        self.assertEqual(observation.matching_hero_names, ("Marius",))
+
+    def test_detect_current_town_ownership_rejects_bad_exact_records(self):
+        town = _synthetic_town_target(initial_owner=0)
+        exact_record = _town_state_record_bytes(0, town, 3)
+        invalid_owner_record = _town_state_record_bytes(0, town, 8)
+        invalid_owner_fe_record = _town_state_record_bytes(0, town, 0xFE)
+        cases = (
+            (
+                "duplicate_exact_record",
+                b"\xFF" + exact_record + b"\x00" * 8 + b"\xFF" + exact_record,
+                h3_save_parser.TOWN_OWNERSHIP_REASON_AMBIGUOUS_TOWN_STATE_RECORD,
+            ),
+            (
+                "valid_and_invalid_duplicate_record",
+                b"\xFF" + exact_record + b"\x00" * 8 + b"\xFF" + invalid_owner_record,
+                h3_save_parser.TOWN_OWNERSHIP_REASON_AMBIGUOUS_TOWN_STATE_RECORD,
+            ),
+            (
+                "invalid_owner_8",
+                b"\xFF" + invalid_owner_record,
+                h3_save_parser.TOWN_OWNERSHIP_REASON_INVALID_TOWN_STATE_OWNER,
+            ),
+            (
+                "invalid_owner_fe",
+                b"\xFF" + invalid_owner_fe_record,
+                h3_save_parser.TOWN_OWNERSHIP_REASON_INVALID_TOWN_STATE_OWNER,
+            ),
+        )
+
+        for name, payload, expected_reason in cases:
+            with self.subTest(case=name):
+                hero_payload = _build_multi_xor_hero_fixture((
+                    {
+                        "hero_name": "Marius",
+                        "position": (town.x, town.y, town.z),
+                        "owner_color_id": 2,
+                    },
+                ))
+                observation = h3_save_parser.detect_current_town_ownership(
+                    b"".join((
+                        h3_save_parser.H3SVG_SIGNATURE,
+                        b"\x00" * 16,
+                        payload,
+                        hero_payload,
+                    )),
+                    (town,),
+                )[0]
+
+                self.assertEqual(
+                    observation.ownership_status,
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                )
+                self.assertIsNone(observation.current_owner_color_id)
+                self.assertEqual(observation.reason, expected_reason)
+                self.assertEqual(observation.matching_hero_names, ())
+
+    def test_detect_current_town_ownership_ignores_non_matching_exact_noise(self):
+        town = _synthetic_town_target(initial_owner=0)
+        cases = (
+            (
+                "wrong_sequence_index",
+                b"\xFF" + _town_state_record_bytes(1, town, 3),
+            ),
+            (
+                "wrong_subid",
+                b"\xFF" + _town_state_record_bytes(
+                    0,
+                    town,
+                    3,
+                    h3m_subid=town.h3m_subid + 1,
+                ),
+            ),
+            (
+                "wrong_x",
+                b"\xFF" + _town_state_record_bytes(
+                    0,
+                    town,
+                    3,
+                    position=(town.x + 1, town.y, town.z),
+                ),
+            ),
+            (
+                "wrong_y",
+                b"\xFF" + _town_state_record_bytes(
+                    0,
+                    town,
+                    3,
+                    position=(town.x, town.y + 1, town.z),
+                ),
+            ),
+            (
+                "wrong_level",
+                b"\xFF" + _town_state_record_bytes(
+                    0,
+                    town,
+                    3,
+                    position=(town.x, town.y, town.z + 1),
+                ),
+            ),
+            (
+                "truncated_prefix",
+                b"\xFF" + _town_state_record_bytes(0, town, 3)[4:],
+            ),
+            (
+                "coordinate_like_noise",
+                bytes((0, 3, town.x, town.y, town.z, town.h3m_subid)),
+            ),
+        )
+
+        for name, payload in cases:
+            with self.subTest(case=name):
+                observation = h3_save_parser.detect_current_town_ownership(
+                    h3_save_parser.H3SVG_SIGNATURE + b"\x00" * 16 + payload,
+                    (town,),
+                )[0]
+
+                self.assertEqual(
+                    observation.ownership_status,
+                    h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE,
+                )
+                self.assertIsNone(observation.current_owner_color_id)
+                self.assertEqual(
+                    observation.reason,
+                    h3_save_parser.TOWN_OWNERSHIP_REASON_NO_VISIBLE_HERO,
+                )
 
     def test_detect_current_town_ownership_uses_bounded_proxy_cases(self):
         cases = (
