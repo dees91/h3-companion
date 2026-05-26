@@ -536,7 +536,24 @@ transport, and context cache behavior.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Added read-only `AdvisorContextService.find_route()` and
+  `AdvisorContextService.explain_portal()` wrappers plus module-level route and
+  portal helpers in `tools/battle_estimator_mcp.py`.
+- `find_route` accepts a hero ID and exactly one target source: a marker target
+  ID or strict `{x, y, z}` target position. It reuses existing GUI pathfinding
+  request/result helpers and reports requested/resolved positions, route
+  segments, portal segments, fallback status, non-deterministic portal usage,
+  hidden-target counts, and model limitations.
+- Hidden neutral/hero target IDs are treated as unknown by default and exact
+  hidden IDs are only exposed when hidden targets are explicitly included.
+- `explain_portal` inspects raw parsed portal targets and edges, reporting
+  portal role/type/channel, outbound destinations, inbound sources, cross-level
+  edges, non-deterministic multi-exit channels, and unresolved edge counts
+  without invoking pathfinding conversion.
+- Added focused tests for explicit-position routing, marker-target routing
+  through portals, fallback/not-found statuses, hidden route target privacy,
+  non-deterministic portal segments, portal explanation, unresolved portal
+  edges, invalid payloads, limitations, and read-only config behavior.
 
 ---
 
@@ -759,7 +776,7 @@ transport, and context cache behavior.
 | T02 | Read-Only Context Loader | done | T01 | foundation | Main | M | Core/Test | `tools/battle_estimator_mcp.py`, MCP tests |
 | T03 | Advisor Context Builder | done | T02 | foundation | Main | M | Core/Test | advisor module, MCP tests |
 | T04 | Scan And Estimate Tools | done | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
-| T05 | Route And Portal Tools | todo | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
+| T05 | Route And Portal Tools | done | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
 | T06 | Alerts And Color Scope Tools | todo | T03 | compute-tools | Parallel | S | Core/Test | advisor module, MCP tests |
 | T07 | MCP Server Entry Point | blocked | T03, T04, T05, T06 | interface | Main | M | CLI/Integration/Test | `tools/battle_estimator_mcp.py`, MCP tests |
 | T08 | Runbook And Client Setup Docs | blocked | T07 | docs | Main | S | Docs | `docs/mcp-strategic-advisor-runbook.md`, `README.md`, `AGENTS.md` |

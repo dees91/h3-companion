@@ -228,6 +228,39 @@ class AdvisorContextService:
             include_hidden_targets=include_hidden_targets,
         )
 
+    def find_route(
+        self,
+        hero_id: str,
+        *,
+        target_id: str | None = None,
+        target_position: dict[str, int] | None = None,
+        refresh: bool = True,
+        include_hidden_targets: bool = False,
+    ) -> dict[str, Any]:
+        """Find a read-only strategic route from one hero to a target."""
+
+        snapshot = self.get_domain_snapshot(refresh=refresh)
+        config = h3_save_parser.load_config(self.config_path)
+        return find_route(
+            snapshot,
+            hero_id,
+            target_id=target_id,
+            target_position=target_position,
+            config=config,
+            include_hidden_targets=include_hidden_targets,
+        )
+
+    def explain_portal(
+        self,
+        portal_id: str,
+        *,
+        refresh: bool = True,
+    ) -> dict[str, Any]:
+        """Explain one parsed portal/gate and its static directed edges."""
+
+        snapshot = self.get_domain_snapshot(refresh=refresh)
+        return explain_portal(snapshot, portal_id)
+
     def cached_metadata(self) -> dict[str, Any] | None:
         """Return a defensive copy of cached snapshot metadata if loaded."""
 
@@ -456,6 +489,319 @@ def estimate_battle(
         ),
         "known_limitations": _base_advisor_limitations(),
     }
+
+
+def find_route(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    hero_id: str,
+    *,
+    target_id: str | None = None,
+    target_position: dict[str, int] | None = None,
+    config: h3_save_parser.BattleEstimatorConfig | None = None,
+    include_hidden_targets: bool = False,
+) -> dict[str, Any]:
+    """Find a strategic route without mutating GUI/config state."""
+
+    normalized_hero_id, selected_hero = _advisor_hero_by_id(
+        domain_snapshot,
+        hero_id,
+    )
+    if selected_hero.position is None:
+        raise ValueError("selected hero has no parsed position")
+
+    hidden = _advisor_hidden_targets(
+        domain_snapshot,
+        config,
+        selected_hero_id=normalized_hero_id,
+        include_hidden_targets=include_hidden_targets,
+    )
+    target, resolved_target_id, normalized_target_position = _advisor_route_target(
+        domain_snapshot,
+        target_id=target_id,
+        target_position=target_position,
+        hidden_neutral_target_ids=hidden["neutral_ids"],
+        hidden_hero_target_ids=hidden["hero_ids"],
+        include_hidden_targets=include_hidden_targets,
+    )
+    terminal_positions = list(_path_terminal_positions_for_snapshot(domain_snapshot))
+    if resolved_target_id is not None:
+        terminal_positions.append(target)
+
+    request = battle_estimator_gui.build_pathfinding_request(
+        selected_hero.position,
+        target,
+        domain_snapshot.state["route_layers"],
+        portal_targets=domain_snapshot.portal_targets,
+        portal_edges=domain_snapshot.portal_edges,
+        terminal_positions=terminal_positions,
+    )
+    result = battle_estimator_gui.find_path_route(request)
+    payload = battle_estimator_gui._serialize_pathfinding_result(result)
+    portal_segments = [
+        segment
+        for segment in payload["segments"]
+        if segment.get("segment_type") == battle_estimator_gui.PATH_SEGMENT_PORTAL
+    ]
+    payload.update({
+        "hero_id": normalized_hero_id,
+        "include_hidden_targets": bool(include_hidden_targets),
+        "hidden_targets": _hidden_targets_summary(
+            hidden,
+            include_hidden_targets=bool(include_hidden_targets),
+        ),
+        "portal_segments": portal_segments,
+        "uses_portals": bool(portal_segments),
+        "has_non_deterministic_portal": any(
+            segment.get("is_non_deterministic")
+            for segment in portal_segments
+        ),
+        "fallback_status": _route_fallback_status(payload),
+        "known_limitations": _base_advisor_limitations(),
+    })
+    if resolved_target_id is not None:
+        payload["target_id"] = resolved_target_id
+    else:
+        payload["target_position"] = normalized_target_position
+    return payload
+
+
+def explain_portal(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    portal_id: str,
+) -> dict[str, Any]:
+    """Explain a portal from raw parsed portal targets and edges."""
+
+    normalized_portal_id = _normalize_non_empty_text(portal_id, "portal_id")
+    portal_by_object_index = {
+        portal.object_index: portal
+        for portal in domain_snapshot.portal_targets
+    }
+    portal_by_id = {
+        battle_estimator_gui._portal_target_id(portal): portal
+        for portal in domain_snapshot.portal_targets
+    }
+    portal = portal_by_id.get(normalized_portal_id)
+    if portal is None:
+        raise ValueError(f"unknown portal_id: {normalized_portal_id}")
+
+    outgoing_counts = Counter(
+        (edge.source_object_index, edge.channel_key)
+        for edge in domain_snapshot.portal_edges
+    )
+    outbound_edges = tuple(
+        edge
+        for edge in domain_snapshot.portal_edges
+        if edge.source_object_index == portal.object_index
+    )
+    inbound_edges = tuple(
+        edge
+        for edge in domain_snapshot.portal_edges
+        if edge.destination_object_index == portal.object_index
+    )
+    outbound = [
+        _portal_edge_explanation(edge, portal_by_object_index, outgoing_counts)
+        for edge in outbound_edges
+    ]
+    inbound = [
+        _portal_edge_explanation(edge, portal_by_object_index, outgoing_counts)
+        for edge in inbound_edges
+    ]
+    bounded_outbound = outbound[:MAX_CONTEXT_PORTAL_IDS]
+    bounded_inbound = inbound[:MAX_CONTEXT_PORTAL_IDS]
+    return {
+        "portal_id": normalized_portal_id,
+        "position": _target_position_payload(portal),
+        "anchor_position": {
+            "x": portal.anchor_x,
+            "y": portal.anchor_y,
+            "z": portal.anchor_z,
+        },
+        "object_index": portal.object_index,
+        "object_id": portal.object_id,
+        "h3m_subid": portal.h3m_subid,
+        "portal_type": portal.portal_type,
+        "role": portal.role,
+        "channel_key": portal.channel_key,
+        "destination_count": len(outbound),
+        "source_count": len(inbound),
+        "outbound_destinations": bounded_outbound,
+        "inbound_sources": bounded_inbound,
+        "outbound_omitted_count": max(0, len(outbound) - len(bounded_outbound)),
+        "inbound_omitted_count": max(0, len(inbound) - len(bounded_inbound)),
+        "unresolved_outbound_count": sum(
+            1 for edge in outbound if edge["unresolved_destination"]
+        ),
+        "unresolved_inbound_count": sum(
+            1 for edge in inbound if edge["unresolved_source"]
+        ),
+        "cross_level_destination_count": sum(
+            1 for edge in outbound if edge["cross_level"] is True
+        ),
+        "cross_level_source_count": sum(
+            1 for edge in inbound if edge["cross_level"] is True
+        ),
+        "is_non_deterministic": any(
+            edge["is_non_deterministic"] for edge in outbound
+        ),
+        "known_limitations": _base_advisor_limitations(),
+    }
+
+
+def _advisor_route_target(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    *,
+    target_id: str | None,
+    target_position: dict[str, int] | None,
+    hidden_neutral_target_ids: tuple[str, ...],
+    hidden_hero_target_ids: tuple[str, ...],
+    include_hidden_targets: bool,
+) -> tuple[dict[str, Any], str | None, dict[str, int] | None]:
+    has_target_id = target_id is not None
+    has_target_position = target_position is not None
+    if has_target_id == has_target_position:
+        raise ValueError("provide exactly one of target_position or target_id")
+
+    if has_target_position:
+        normalized_position = _strict_target_position(
+            target_position,
+            "target_position",
+        )
+        return normalized_position, None, normalized_position
+
+    normalized_target_id = _normalize_non_empty_text(target_id, "target_id")
+    target = _advisor_route_marker_target_by_id(
+        domain_snapshot,
+        normalized_target_id,
+        hidden_neutral_target_ids=hidden_neutral_target_ids,
+        hidden_hero_target_ids=hidden_hero_target_ids,
+        include_hidden_targets=include_hidden_targets,
+    )
+    return target, normalized_target_id, None
+
+
+def _strict_target_position(value, name: str) -> dict[str, int]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{name} must be an object with x, y, z")
+    if set(value) != {"x", "y", "z"}:
+        raise ValueError(f"{name} must contain exactly x, y, z")
+    return {
+        coordinate: _path_coordinate(value[coordinate], f"{name}.{coordinate}")
+        for coordinate in ("x", "y", "z")
+    }
+
+
+def _path_coordinate(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    return value
+
+
+def _advisor_route_marker_target_by_id(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    target_id: str,
+    *,
+    hidden_neutral_target_ids: tuple[str, ...],
+    hidden_hero_target_ids: tuple[str, ...],
+    include_hidden_targets: bool,
+) -> dict[str, Any]:
+    neutral = domain_snapshot.neutral_by_id.get(target_id)
+    if neutral is not None:
+        hidden = target_id in set(hidden_neutral_target_ids)
+        if hidden and not include_hidden_targets:
+            raise ValueError(f"unknown target_id: {target_id}")
+        return battle_estimator_gui._serialize_neutral_target(
+            neutral,
+            hidden=hidden,
+        )
+
+    hero = domain_snapshot.hero_by_id.get(target_id)
+    if hero is not None:
+        hidden = target_id in set(hidden_hero_target_ids)
+        if hidden and not include_hidden_targets:
+            raise ValueError(f"unknown target_id: {target_id}")
+        return battle_estimator_gui._serialize_hero(
+            hero,
+            target_id,
+            domain_snapshot.team_by_color,
+            hidden=hidden,
+        )
+
+    for town in domain_snapshot.town_targets:
+        if battle_estimator_gui._town_target_id(town) == target_id:
+            return battle_estimator_gui._serialize_town_target(
+                town,
+                domain_snapshot.town_ownership_by_id.get(target_id),
+            )
+
+    for portal in domain_snapshot.portal_targets:
+        if battle_estimator_gui._portal_target_id(portal) == target_id:
+            return battle_estimator_gui._serialize_portal_target(portal)
+
+    raise ValueError(f"unknown target_id: {target_id}")
+
+
+def _path_terminal_positions_for_snapshot(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+) -> tuple[battle_estimator_gui.PathPosition, ...]:
+    return tuple(
+        battle_estimator_gui.PathPosition(target.x, target.y, target.z)
+        for target in domain_snapshot.town_targets
+    )
+
+
+def _route_fallback_status(route_payload: dict[str, Any]) -> str:
+    if route_payload.get("status") != battle_estimator_gui.PATH_STATUS_FOUND:
+        return "not_found"
+    requested = route_payload.get("requested_target_position")
+    resolved = route_payload.get("resolved_target_position")
+    if resolved is None:
+        return "not_found"
+    if resolved == requested:
+        return "exact"
+    return "resolved_neighbor"
+
+
+def _portal_edge_explanation(
+    edge,
+    portal_by_object_index: dict[int, Any],
+    outgoing_counts: Counter,
+) -> dict[str, Any]:
+    source = portal_by_object_index.get(edge.source_object_index)
+    destination = portal_by_object_index.get(edge.destination_object_index)
+    cross_level = (
+        None
+        if source is None or destination is None
+        else source.z != destination.z
+    )
+    return {
+        "source_id": _portal_id_from_object_index(edge.source_object_index),
+        "destination_id": _portal_id_from_object_index(edge.destination_object_index),
+        "source_object_index": edge.source_object_index,
+        "destination_object_index": edge.destination_object_index,
+        "source_position": (
+            None if source is None else _target_position_payload(source)
+        ),
+        "destination_position": (
+            None if destination is None else _target_position_payload(destination)
+        ),
+        "portal_type": edge.portal_type,
+        "channel_key": edge.channel_key,
+        "h3m_subid": edge.h3m_subid,
+        "cross_level": cross_level,
+        "is_non_deterministic": (
+            outgoing_counts[(edge.source_object_index, edge.channel_key)] > 1
+        ),
+        "unresolved_source": source is None,
+        "unresolved_destination": destination is None,
+    }
+
+
+def _portal_id_from_object_index(object_index: int) -> str:
+    return f"portal:{object_index}"
+
+
+def _target_position_payload(target) -> dict[str, int]:
+    return {"x": target.x, "y": target.y, "z": target.z}
 
 
 def _advisor_hero_by_id(

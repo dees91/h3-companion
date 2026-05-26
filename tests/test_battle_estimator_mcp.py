@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tools import (
@@ -16,12 +17,16 @@ from tools import (
 from tests.test_battle_estimator_cli import _write_h3m_map
 from tests.test_battle_estimator_gui import (
     _gui_town_state_record_bytes,
+    _write_empty_h3m_map,
     _write_gui_save,
+    _write_h3m_map_with_portals,
     _write_h3m_map_with_town,
     _write_multi_gui_save,
 )
 from tests.test_h3_map_parser import (
     _build_minimal_sod_h3m_with_teams,
+    _minimal_h3m_with_templates_and_objects,
+    _monster_payload,
     _object_bytes,
     _object_template_bytes,
     _town_payload,
@@ -581,6 +586,290 @@ class AdvisorComputeToolTests(unittest.TestCase):
         )
 
 
+class AdvisorRouteAndPortalToolTests(unittest.TestCase):
+    def test_find_route_accepts_explicit_target_position(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m", map_size=3)
+            service, _ = _advisor_route_service(temp_path, map_path)
+
+            payload = service.find_route(
+                "hero:256",
+                target_position={"x": 2, "y": 0, "z": 0},
+                refresh=True,
+            )
+
+            self.assertEqual(payload["hero_id"], "hero:256")
+            self.assertEqual(payload["status"], battle_estimator_gui.PATH_STATUS_FOUND)
+            self.assertEqual(payload["fallback_status"], "exact")
+            self.assertFalse(payload["uses_portals"])
+            self.assertFalse(payload["has_non_deterministic_portal"])
+            self.assertEqual(payload["target_position"], {"x": 2, "y": 0, "z": 0})
+            self.assertEqual(
+                [step["position"] for step in payload["steps"]],
+                [
+                    {"x": 0, "y": 0, "z": 0},
+                    {"x": 1, "y": 0, "z": 0},
+                    {"x": 2, "y": 0, "z": 0},
+                ],
+            )
+            self.assertTrue(payload["known_limitations"])
+
+    def test_find_route_to_portal_target_reports_used_portal_segment(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            map_path = _write_h3m_map_with_portals(temp_path / "map.h3m")
+            service, _ = _advisor_route_service(
+                temp_path,
+                map_path,
+                hero_position=(6, 5, 0),
+            )
+
+            payload = service.find_route(
+                "hero:256",
+                target_id="portal:1",
+                refresh=True,
+            )
+
+            self.assertEqual(payload["target_id"], "portal:1")
+            self.assertEqual(payload["status"], battle_estimator_gui.PATH_STATUS_FOUND)
+            self.assertEqual(payload["fallback_status"], "exact")
+            self.assertTrue(payload["uses_portals"])
+            self.assertEqual(len(payload["portal_segments"]), 1)
+            segment = payload["portal_segments"][0]
+            self.assertEqual(segment["segment_type"], "portal")
+            self.assertEqual(segment["portal_edge"]["source_id"], "portal:0")
+            self.assertEqual(segment["portal_edge"]["destination_id"], "portal:1")
+            self.assertFalse(payload["has_non_deterministic_portal"])
+
+    def test_find_route_filters_hidden_targets_without_exposing_hidden_ids(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            map_path = _write_route_neutral_h3m(temp_path / "map.h3m")
+            service, config_path = _advisor_route_service(temp_path, map_path)
+            snapshot = service.get_domain_snapshot(refresh=True)
+            map_key = battle_estimator_gui._hidden_neutral_map_key(snapshot)
+            config_path.write_text(
+                json.dumps({
+                    "hidden_neutral_targets_by_map": {map_key: ["neutral:0"]},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            before_config = config_path.read_bytes()
+
+            visible_other_route = service.find_route(
+                "hero:256",
+                target_position={"x": 1, "y": 0, "z": 0},
+                refresh=False,
+            )
+
+            self.assertEqual(
+                visible_other_route["hidden_targets"]["neutral_count"],
+                1,
+            )
+            self.assertEqual(
+                visible_other_route["hidden_targets"]["filtered_neutral_count"],
+                1,
+            )
+            self.assertNotIn("neutral_ids", visible_other_route["hidden_targets"])
+            with self.assertRaisesRegex(ValueError, "unknown target_id"):
+                service.find_route(
+                    "hero:256",
+                    target_id="neutral:0",
+                    refresh=False,
+                )
+
+            hidden_route = service.find_route(
+                "hero:256",
+                target_id="neutral:0",
+                include_hidden_targets=True,
+                refresh=False,
+            )
+
+            self.assertEqual(hidden_route["target_id"], "neutral:0")
+            self.assertEqual(
+                hidden_route["hidden_targets"]["neutral_ids"],
+                ["neutral:0"],
+            )
+            self.assertEqual(config_path.read_bytes(), before_config)
+
+    def test_find_route_rejects_invalid_payloads(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m", map_size=2)
+            service, _ = _advisor_route_service(temp_path, map_path)
+
+            invalid_cases = (
+                (
+                    lambda: service.find_route("hero:256", refresh=True),
+                    "exactly one",
+                ),
+                (
+                    lambda: service.find_route(
+                        "hero:256",
+                        target_id="portal:0",
+                        target_position={"x": 0, "y": 0, "z": 0},
+                        refresh=False,
+                    ),
+                    "exactly one",
+                ),
+                (
+                    lambda: service.find_route(
+                        "hero:256",
+                        target_position={"x": 0, "y": 0},
+                        refresh=False,
+                    ),
+                    "exactly x, y, z",
+                ),
+                (
+                    lambda: service.find_route(
+                        "hero:256",
+                        target_position={"x": True, "y": 0, "z": 0},
+                        refresh=False,
+                    ),
+                    "target_position.x must be an integer",
+                ),
+                (
+                    lambda: service.find_route(
+                        "hero:256",
+                        target_position={"x": 9, "y": 0, "z": 0},
+                        refresh=False,
+                    ),
+                    "out of bounds",
+                ),
+                (
+                    lambda: service.find_route(
+                        "hero:999",
+                        target_position={"x": 0, "y": 0, "z": 0},
+                        refresh=False,
+                    ),
+                    "unknown hero_id",
+                ),
+            )
+            for call, expected_error in invalid_cases:
+                with self.subTest(expected_error=expected_error):
+                    with self.assertRaisesRegex(ValueError, expected_error):
+                        call()
+
+    def test_find_route_reports_resolved_neighbor_and_not_found_fallbacks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            map_path = _write_blocked_route_h3m(temp_path / "map.h3m")
+            service, _ = _advisor_route_service(temp_path, map_path)
+
+            fallback_payload = service.find_route(
+                "hero:256",
+                target_position={"x": 1, "y": 0, "z": 0},
+                refresh=True,
+            )
+            not_found_payload = service.find_route(
+                "hero:256",
+                target_position={"x": 2, "y": 0, "z": 0},
+                refresh=False,
+            )
+
+            self.assertEqual(fallback_payload["status"], battle_estimator_gui.PATH_STATUS_FOUND)
+            self.assertEqual(fallback_payload["fallback_status"], "resolved_neighbor")
+            self.assertNotEqual(
+                fallback_payload["resolved_target_position"],
+                fallback_payload["requested_target_position"],
+            )
+            self.assertEqual(not_found_payload["status"], battle_estimator_gui.PATH_STATUS_NOT_FOUND)
+            self.assertEqual(not_found_payload["fallback_status"], "not_found")
+
+    def test_find_route_marks_non_deterministic_portal_segments(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            map_path = _write_multi_exit_portal_h3m(temp_path / "map.h3m")
+            service, _ = _advisor_route_service(temp_path, map_path)
+
+            payload = service.find_route(
+                "hero:256",
+                target_id="portal:2",
+                refresh=True,
+            )
+
+            self.assertTrue(payload["uses_portals"])
+            self.assertTrue(payload["has_non_deterministic_portal"])
+            self.assertEqual(len(payload["portal_segments"]), 1)
+            self.assertTrue(payload["portal_segments"][0]["is_non_deterministic"])
+
+    def test_explain_portal_reports_multi_exit_and_cross_level_edges(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            map_path = _write_multi_exit_portal_h3m(temp_path / "map.h3m")
+            service, _ = _advisor_route_service(temp_path, map_path)
+
+            payload = service.explain_portal("portal:0", refresh=True)
+
+            self.assertEqual(payload["portal_id"], "portal:0")
+            self.assertEqual(payload["portal_type"], h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY)
+            self.assertEqual(payload["role"], h3_map_parser.PORTAL_ROLE_ENTRANCE)
+            self.assertEqual(payload["destination_count"], 2)
+            self.assertEqual(payload["source_count"], 0)
+            self.assertTrue(payload["is_non_deterministic"])
+            self.assertEqual(payload["cross_level_destination_count"], 1)
+            self.assertEqual(
+                [edge["destination_id"] for edge in payload["outbound_destinations"]],
+                ["portal:1", "portal:2"],
+            )
+            self.assertTrue(
+                all(edge["is_non_deterministic"] for edge in payload["outbound_destinations"])
+            )
+            self.assertTrue(payload["known_limitations"])
+
+    def test_explain_portal_reports_inbound_sources_and_unknown_portals(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            map_path = _write_multi_exit_portal_h3m(temp_path / "map.h3m")
+            service, _ = _advisor_route_service(temp_path, map_path)
+
+            payload = service.explain_portal("portal:2", refresh=True)
+
+            self.assertEqual(payload["source_count"], 1)
+            self.assertEqual(payload["destination_count"], 0)
+            self.assertEqual(payload["cross_level_source_count"], 1)
+            self.assertEqual(payload["inbound_sources"][0]["source_id"], "portal:0")
+            with self.assertRaisesRegex(ValueError, "unknown portal_id"):
+                service.explain_portal("portal:999", refresh=False)
+
+    def test_explain_portal_reports_unresolved_raw_edges(self):
+        snapshot = SimpleNamespace(
+            portal_targets=(
+                SimpleNamespace(
+                    object_index=0,
+                    x=0,
+                    y=0,
+                    z=0,
+                    anchor_x=0,
+                    anchor_y=0,
+                    anchor_z=0,
+                    object_id=h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+                    h3m_subid=4,
+                    portal_type=h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                    role=h3_map_parser.PORTAL_ROLE_ENTRANCE,
+                    channel_key="monolith-one-way:4",
+                ),
+            ),
+            portal_edges=(
+                SimpleNamespace(
+                    source_object_index=0,
+                    destination_object_index=99,
+                    portal_type=h3_map_parser.PORTAL_TYPE_MONOLITH_ONE_WAY,
+                    channel_key="monolith-one-way:4",
+                    h3m_subid=4,
+                ),
+            ),
+        )
+
+        payload = battle_estimator_mcp.explain_portal(snapshot, "portal:0")
+
+        self.assertEqual(payload["unresolved_outbound_count"], 1)
+        self.assertEqual(payload["unresolved_inbound_count"], 0)
+        self.assertIsNone(payload["outbound_destinations"][0]["destination_position"])
+        self.assertIsNone(payload["outbound_destinations"][0]["cross_level"])
+
+
 def _advisor_service_with_team_map(
     temp_path: Path,
     hero_specs,
@@ -635,6 +924,109 @@ def _advisor_scan_service(
         ),
         config_path,
     )
+
+
+def _advisor_route_service(
+    temp_path: Path,
+    map_path: Path,
+    *,
+    hero_position=(0, 0, 0),
+) -> tuple[battle_estimator_mcp.AdvisorContextService, Path]:
+    game_dir = temp_path / "game"
+    game_dir.mkdir()
+    _write_gui_save(
+        game_dir,
+        "001.GM2",
+        hero_name="Isra",
+        position=hero_position,
+    )
+    config_path = temp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    return (
+        battle_estimator_mcp.AdvisorContextService(
+            game_dir=game_dir,
+            map_file=map_path,
+            config_path=config_path,
+        ),
+        config_path,
+    )
+
+
+def _write_route_neutral_h3m(path: Path) -> Path:
+    payload = _minimal_h3m_with_templates_and_objects(
+        h3_map_parser.H3M_FORMAT_SOD,
+        (
+            _object_template_bytes(
+                "AVWgnll0.def",
+                h3_map_parser.H3M_OBJECT_MONSTER,
+                subid=98,
+            ),
+        ),
+        (
+            _object_bytes(
+                (2, 0, 0),
+                0,
+                _monster_payload(count=37),
+            ),
+        ),
+        map_size=3,
+    )
+    path.write_bytes(gzip.compress(payload))
+    return path
+
+
+def _write_blocked_route_h3m(path: Path) -> Path:
+    block_target_tile_mask = bytes((0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F))
+    payload = _minimal_h3m_with_templates_and_objects(
+        h3_map_parser.H3M_FORMAT_SOD,
+        (
+            _object_template_bytes(
+                "AVXblk.def",
+                0,
+                block_mask=block_target_tile_mask,
+            ),
+        ),
+        (
+            _object_bytes((1, 0, 0), 0, b""),
+            _object_bytes((1, 1, 0), 0, b""),
+            _object_bytes((1, 2, 0), 0, b""),
+        ),
+        map_size=3,
+    )
+    path.write_bytes(gzip.compress(payload))
+    return path
+
+
+def _write_multi_exit_portal_h3m(path: Path) -> Path:
+    payload = _minimal_h3m_with_templates_and_objects(
+        h3_map_parser.H3M_FORMAT_SOD,
+        (
+            _object_template_bytes(
+                "AVXmn1e.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+                subid=4,
+            ),
+            _object_template_bytes(
+                "AVXmn1x.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+                subid=4,
+            ),
+            _object_template_bytes(
+                "AVXmn1x.def",
+                h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+                subid=4,
+            ),
+        ),
+        (
+            _object_bytes((0, 0, 0), 0, b""),
+            _object_bytes((2, 0, 0), 1, b""),
+            _object_bytes((2, 0, 1), 2, b""),
+        ),
+        map_size=3,
+        levels=2,
+    )
+    path.write_bytes(gzip.compress(payload))
+    return path
 
 
 def _advisor_service_with_no_explicit_team_map(
