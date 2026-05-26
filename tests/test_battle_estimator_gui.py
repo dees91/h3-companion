@@ -1983,9 +1983,47 @@ const rankingSnapshot = {{
   map_file: "ranking-a.h3m",
   map_fingerprint: {{ mtime_ns: 1 }}
 }};
-helpers.renderSnapshot(rankingSnapshot);
+const rankingRequestsBeforeAuto = fetchRequests.filter((request) => request.path === "/api/hero-ranking").length;
+deferNextHeroRankingResponse = true;
 nextHeroRankingPayload = combatRankingPayload;
+drawOperations.length = 0;
+helpers.renderSnapshot(rankingSnapshot);
+let rankingRequests = fetchRequests.filter((request) => request.path === "/api/hero-ranking");
+assert.strictEqual(rankingRequests.length, rankingRequestsBeforeAuto + 1);
+assert.deepStrictEqual(
+  JSON.parse(rankingRequests[rankingRequests.length - 1].options.body),
+  {{ simulations: 80 }}
+);
+let rankingView = helpers.currentMapViewForTest();
+let rankingHeroMarker = rankingView.markers.find((marker) => marker.id === "hero:0");
+assert.strictEqual(elements["hero-skills-button"].disabled, false);
+assert.strictEqual(rankingHeroMarker.rankingLoading, true);
+assert.strictEqual(rankingHeroMarker.rankNumber, null);
+let rankingTooltip = helpers.markerTooltipText(rankingHeroMarker);
+assert.ok(rankingTooltip.includes("Combat calculating"));
+assert.ok(rankingTooltip.includes("AI 500"));
+assert.ok(!rankingTooltip.includes("1,2,0"));
+assert.ok(!rankingTooltip.includes("12 creatures"));
+assert.ok(!rankingTooltip.includes("12x Skeleton"));
+assert.ok(drawOperations.some((operation) => (
+  operation.op === "fillText"
+  && operation.text === "..."
+  && operation.fillStyle === "#ffffff"
+)));
+const rankingHeroPoint = helpers.worldToScreen(rankingHeroMarker.world, rankingView);
+elements["battle-map"].dispatch("pointermove", {{
+  pointerId: 901,
+  clientX: rankingHeroPoint.x,
+  clientY: rankingHeroPoint.y
+}});
+assert.ok(elements["map-tooltip"].textContent.includes("Combat calculating"));
+const rankingRequestsBeforeDialog = fetchRequests.filter((request) => request.path === "/api/hero-ranking").length;
 await Promise.all(elements["hero-ranking-button"].dispatch("click"));
+await flushPromises();
+rankingRequests = fetchRequests.filter((request) => request.path === "/api/hero-ranking");
+assert.strictEqual(rankingRequests.length, rankingRequestsBeforeDialog);
+assert.ok(treeText(elements["hero-ranking-list"]).includes("Calculating ranking"));
+pendingHeroRankingResponses.shift()();
 await flushPromises();
 let rankingText = treeText(elements["hero-ranking-list"]);
 assert.ok(rankingText.includes("1. Isra"));
@@ -1993,11 +2031,23 @@ assert.ok(rankingText.includes("Combat 87.5"));
 assert.ok(rankingText.includes("AI 500"));
 assert.ok(rankingText.includes("Red team 0"));
 assert.ok(rankingText.includes("1,2,0"));
-let rankingRequests = fetchRequests.filter((request) => request.path === "/api/hero-ranking");
-assert.deepStrictEqual(
-  JSON.parse(rankingRequests[rankingRequests.length - 1].options.body),
-  {{ simulations: 80 }}
-);
+rankingView = helpers.currentMapViewForTest();
+rankingHeroMarker = rankingView.markers.find((marker) => marker.id === "hero:0");
+assert.strictEqual(rankingHeroMarker.rankNumber, 1);
+assert.strictEqual(rankingHeroMarker.combatScore, 87.5);
+assert.strictEqual(rankingHeroMarker.rankingLoading, false);
+rankingTooltip = helpers.markerTooltipText(rankingHeroMarker);
+assert.ok(rankingTooltip.includes("Combat 87.5"));
+assert.ok(rankingTooltip.includes("AI 500"));
+assert.ok(!rankingTooltip.includes("1,2,0"));
+assert.ok(!rankingTooltip.includes("12 creatures"));
+assert.ok(!rankingTooltip.includes("12x Skeleton"));
+assert.ok(elements["map-tooltip"].textContent.includes("Combat 87.5"));
+assert.ok(drawOperations.some((operation) => (
+  operation.op === "fillText"
+  && operation.text === "1"
+  && operation.fillStyle === "#ffffff"
+)));
 deferNextHeroRankingResponse = true;
 nextHeroRankingPayload = {{
   ranking_mode: "combat_score",
@@ -2031,6 +2081,15 @@ await flushPromises();
 rankingText = treeText(elements["hero-ranking-list"]);
 assert.ok(rankingText.includes("Combat 33.0"));
 assert.ok(!rankingText.includes("Combat 99.0"));
+const rankingBLevel1Markers = helpers.buildMarkerCache({{
+  ...rankingSnapshot,
+  save_file: "ranking-b.GM2",
+  save_fingerprint: {{ mtime_ns: 3 }}
+}}, 10, 1, false);
+const missingEntryHeroMarker = rankingBLevel1Markers.find((marker) => marker.id === "hero:1");
+assert.strictEqual(missingEntryHeroMarker.rankNumber, 2);
+assert.strictEqual(missingEntryHeroMarker.combatScore, null);
+assert.ok(helpers.markerTooltipText(missingEntryHeroMarker).includes("Combat unavailable"));
 nextHeroRankingError = {{ status: 500, error: "ranking exploded" }};
 helpers.renderSnapshot({{
   ...rankingSnapshot,
@@ -2041,6 +2100,10 @@ await flushPromises();
 rankingText = treeText(elements["hero-ranking-list"]);
 assert.ok(rankingText.includes("Ranking error: ranking exploded"));
 assert.ok(rankingText.includes("AI 1200"));
+const errorHeroMarker = helpers.currentMapViewForTest().markers.find((marker) => marker.id === "hero:0");
+assert.strictEqual(errorHeroMarker.rankNumber, null);
+assert.strictEqual(errorHeroMarker.rankingError, true);
+assert.ok(helpers.markerTooltipText(errorHeroMarker).includes("Combat unavailable"));
 elements["hero-ranking-close-button"].dispatch("click");
 helpers.renderSnapshot(snapshot, {{ preserveView: false }});
 drawOperations.length = 0;
@@ -2103,7 +2166,11 @@ assert.deepStrictEqual(
 const tooltip = helpers.markerTooltipText(level1Markers.find((marker) => marker.id === "hero:1"));
 assert.ok(tooltip.includes("Fafner"));
 assert.ok(tooltip.includes("Tan team 1 enemy"));
-assert.ok(tooltip.includes("2,3,1"));
+assert.ok(tooltip.includes("Combat unavailable"));
+assert.ok(tooltip.includes("AI 1200"));
+assert.ok(!tooltip.includes("2,3,1"));
+assert.ok(!tooltip.includes("292 creatures"));
+assert.ok(!tooltip.includes("Master Gremlin"));
 assert.ok(!tooltip.includes("<"));
 const townTooltip = helpers.markerTooltipText(townMarker);
 assert.ok(townTooltip.includes("Castle Keep"));

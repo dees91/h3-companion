@@ -159,7 +159,9 @@
     snapshotKey: null,
     payload: null,
     loading: false,
-    error: null
+    error: null,
+    inFlightPromise: null,
+    inFlightSnapshotKey: null
   };
   const saveNavigation = {
     saves: []
@@ -335,6 +337,8 @@
     heroRankingState.payload = null;
     heroRankingState.loading = false;
     heroRankingState.error = null;
+    heroRankingState.inFlightPromise = null;
+    heroRankingState.inFlightSnapshotKey = null;
   }
 
   function nextStateEpoch() {
@@ -1435,9 +1439,8 @@
       return [
         marker.label,
         markerOwnerText(marker),
-        positionText(marker.position),
-        `${marker.creatureCount || 0} creatures`,
-        truncateText(marker.summary, 90)
+        heroMarkerCombatText(marker),
+        `AI ${formatNumber(marker.aiValue)}`
       ].filter(Boolean).join(" | ");
     }
     if (marker.type === "town") {
@@ -1480,6 +1483,41 @@
     ].filter(Boolean).join(" | ");
   }
 
+  function heroMarkerCombatText(marker) {
+    if (marker && marker.rankingLoading) {
+      return "Combat calculating";
+    }
+    if (marker && typeof marker.combatScore === "number") {
+      return `Combat ${marker.combatScore.toFixed(1)}`;
+    }
+    return "Combat unavailable";
+  }
+
+  function heroRankingSnapshotState(snapshot) {
+    const snapshotKey = heroRankingSnapshotKey(snapshot);
+    const current = snapshotKey && snapshotKey === heroRankingState.snapshotKey;
+    return {
+      payload: current ? heroRankingState.payload : null,
+      loading: Boolean(current && heroRankingState.loading),
+      error: current ? heroRankingState.error : null
+    };
+  }
+
+  function heroRankingMarkerEntries(snapshot, payload) {
+    const entryByHeroId = heroRankingEntriesById(payload);
+    const markerEntries = new Map();
+    if (!payload) {
+      return markerEntries;
+    }
+    rankedMapHeroes(snapshot, payload).forEach((hero, index) => {
+      markerEntries.set(hero.id, {
+        rankNumber: index + 1,
+        entry: entryByHeroId.get(hero.id) || null
+      });
+    });
+    return markerEntries;
+  }
+
   function buildMarkerCache(
     snapshot,
     tileSize,
@@ -1501,32 +1539,45 @@
       ? showHiddenTargets
       : Boolean(snapshot.show_hidden);
     const portalTargetLookup = portalTargetsById(snapshot);
+    const rankingState = heroRankingSnapshotState(snapshot);
+    const rankingByHeroId = heroRankingMarkerEntries(snapshot, rankingState.payload);
     const heroMarkers = includeHeroes
       ? (snapshot.heroes || [])
         .filter((hero) => hero.position)
         .filter((hero) => positionLevel(hero.position) === activeLevel)
         .filter((hero) => includeHiddenTargets || !hero.hidden)
-        .map((hero) => ({
-          type: "hero",
-          id: hero.id,
-          label: hero.name || hero.id,
-          position: hero.position,
-          ownerColorId: hero.owner_color_id,
-          ownerColorName: hero.owner_color_name,
-          teamId: hero.team_id,
-          relation: heroRelation(hero, snapshot),
-          world: {
-            x: (hero.position.x + 0.5) * tileSize,
-            y: (hero.position.y + 0.5) * tileSize
-          },
-          radius: 8,
-          selected: hero.id === selectedHeroId,
-          removed: false,
-          hidden: Boolean(hero.hidden),
-          unsupported: false,
-          creatureCount: hero.total_creatures || 0,
-          summary: hero.army_summary || ""
-        }))
+        .map((hero) => {
+          const ranking = rankingByHeroId.get(hero.id) || {};
+          const rankingEntry = ranking.entry || {};
+          return {
+            type: "hero",
+            id: hero.id,
+            label: hero.name || hero.id,
+            position: hero.position,
+            ownerColorId: hero.owner_color_id,
+            ownerColorName: hero.owner_color_name,
+            teamId: hero.team_id,
+            relation: heroRelation(hero, snapshot),
+            world: {
+              x: (hero.position.x + 0.5) * tileSize,
+              y: (hero.position.y + 0.5) * tileSize
+            },
+            radius: 8,
+            selected: hero.id === selectedHeroId,
+            removed: false,
+            hidden: Boolean(hero.hidden),
+            unsupported: false,
+            creatureCount: hero.total_creatures || 0,
+            summary: hero.army_summary || "",
+            aiValue: heroAiValue(hero),
+            rankNumber: ranking.rankNumber || null,
+            combatScore: typeof rankingEntry.combat_score === "number"
+              ? rankingEntry.combat_score
+              : null,
+            rankingLoading: rankingState.loading,
+            rankingError: Boolean(rankingState.error)
+          };
+        })
       : [];
 
     const townMarkers = (snapshot.town_targets || [])
@@ -2804,6 +2855,32 @@
     canvasContext.stroke();
   }
 
+  function heroRankMarkerLabel(marker) {
+    if (marker.rankingLoading) {
+      return "...";
+    }
+    return typeof marker.rankNumber === "number" ? String(marker.rankNumber) : "";
+  }
+
+  function drawHeroRankMarkerLabel(marker, screen) {
+    const label = heroRankMarkerLabel(marker);
+    if (!label) {
+      return;
+    }
+    canvasContext.save();
+    canvasContext.font = label.length > 2
+      ? "bold 10px Arial, Helvetica, sans-serif"
+      : "bold 12px Arial, Helvetica, sans-serif";
+    canvasContext.textAlign = "center";
+    canvasContext.textBaseline = "middle";
+    canvasContext.lineWidth = 3;
+    canvasContext.strokeStyle = "#111827";
+    canvasContext.fillStyle = "#ffffff";
+    canvasContext.strokeText(label, screen.x, screen.y);
+    canvasContext.fillText(label, screen.x, screen.y);
+    canvasContext.restore();
+  }
+
   function drawCastleAlertPreviewOverlay(tileSize) {
     const alert = activeCastleAlertPreview();
     if (!alert || !alert.enemy_position) {
@@ -2951,6 +3028,7 @@
         if (marker.selected) {
           drawMarkerRing(screen, radius + 7, "#7a4d00", 2);
         }
+        drawHeroRankMarkerLabel(marker, screen);
       } else if (marker.type === "town") {
         const useCurrentOwner = townHasCurrentOwner(marker);
         const ownerColorName = useCurrentOwner
@@ -4747,11 +4825,44 @@
 
   function showHeroRankingDialog() {
     elements.heroRankingDialog.hidden = false;
-    requestHeroRanking();
+    requestHeroRanking({ renderDialog: true });
   }
 
   function hideHeroRankingDialog() {
     elements.heroRankingDialog.hidden = true;
+  }
+
+  function renderHeroRankingIfNeeded(force) {
+    if (force || !elements.heroRankingDialog.hidden) {
+      renderHeroRanking();
+    }
+  }
+
+  function refreshVisibleMapTooltip() {
+    if (elements.mapTooltip.hidden || !mapView.hoveredMarkerId) {
+      return;
+    }
+    const marker = mapView.markers.find((candidate) => (
+      candidate.id === mapView.hoveredMarkerId
+    ));
+    if (!marker) {
+      return;
+    }
+    const text = markerTooltipText(marker);
+    if (!text) {
+      hideMapTooltip();
+      return;
+    }
+    elements.mapTooltip.textContent = text;
+  }
+
+  function refreshHeroRankingMapState() {
+    if (!mapView.snapshot) {
+      return;
+    }
+    rebuildMarkerCache(mapView.snapshot);
+    refreshVisibleMapTooltip();
+    drawMap();
   }
 
   function heroRankingRequestMatches(requestId, snapshotKey) {
@@ -4761,12 +4872,14 @@
     );
   }
 
-  function requestHeroRanking() {
+  function requestHeroRanking(options) {
+    const renderDialog = Boolean(options && options.renderDialog)
+      || !elements.heroRankingDialog.hidden;
     const snapshot = mapView.snapshot;
     const snapshotKey = heroRankingSnapshotKey(snapshot);
     syncHeroRankingSnapshot(snapshot);
     if (!snapshot || rankedMapHeroes(snapshot).length === 0) {
-      renderHeroRanking();
+      renderHeroRankingIfNeeded(renderDialog);
       return Promise.resolve();
     }
     if (
@@ -4775,8 +4888,15 @@
       && !heroRankingState.error
     ) {
       heroRankingState.loading = false;
-      renderHeroRanking();
+      renderHeroRankingIfNeeded(renderDialog);
       return Promise.resolve(heroRankingState.payload);
+    }
+    if (
+      heroRankingState.inFlightPromise
+      && heroRankingState.inFlightSnapshotKey === snapshotKey
+    ) {
+      renderHeroRankingIfNeeded(renderDialog);
+      return heroRankingState.inFlightPromise;
     }
 
     const requestId = heroRankingState.requestId + 1;
@@ -4784,8 +4904,10 @@
     heroRankingState.snapshotKey = snapshotKey;
     heroRankingState.loading = true;
     heroRankingState.error = null;
-    renderHeroRanking();
-    return postJson(
+    heroRankingState.inFlightSnapshotKey = snapshotKey;
+    renderHeroRankingIfNeeded(renderDialog);
+    refreshHeroRankingMapState();
+    const rankingPromise = postJson(
       "/api/hero-ranking",
       { simulations: 80 },
       "hero ranking failed"
@@ -4797,7 +4919,10 @@
         heroRankingState.payload = payload;
         heroRankingState.loading = false;
         heroRankingState.error = null;
-        renderHeroRanking();
+        heroRankingState.inFlightPromise = null;
+        heroRankingState.inFlightSnapshotKey = null;
+        refreshHeroRankingMapState();
+        renderHeroRankingIfNeeded(renderDialog);
         return payload;
       })
       .catch((error) => {
@@ -4807,9 +4932,14 @@
         heroRankingState.payload = null;
         heroRankingState.loading = false;
         heroRankingState.error = error.message;
-        renderHeroRanking();
+        heroRankingState.inFlightPromise = null;
+        heroRankingState.inFlightSnapshotKey = null;
+        refreshHeroRankingMapState();
+        renderHeroRankingIfNeeded(renderDialog);
         return null;
       });
+    heroRankingState.inFlightPromise = rankingPromise;
+    return rankingPromise;
   }
 
   function focusRankedHero(heroId) {
@@ -5768,9 +5898,7 @@
     syncSaveControls(snapshot);
     syncGameFolderControls();
     syncHeroRankingControls();
-    if (!elements.heroRankingDialog.hidden) {
-      requestHeroRanking();
-    }
+    requestHeroRanking({ renderDialog: false });
   }
 
   function renderError(message) {
