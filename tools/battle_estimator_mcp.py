@@ -261,6 +261,29 @@ class AdvisorContextService:
         snapshot = self.get_domain_snapshot(refresh=refresh)
         return explain_portal(snapshot, portal_id)
 
+    def list_colors(
+        self,
+        *,
+        refresh: bool = True,
+    ) -> dict[str, Any]:
+        """List active map colors, teams, configured alert color, and heroes."""
+
+        snapshot = self.get_domain_snapshot(refresh=refresh)
+        config = h3_save_parser.load_config(self.config_path)
+        return list_colors(snapshot, config=config)
+
+    def get_alerts(
+        self,
+        color_id: int,
+        *,
+        refresh: bool = True,
+    ) -> dict[str, Any]:
+        """Return defensive town/castle alerts for one active player color."""
+
+        snapshot = self.get_domain_snapshot(refresh=refresh)
+        config = h3_save_parser.load_config(self.config_path)
+        return get_alerts(snapshot, color_id, config=config)
+
     def cached_metadata(self) -> dict[str, Any] | None:
         """Return a defensive copy of cached snapshot metadata if loaded."""
 
@@ -644,6 +667,156 @@ def explain_portal(
             edge["is_non_deterministic"] for edge in outbound
         ),
         "known_limitations": _base_advisor_limitations(),
+    }
+
+
+def list_colors(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    *,
+    config: h3_save_parser.BattleEstimatorConfig | None = None,
+) -> dict[str, Any]:
+    """Return active color/team facts and detected heroes grouped by owner."""
+
+    loaded_config = config or h3_save_parser.BattleEstimatorConfig()
+    players = tuple(domain_snapshot.state.get("players", ()))
+    active_players = tuple(
+        player for player in players if player.get("enabled", False)
+    )
+    active_color_ids = {
+        int(player["player_index"])
+        for player in active_players
+        if "player_index" in player
+    }
+    heroes_by_color: dict[int, list[dict[str, Any]]] = {
+        int(player["player_index"]): []
+        for player in active_players
+        if "player_index" in player
+    }
+    unknown_owner_heroes = []
+    for hero in sorted(domain_snapshot.state.get("heroes", ()), key=_hero_sort_key):
+        owner_color_id = hero.get("owner_color_id")
+        hero_ref = _hero_tool_reference(hero, include_raw_ids=True)
+        if owner_color_id in heroes_by_color:
+            heroes_by_color[owner_color_id].append(hero_ref)
+        elif owner_color_id is None:
+            unknown_owner_heroes.append(hero_ref)
+
+    return {
+        "configured_my_color_id": loaded_config.my_color_id,
+        "configured_my_color_name": _player_color_name(loaded_config.my_color_id)
+        if loaded_config.my_color_id is not None
+        else None,
+        "configured_my_color_available": (
+            loaded_config.my_color_id in active_color_ids
+            if loaded_config.my_color_id is not None
+            else False
+        ),
+        "alert_radius": loaded_config.alert_radius,
+        "active_colors": [
+            _color_listing(player, heroes_by_color)
+            for player in active_players
+        ],
+        "teams": copy.deepcopy(domain_snapshot.state.get("teams", ())),
+        "unknown_owner_heroes": _bounded_items(
+            unknown_owner_heroes,
+            MAX_CONTEXT_HEROES_PER_GROUP,
+        ),
+    }
+
+
+def get_alerts(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    color_id: int,
+    *,
+    config: h3_save_parser.BattleEstimatorConfig | None = None,
+    include_raw_ids: bool = True,
+) -> dict[str, Any]:
+    """Return defensive alerts and town ownership availability for one color."""
+
+    normalized_color_id = _normalize_advisor_color_id(color_id)
+    state = domain_snapshot.state
+    players = tuple(state.get("players", ()))
+    subject = _advisor_subject(
+        normalized_color_id,
+        ADVISOR_SCOPE_COLOR,
+        players,
+        domain_snapshot.team_by_color,
+        has_explicit_team_data=_has_explicit_team_data(players),
+    )
+    loaded_config = config or h3_save_parser.BattleEstimatorConfig()
+    alert_config = replace(loaded_config, my_color_id=normalized_color_id)
+    alert_result = _advisor_alert_result(domain_snapshot, alert_config, subject)
+    return {
+        "color_id": normalized_color_id,
+        "color_name": subject["color_name"],
+        "team_id": subject["team_id"],
+        "alert_radius": alert_config.alert_radius,
+        "alerts": _advisor_alerts_section(
+            alert_result,
+            include_raw_ids=include_raw_ids,
+        ),
+        "town_ownership": _town_ownership_summary(
+            domain_snapshot,
+            normalized_color_id,
+        ),
+        "known_limitations": _base_advisor_limitations(),
+    }
+
+
+def _color_listing(
+    player: dict[str, Any],
+    heroes_by_color: dict[int, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    color_id = int(player["player_index"])
+    heroes = heroes_by_color.get(color_id, [])
+    return {
+        "color_id": color_id,
+        "color_name": player.get("color_name") or _player_color_name(color_id),
+        "team_id": player.get("team_id"),
+        "can_human_play": player.get("can_human_play"),
+        "can_computer_play": player.get("can_computer_play"),
+        "main_town_position": copy.deepcopy(player.get("main_town_position")),
+        "random_hero": player.get("random_hero"),
+        "hero_count": len(heroes),
+        "heroes": _bounded_items(heroes, MAX_CONTEXT_HEROES_PER_GROUP),
+    }
+
+
+def _town_ownership_summary(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    color_id: int,
+) -> dict[str, Any]:
+    status_counts = Counter()
+    unavailable_town_ids = []
+    available_subject_owned_count = 0
+    for town in domain_snapshot.town_targets:
+        town_id = battle_estimator_gui._town_target_id(town)
+        ownership = domain_snapshot.town_ownership_by_id.get(town_id)
+        status = (
+            h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE
+            if ownership is None
+            else ownership.ownership_status
+        )
+        status_counts[status] += 1
+        if status == h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE:
+            unavailable_town_ids.append(town_id)
+        elif (
+            ownership is not None
+            and ownership.current_owner_color_id == color_id
+        ):
+            available_subject_owned_count += 1
+
+    bounded_unavailable = unavailable_town_ids[:MAX_CONTEXT_TOWNS_PER_GROUP]
+    return {
+        "total_towns": len(domain_snapshot.town_targets),
+        "status_counts": dict(sorted(status_counts.items())),
+        "partial": bool(unavailable_town_ids),
+        "available_subject_owned_count": available_subject_owned_count,
+        "unavailable_town_ids": bounded_unavailable,
+        "unavailable_omitted_count": max(
+            0,
+            len(unavailable_town_ids) - len(bounded_unavailable),
+        ),
     }
 
 

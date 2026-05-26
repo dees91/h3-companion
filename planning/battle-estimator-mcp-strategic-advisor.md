@@ -591,7 +591,23 @@ transport, and context cache behavior.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Added read-only `AdvisorContextService.list_colors()` and
+  `AdvisorContextService.get_alerts()` wrappers plus module-level color and
+  alert helpers in `tools/battle_estimator_mcp.py`.
+- `list_colors` reports active player colors directly from the loaded
+  snapshot, team data, configured `My color`, whether that configured color is
+  active on the map, alert radius, bounded hero buckets per active color, and a
+  separate bounded unknown-owner hero list.
+- `get_alerts(color_id)` validates active color IDs, preserves the configured
+  alert radius via an in-memory config copy, reuses the existing defensive alert
+  builder, and returns bounded alert details plus town ownership availability.
+- Town ownership output now distinguishes partial/unavailable ownership,
+  reports status counts, bounded unavailable town IDs, and
+  `available_subject_owned_count` without guessing ownership for unavailable
+  towns.
+- Added focused tests for active color/team listing, inactive configured color
+  availability, unknown-owner heroes, read-only alert config behavior,
+  unavailable town ownership, and invalid/inactive color validation.
 
 ---
 
@@ -777,7 +793,7 @@ transport, and context cache behavior.
 | T03 | Advisor Context Builder | done | T02 | foundation | Main | M | Core/Test | advisor module, MCP tests |
 | T04 | Scan And Estimate Tools | done | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
 | T05 | Route And Portal Tools | done | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
-| T06 | Alerts And Color Scope Tools | todo | T03 | compute-tools | Parallel | S | Core/Test | advisor module, MCP tests |
-| T07 | MCP Server Entry Point | blocked | T03, T04, T05, T06 | interface | Main | M | CLI/Integration/Test | `tools/battle_estimator_mcp.py`, MCP tests |
+| T06 | Alerts And Color Scope Tools | done | T03 | compute-tools | Parallel | S | Core/Test | advisor module, MCP tests |
+| T07 | MCP Server Entry Point | todo | T03, T04, T05, T06 | interface | Main | M | CLI/Integration/Test | `tools/battle_estimator_mcp.py`, MCP tests |
 | T08 | Runbook And Client Setup Docs | blocked | T07 | docs | Main | S | Docs | `docs/mcp-strategic-advisor-runbook.md`, `README.md`, `AGENTS.md` |
 | T09 | End-To-End MCP Verification | blocked | T07, T08 | quality | Main | M | Test/Docs | MCP tests, `CHANGELOG.md`, planning doc |

@@ -870,6 +870,167 @@ class AdvisorRouteAndPortalToolTests(unittest.TestCase):
         self.assertIsNone(payload["outbound_destinations"][0]["cross_level"])
 
 
+class AdvisorAlertAndColorToolTests(unittest.TestCase):
+    def test_list_colors_returns_active_players_teams_config_and_hero_buckets(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, config_path = _advisor_color_service(Path(temp_dir))
+            before_config = config_path.read_bytes()
+
+            payload = service.list_colors(refresh=True)
+
+            self.assertEqual(payload["configured_my_color_id"], 2)
+            self.assertEqual(payload["configured_my_color_name"], "tan")
+            self.assertIs(payload["configured_my_color_available"], True)
+            self.assertEqual(payload["alert_radius"], 3)
+            self.assertEqual(
+                [
+                    (color["color_id"], color["color_name"], color["team_id"])
+                    for color in payload["active_colors"]
+                ],
+                [(0, "red", 0), (1, "blue", 0), (2, "tan", 1), (3, "green", 1)],
+            )
+            self.assertEqual(
+                [(team["team_id"], team["color_names"]) for team in payload["teams"]],
+                [(0, ["red", "blue"]), (1, ["tan", "green"])],
+            )
+            red = payload["active_colors"][0]
+            blue = payload["active_colors"][1]
+            self.assertEqual(red["hero_count"], 1)
+            self.assertEqual(red["heroes"]["items"][0]["name"], "Redmain")
+            self.assertEqual(blue["hero_count"], 1)
+            self.assertEqual(blue["heroes"]["items"][0]["name"], "Blueally")
+            self.assertEqual(payload["unknown_owner_heroes"]["total_count"], 0)
+            self.assertEqual(config_path.read_bytes(), before_config)
+
+    def test_list_colors_marks_inactive_configured_color_unavailable(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, config_path = _advisor_color_service(Path(temp_dir))
+            config_path.write_text(
+                json.dumps({
+                    "my_color_id": 7,
+                    "alert_radius": 3,
+                }) + "\n",
+                encoding="utf-8",
+            )
+            before_config = config_path.read_bytes()
+
+            payload = service.list_colors(refresh=True)
+
+            self.assertEqual(payload["configured_my_color_id"], 7)
+            self.assertEqual(payload["configured_my_color_name"], "pink")
+            self.assertIs(payload["configured_my_color_available"], False)
+            self.assertNotIn(
+                7,
+                {color["color_id"] for color in payload["active_colors"]},
+            )
+            self.assertEqual(config_path.read_bytes(), before_config)
+
+    def test_list_colors_keeps_unknown_owner_heroes_out_of_color_buckets(self):
+        snapshot = SimpleNamespace(
+            state={
+                "players": [
+                    {
+                        "player_index": 0,
+                        "color_name": "red",
+                        "enabled": True,
+                        "can_human_play": True,
+                        "can_computer_play": False,
+                        "team_id": 0,
+                    },
+                ],
+                "teams": [],
+                "heroes": [
+                    {
+                        "id": "hero:unknown",
+                        "name": "Unknown",
+                        "owner_color_id": None,
+                        "position": {"x": 0, "y": 0, "z": 0},
+                        "ai_value": 100,
+                    },
+                ],
+            },
+        )
+
+        payload = battle_estimator_mcp.list_colors(snapshot)
+
+        self.assertEqual(payload["active_colors"][0]["hero_count"], 0)
+        self.assertEqual(payload["unknown_owner_heroes"]["total_count"], 1)
+        self.assertEqual(
+            payload["unknown_owner_heroes"]["items"][0]["name"],
+            "Unknown",
+        )
+
+    def test_get_alerts_uses_configured_radius_without_writing_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, config_path = _advisor_color_service(Path(temp_dir))
+            before_config = config_path.read_bytes()
+
+            payload = service.get_alerts(0, refresh=True)
+
+            self.assertEqual(payload["color_id"], 0)
+            self.assertEqual(payload["color_name"], "red")
+            self.assertEqual(payload["alert_radius"], 3)
+            self.assertEqual(payload["alerts"]["status"], "ok")
+            self.assertEqual(payload["alerts"]["count"], 1)
+            self.assertEqual(payload["alerts"]["items"][0]["town_name"], "Blue Keep")
+            self.assertEqual(payload["alerts"]["items"][0]["enemy_hero_name"], "Enemy")
+            self.assertFalse(payload["town_ownership"]["partial"])
+            self.assertEqual(payload["town_ownership"]["available_subject_owned_count"], 1)
+            self.assertEqual(
+                payload["town_ownership"]["status_counts"],
+                {h3_save_parser.TOWN_OWNERSHIP_STATUS_EXACT: 1},
+            )
+            self.assertTrue(payload["known_limitations"])
+            self.assertEqual(config_path.read_bytes(), before_config)
+
+    def test_get_alerts_reports_unavailable_town_ownership_partial(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {
+                        "hero_name": "Redmain",
+                        "name_offset": 256,
+                        "position": (0, 0, 0),
+                        "owner_color_id": 0,
+                    },
+                ),
+            )
+            map_path = _write_team_town_h3m(temp_path / "map.h3m")
+            config_path = temp_path / "config.json"
+            config_path.write_text("{}", encoding="utf-8")
+            service = battle_estimator_mcp.AdvisorContextService(
+                game_dir=game_dir,
+                map_file=map_path,
+                config_path=config_path,
+            )
+
+            payload = service.get_alerts(0, refresh=True)
+
+            self.assertEqual(payload["alerts"]["status"], "ownership_unavailable")
+            self.assertIn("town:0", payload["alerts"]["status_detail"])
+            self.assertTrue(payload["town_ownership"]["partial"])
+            self.assertEqual(payload["town_ownership"]["available_subject_owned_count"], 0)
+            self.assertEqual(payload["town_ownership"]["unavailable_town_ids"], ["town:0"])
+            self.assertEqual(
+                payload["town_ownership"]["status_counts"],
+                {h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE: 1},
+            )
+
+    def test_get_alerts_rejects_invalid_or_inactive_colors(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, _ = _advisor_color_service(Path(temp_dir))
+
+            with self.assertRaisesRegex(ValueError, "color_id must be between"):
+                service.get_alerts(8, refresh=True)
+            with self.assertRaisesRegex(ValueError, "not an active map player"):
+                service.get_alerts(7, refresh=False)
+
+
 def _advisor_service_with_team_map(
     temp_path: Path,
     hero_specs,
@@ -885,6 +1046,57 @@ def _advisor_service_with_team_map(
         game_dir=game_dir,
         map_file=map_path,
         config_path=config_path,
+    )
+
+
+def _advisor_color_service(
+    temp_path: Path,
+) -> tuple[battle_estimator_mcp.AdvisorContextService, Path]:
+    game_dir = temp_path / "game"
+    game_dir.mkdir()
+    _write_multi_gui_save(
+        game_dir,
+        "001.GM2",
+        (
+            {
+                "hero_name": "Redmain",
+                "name_offset": 256,
+                "position": (0, 0, 0),
+                "owner_color_id": 0,
+            },
+            {
+                "hero_name": "Blueally",
+                "name_offset": 640,
+                "position": (4, 0, 0),
+                "owner_color_id": 1,
+            },
+            {
+                "hero_name": "Enemy",
+                "name_offset": 1024,
+                "position": (6, 7, 0),
+                "owner_color_id": 2,
+            },
+        ),
+        town_state_records=(
+            _gui_town_state_record_bytes(owner_color_id=0),
+        ),
+    )
+    map_path = _write_team_town_h3m(temp_path / "team-town.h3m")
+    config_path = temp_path / "config.json"
+    config_path.write_text(
+        json.dumps({
+            "my_color_id": 2,
+            "alert_radius": 3,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    return (
+        battle_estimator_mcp.AdvisorContextService(
+            game_dir=game_dir,
+            map_file=map_path,
+            config_path=config_path,
+        ),
+        config_path,
     )
 
 
