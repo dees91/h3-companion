@@ -1543,9 +1543,8 @@ using simple canvas-drawn symbols in addition to existing colors.
   distinct symbol signatures for one-way entrance, one-way exit, two-way
   monolith, subterranean gate, unknown fallback, and removal of the old shared
   stripe.
-- Manual GUI check: started the local GUI against the current Diamond save
-  `343.GM2` and map `dees91,Danny96 2026.05.24 18;35 Diamond.h3m`; verified a
-  real snapshot with 46 portals and 46 edges, including one-way entrances,
+- Manual GUI check: started the local GUI against the current local Diamond
+  snapshot; verified 46 portals and 46 edges, including one-way entrances,
   one-way exits, two-way monoliths, and subterranean gates. Headless Chrome
   centered representative portals `portal:2560`, `portal:2564`, `portal:2528`,
   and `portal:2435`; symbol pixels remained visible at normal zoom `0.8` and
@@ -1605,9 +1604,8 @@ destination counts.
 - Added frontend smoke coverage for hover preview, normal-mode pinning, toggle
   off/on preserving state, same-level links, cross-level badges, multi-exit
   dashed styling, and hover precedence over pinned relations.
-- Manual GUI check: started the local GUI against the current Diamond save
-  `343.GM2` and map `dees91,Danny96 2026.05.24 18;35 Diamond.h3m`; verified a
-  real snapshot with 46 portals and 46 edges. Headless Chrome pinned
+- Manual GUI check: started the local GUI against the current local Diamond
+  snapshot; verified 46 portals and 46 edges. Headless Chrome pinned
   `portal:2566` with same-level destination `portal:2570` and cross-level
   destination `portal:2571`, confirmed `Portal Links` off/on changed only the
   canvas overlay while keeping the pinned relation, hovered `portal:2544` over
@@ -1665,9 +1663,8 @@ status, and destination actions without adding a permanent portal list.
   rows, Path mode guard behavior for panel rows, preserved pinned source
   relation, no-known/unresolved status, exit-only status, and absence of
   `Portals only` UI.
-- Manual GUI check: started the local GUI against the current Diamond save
-  `343.GM2` and map `dees91,Danny96 2026.05.24 18;35 Diamond.h3m`; clicked
-  `portal:2566`, verified two destination rows, followed cross-level
+- Manual GUI check: started the local GUI against the current local Diamond
+  snapshot; clicked `portal:2566`, verified two destination rows, followed cross-level
   `portal:2571` on level 0 and same-level `portal:2570` on level 1, and
   confirmed the pinned source relation stayed `portal:2566`.
 - Verification: `node --check tools/battle_estimator_gui/app.js`;
@@ -1760,9 +1757,8 @@ subterranean gates.
       current Diamond save/map.
 
 **Completion Notes (2026-05-25):**
-- Verified the real local Diamond snapshot through the GUI on port 8774:
-  save `343.GM2`, map `dees91,Danny96 2026.05.24 18;35 Diamond.h3m`, 46 portal
-  targets, 46 portal edges, 12 heroes, and 377 neutral targets.
+- Verified a real local Diamond snapshot through the GUI on port 8774:
+  46 portal targets, 46 portal edges, 12 heroes, and 377 neutral targets.
 - Headless Chrome viewport was `1400 x 813` with map zoom `0.8`. Symbol-region
   pixel checks confirmed distinct visible portal symbols for one-way entrance
   `portal:2560`, one-way exit `portal:2564`, two-way monolith `portal:2528`,
