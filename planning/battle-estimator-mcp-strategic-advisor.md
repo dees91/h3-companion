@@ -107,7 +107,7 @@ provides truthful game context and analysis helpers.
 - MCP clients can differ in configuration format. Keep project docs focused on
   the server command and tool contracts rather than committing local client
   config.
-- The local VCMI checkout at `/Users/dees91/Projects/Python/vcmi` may be used
+- A local VCMI checkout outside this repository may be used
   read-only as a mechanics reference if needed, but this project must not gain a
   runtime dependency on that checkout.
 
