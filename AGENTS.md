@@ -219,7 +219,8 @@ those files instead of raw `json.loads()`.
 - Exact current town ownership parsing for observed GM1/GM2 town-state records,
   with hero-on-town proxy fallback only when exact records are absent.
 - Bounded hero combat context parsing for loaded `.GM1` saves with `H3SVG` at
-  offset `0` and raw `0x00` hero records.
+  offset `0` and raw `0x00` hero records, plus loaded `.GM2` saves with
+  `H3SVG` at offset `65` and XOR `0x01` hero records.
 - Hidden target persistence.
 - `My color` and `Alert radius` local config persistence.
 - Manual current-skill state persistence for hero recommendations.
@@ -279,14 +280,18 @@ Hero save parsing:
 - Hotseat/unencoded structures are also handled through the parser's supported
   key set.
 - Parser reads hero name, army stacks, position when available, and owner color.
-- Save-derived hero combat context is supported only for loaded `.GM1` saves
-  whose `H3SVG` signature is at offset `0` and whose accepted hero combat record
-  uses raw `0x00` bytes.
+- Save-derived hero combat context is supported for two bounded loaded-save
+  profiles:
+  - `.GM1` saves whose `H3SVG` signature is at offset `0` and whose accepted
+    hero combat record uses raw `0x00` bytes.
+  - `.GM2` saves whose `H3SVG` signature is at offset `65` and whose accepted
+    hero combat record uses XOR `0x01`; secondary-skill count is derived from
+    validated active level/slot vectors.
 - Supported combat context can expose current/effective primary skills and
   validated current secondary skills. The estimator uses only Attack/Defense and
   passive Offence, Armorer, and Archery.
-- Unsupported combat-context variants include GM2 and XOR `0x01` combat fields;
-  their hero armies can still be parsed for army-only estimates.
+- Unsupported combat-context variants outside those profiles still keep parsed
+  hero armies available for army-only estimates.
 - The hero skill recommendation UI still uses manually maintained current skill
   state, falling back to VCMI starting skills. That recommendation state must not
   be used as combat-estimator input.

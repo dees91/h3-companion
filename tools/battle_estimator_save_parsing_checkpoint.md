@@ -398,8 +398,8 @@ Known Phase 2 limitations from this historical checkpoint:
   guards, movement points, and reachability.
 - Only same-level (`z`) targets are included.
 - Hero-vs-hero estimates used creature stacks only. This was superseded by the
-  later bounded hero-combat implementation for supported GM1 combat-context
-  records.
+  later bounded hero-combat implementation for supported combat-context
+  profiles.
 - Unsupported H3M DEF/template mappings are reported as unsupported notes.
 
 Local real-file verification used this command shape; real save and map files
@@ -842,7 +842,7 @@ Attack/Defense/Spell Power/Knowledge values decoded from the bounded primary
 window above. T17 extended the same context with validated secondary skills and
 the `primary+secondary` status.
 
-The support gate is intentionally narrow:
+The original T16/T17 support gate was intentionally narrow:
 
 - loaded save path suffix is `.GM1` case-insensitively,
 - `H3SVG` starts at offset `0`,
@@ -854,6 +854,7 @@ Unsupported cases return `status = unavailable` with
 `reason = truncated_primary` while preserving the accepted army record. Direct
 byte scans without loaded-save metadata also remain unavailable by default, so
 the parser does not silently infer combat stats from loose byte patterns.
+G01 later added the bounded GM2 offset-65/XOR-`0x01` profile described above.
 
 When secondary vectors validate, supported saves now report
 `primary+secondary`. When primary validates but secondary vectors do not,
@@ -889,9 +890,10 @@ manually maintained recommendation state as if they were current save skills.
 
 Implemented on 2026-05-25.
 
-The parser now decodes the secondary skill count, 28 skill-level bytes, and
-28 display-slot bytes for the same bounded `.GM1`/`H3SVG=0`/raw `0x00`
-structure supported by T16.
+The parser initially decoded the secondary skill count, 28 skill-level bytes,
+and 28 display-slot bytes for the same bounded `.GM1`/`H3SVG=0`/raw `0x00`
+structure supported by T16. G01 later added the bounded GM2 offset-65/XOR-`0x01`
+profile, where the secondary count is derived from active level/slot vectors.
 
 Complete secondary context returns:
 

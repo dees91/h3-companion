@@ -26,8 +26,10 @@ maps, saves, or binaries; you need your own legally installed copy of the game.
 Battle estimates still start from the detected creature stacks in your save. For
 verified hero-combat save context, the estimator also applies save-derived
 current Attack/Defense and passive Offence, Armorer, and Archery modifiers. This
-currently covers a narrow GM1 combat-context structure; observed GM1/GM2 hero
-armies can still be listed and scanned even when their combat modifiers are not
+currently covers narrow GM1 and GM2 combat-context profiles: GM1 saves with
+`H3SVG` at offset `0` and raw `0x00` hero records, plus GM2 saves with `H3SVG`
+at offset `65` and XOR `0x01` hero records. Other observed GM1/GM2 hero armies
+can still be listed and scanned even when their combat modifiers are not
 available.
 
 The CLI and GUI label each estimate side as `army-only`, `primary-only`, or

@@ -133,8 +133,9 @@ underground together.
   supported structures, with synthetic tests for supported and unavailable
   cases.
 - `HeroArmy` includes a `combat_context` field. Supported loaded `.GM1`
-  `H3SVG=0` raw `0x00` combat records can expose current/effective primary
-  skills and validated current secondary skills.
+  `H3SVG=0` raw `0x00` combat records and bounded `.GM2` `H3SVG=65` XOR
+  `0x01` combat records can expose current/effective primary skills and
+  validated current secondary skills.
 - Existing hero skill recommendation state is manually maintained for advice.
   It must not be reused as combat-estimator input unless a future task
   explicitly asks for a manual what-if mode.
@@ -1967,7 +1968,7 @@ derived from validated active level/slot vectors.
 |---|---|---|---|
 | G01 | Parser GM2 Combat Profile | done | Added a `HeroCombatContextProfile` parser gate for GM1 explicit-count and GM2 derived-count layouts. Synthetic parser tests cover supported GM2 `primary+secondary`, GM2 secondary fallback to `primary-only`, wrong-key GM2 records, and unsupported GM2 offsets. Local evidence from the observed same-map GM2 series was kept anonymous; no real save files or paths were committed. |
 | G02 | GUI/API/Estimator Integration | done | Confirmed the existing estimator/API path consumes any save-sourced combat context generically. Added supported GM2 integration coverage for GUI snapshot serialization, `/api/simulate-target` hero-vs-hero estimates with both player and enemy combat contexts, and CLI nearby scan propagation. GM2 fixtures use offset-65 `H3SVG`, XOR `0x01`, and `secondary_count=0` to exercise derived secondary count. |
-| G03 | Docs And Final Verification | pending | -- |
+| G03 | Docs And Final Verification | done | Updated README, CHANGELOG, AGENTS, planning notes, and the save parsing checkpoint to describe bounded GM2 combat-context support without claiming broad GM2 coverage. Final verification includes the full Python suite, GUI JavaScript syntax check, diff whitespace check, git status review, and repo-wide private-path scan. |
 
 ## Summary Table
 
@@ -2006,4 +2007,4 @@ derived from validated active level/slot vectors.
 | A02 | Frontend Alert Hover Overlay | done | A01 | alert-hover-preview | Main | M | GUI/Docs/Test | `app.js`, `style.css`, GUI tests, README/CHANGELOG/planning doc |
 | G01 | Parser GM2 Combat Profile | done | -- | gm2-combat-context | Main | M | Parser/Test | `tools/h3_save_parser.py`, parser tests, planning/checkpoint docs |
 | G02 | GUI/API/Estimator Integration | done | G01 | gm2-combat-context | Main | M | API/Core/Test | GUI/CLI estimator integration tests, planning doc |
-| G03 | Docs And Final Verification | pending | G02 | gm2-combat-context | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint/planning docs |
+| G03 | Docs And Final Verification | done | G02 | gm2-combat-context | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint/planning docs |

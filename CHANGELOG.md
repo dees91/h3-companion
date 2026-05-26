@@ -21,10 +21,10 @@ defined in [docs/release-policy.md](docs/release-policy.md).
 - Defensive owned-town alerts in the GUI, configured with `My color` and
   `Alert radius`, with alert rows that focus the threatening enemy hero and
   hover previews that show the alert radius plus every threatened town.
-- Save-derived hero combat context for verified GM1 records, exposing current
-  primary and secondary skills in hero snapshots plus applied passive combat
-  modifiers and per-side model labels in estimate payloads, CLI output, and the
-  GUI estimate panel.
+- Save-derived hero combat context for verified GM1 records and the bounded
+  offset-65/XOR-`0x01` GM2 profile, exposing current primary and secondary
+  skills in hero snapshots plus applied passive combat modifiers and per-side
+  model labels in estimate payloads, CLI output, and the GUI estimate panel.
 
 ### Changed
 
