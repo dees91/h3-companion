@@ -3,22 +3,43 @@
 
 from __future__ import annotations
 
+import argparse
 import copy
+import importlib
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Callable
 
 try:
-    from tools import battle_estimator, battle_estimator_gui, h3_save_parser
+    from tools import (
+        battle_estimator,
+        battle_estimator_gui,
+        h3_save_parser,
+    )
 except ImportError:  # pragma: no cover - direct script execution fallback.
     import battle_estimator
     import battle_estimator_gui
     import h3_save_parser
 
 
+MCP_SERVER_NAME = "H3 Companion Strategic Advisor"
+MCP_TRANSPORT_STDIO = "stdio"
+MCP_TRANSPORTS = frozenset((MCP_TRANSPORT_STDIO,))
+MCP_MIN_PYTHON_VERSION = (3, 10)
+MCP_TOOL_NAMES = (
+    "refresh_context",
+    "get_advisor_context",
+    "scan_nearby",
+    "estimate_battle",
+    "find_route",
+    "explain_portal",
+    "list_colors",
+    "get_alerts",
+)
 ADVISOR_SCOPE_COLOR = "color"
 ADVISOR_SCOPE_TEAM = "team"
 ADVISOR_SCOPES = frozenset((ADVISOR_SCOPE_COLOR, ADVISOR_SCOPE_TEAM))
@@ -290,6 +311,229 @@ class AdvisorContextService:
         with self._lock:
             metadata = self._metadata
         return metadata.as_dict() if metadata is not None else None
+
+
+class McpSdkUnavailableError(RuntimeError):
+    """Raised when the optional MCP SDK cannot be loaded for server startup."""
+
+
+def create_mcp_server(
+    service: AdvisorContextService,
+    *,
+    fastmcp_cls=None,
+    tool_error_cls=None,
+):
+    """Create a FastMCP server bound to one advisor context service."""
+
+    if (fastmcp_cls is None) != (tool_error_cls is None):
+        raise ValueError("fastmcp_cls and tool_error_cls must be provided together")
+    if fastmcp_cls is None:
+        fastmcp_cls, tool_error_cls = _load_mcp_sdk()
+
+    server = fastmcp_cls(MCP_SERVER_NAME)
+
+    @server.tool()
+    def refresh_context() -> dict[str, Any]:
+        """Reload the save/map snapshot and return snapshot metadata."""
+
+        return _invoke_mcp_tool(service.refresh_context, tool_error_cls)
+
+    @server.tool()
+    def get_advisor_context(
+        color_id: int,
+        scope: str = ADVISOR_SCOPE_COLOR,
+        refresh: bool = True,
+        include_raw_ids: bool = True,
+    ) -> dict[str, Any]:
+        """Return bounded strategic context for one color or team."""
+
+        return _invoke_mcp_tool(
+            lambda: service.get_advisor_context(
+                color_id,
+                scope=scope,
+                refresh=refresh,
+                include_raw_ids=include_raw_ids,
+            ),
+            tool_error_cls,
+        )
+
+    @server.tool()
+    def scan_nearby(
+        hero_id: str,
+        radius: int = 10,
+        target_type: str = "all",
+        sort_mode: str = ADVISOR_SCAN_SORT_DISTANCE,
+        simulations: int = battle_estimator.DEFAULT_SCAN_SIMULATIONS,
+        refresh: bool = True,
+        include_removed: bool = False,
+        include_hidden_targets: bool = False,
+    ) -> dict[str, Any]:
+        """Scan nearby neutral and hero targets for one hero."""
+
+        return _invoke_mcp_tool(
+            lambda: service.scan_nearby(
+                hero_id,
+                radius=radius,
+                target_type=target_type,
+                sort_mode=sort_mode,
+                simulations=simulations,
+                refresh=refresh,
+                include_removed=include_removed,
+                include_hidden_targets=include_hidden_targets,
+            ),
+            tool_error_cls,
+        )
+
+    @server.tool()
+    def estimate_battle(
+        hero_id: str,
+        target_id: str,
+        simulations: int = battle_estimator.DEFAULT_SCAN_SIMULATIONS,
+        refresh: bool = True,
+        include_hidden_targets: bool = False,
+    ) -> dict[str, Any]:
+        """Estimate one hero-vs-target battle."""
+
+        return _invoke_mcp_tool(
+            lambda: service.estimate_battle(
+                hero_id,
+                target_id,
+                simulations=simulations,
+                refresh=refresh,
+                include_hidden_targets=include_hidden_targets,
+            ),
+            tool_error_cls,
+        )
+
+    @server.tool()
+    def find_route(
+        hero_id: str,
+        target_id: str | None = None,
+        target_position: dict[str, int] | None = None,
+        refresh: bool = True,
+        include_hidden_targets: bool = False,
+    ) -> dict[str, Any]:
+        """Find a strategic route from one hero to a marker or position."""
+
+        return _invoke_mcp_tool(
+            lambda: service.find_route(
+                hero_id,
+                target_id=target_id,
+                target_position=target_position,
+                refresh=refresh,
+                include_hidden_targets=include_hidden_targets,
+            ),
+            tool_error_cls,
+        )
+
+    @server.tool()
+    def explain_portal(
+        portal_id: str,
+        refresh: bool = True,
+    ) -> dict[str, Any]:
+        """Explain one parsed portal or subterranean gate."""
+
+        return _invoke_mcp_tool(
+            lambda: service.explain_portal(portal_id, refresh=refresh),
+            tool_error_cls,
+        )
+
+    @server.tool()
+    def list_colors(refresh: bool = True) -> dict[str, Any]:
+        """List active player colors, teams, and configured alert color."""
+
+        return _invoke_mcp_tool(
+            lambda: service.list_colors(refresh=refresh),
+            tool_error_cls,
+        )
+
+    @server.tool()
+    def get_alerts(
+        color_id: int,
+        refresh: bool = True,
+    ) -> dict[str, Any]:
+        """Return defensive town alerts for one active player color."""
+
+        return _invoke_mcp_tool(
+            lambda: service.get_alerts(color_id, refresh=refresh),
+            tool_error_cls,
+        )
+
+    return server
+
+
+def build_mcp_arg_parser() -> argparse.ArgumentParser:
+    """Build the standalone MCP server CLI parser."""
+
+    parser = argparse.ArgumentParser(
+        description="H3 Companion MCP strategic advisor server",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=(
+            battle_estimator_gui.FOLLOW_LATEST_MODE,
+            battle_estimator_gui.PINNED_MODE,
+        ),
+        default=None,
+        help="Snapshot mode. Defaults to pinned when --save-file is used; otherwise follow_latest.",
+    )
+    parser.add_argument(
+        "--game-dir",
+        help="Autosave game folder override used in follow-latest mode.",
+    )
+    parser.add_argument(
+        "--save-file",
+        help="Pinned GM1/GM2 save file override.",
+    )
+    parser.add_argument(
+        "--map-file",
+        help="H3M map file override.",
+    )
+    parser.add_argument(
+        "--config-path",
+        default=str(h3_save_parser.CONFIG_PATH),
+        help="H3 Companion config path.",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=tuple(sorted(MCP_TRANSPORTS)),
+        default=MCP_TRANSPORT_STDIO,
+        help="MCP transport. Only stdio is supported for this local server.",
+    )
+    return parser
+
+
+def run_mcp_server(
+    argv: list[str] | None = None,
+    *,
+    fastmcp_cls=None,
+    tool_error_cls=None,
+) -> int:
+    """Parse CLI options, create the MCP server, and run its transport."""
+
+    parser = build_mcp_arg_parser()
+    args = parser.parse_args(argv)
+    try:
+        service = _advisor_service_from_mcp_args(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    server = create_mcp_server(
+        service,
+        fastmcp_cls=fastmcp_cls,
+        tool_error_cls=tool_error_cls,
+    )
+    server.run(transport=args.transport)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Console entrypoint for the local MCP server."""
+
+    try:
+        return run_mcp_server(argv)
+    except McpSdkUnavailableError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
 def build_advisor_context(
@@ -1660,6 +1904,60 @@ def _player_color_name(color_id: int) -> str:
     return f"color:{color_id}"
 
 
+def _advisor_service_from_mcp_args(
+    args: argparse.Namespace,
+) -> AdvisorContextService:
+    return AdvisorContextService(
+        mode=args.mode,
+        game_dir=args.game_dir,
+        save_file=args.save_file,
+        map_file=args.map_file,
+        config_path=args.config_path,
+    )
+
+
+def _load_mcp_sdk():
+    if sys.version_info < MCP_MIN_PYTHON_VERSION:
+        raise McpSdkUnavailableError(_mcp_sdk_unavailable_message())
+    try:
+        fastmcp_module = importlib.import_module("mcp.server.fastmcp")
+        exceptions_module = importlib.import_module(
+            "mcp.server.fastmcp.exceptions",
+        )
+    except ModuleNotFoundError as exc:
+        if exc.name and not exc.name.startswith("mcp"):
+            raise
+        raise McpSdkUnavailableError(_mcp_sdk_unavailable_message()) from exc
+    return fastmcp_module.FastMCP, exceptions_module.ToolError
+
+
+def _mcp_sdk_unavailable_message() -> str:
+    version = ".".join(str(part) for part in sys.version_info[:3])
+    return (
+        "MCP server startup requires the official `mcp` Python SDK under "
+        f"Python >=3.10; current interpreter is Python {version}. "
+        "Run with a newer interpreter, for example: "
+        "`uv run --python 3.13 --with mcp python tools/battle_estimator_mcp.py`."
+    )
+
+
+def _invoke_mcp_tool(
+    action: Callable[[], dict[str, Any]],
+    tool_error_cls,
+) -> dict[str, Any]:
+    try:
+        return action()
+    except (ValueError, OSError) as exc:
+        raise tool_error_cls(_mcp_tool_error_message(exc)) from exc
+
+
+def _mcp_tool_error_message(exc: BaseException) -> str:
+    detail = str(exc)
+    if detail:
+        return f"{type(exc).__name__}: {detail}"
+    return type(exc).__name__
+
+
 def _resolve_context_mode(mode: str | None, save_file: str | Path | None) -> str:
     if mode is None:
         return (
@@ -1679,3 +1977,7 @@ def _resolve_context_mode(mode: str | None, save_file: str | Path | None) -> str
         ))
         raise ValueError(f"invalid mode {mode!r}; expected {expected}")
     return mode
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised via subprocess.
+    raise SystemExit(main())

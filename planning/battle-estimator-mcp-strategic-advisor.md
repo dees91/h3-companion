@@ -647,7 +647,25 @@ transport, and context cache behavior.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Added the standalone MCP entrypoint in `tools/battle_estimator_mcp.py` with
+  `argparse` support for `--mode`, `--game-dir`, `--save-file`, `--map-file`,
+  `--config-path`, and `--transport stdio`.
+- The entrypoint keeps the official `mcp` SDK import lazy so normal Python 3.8
+  repo tests and `python3 tools/battle_estimator_mcp.py --help` work without
+  installing `mcp`. Starting the server requires the SDK under Python `>=3.10`;
+  the local smoke path used `uv run --python 3.13 --with mcp ...`.
+- Added `create_mcp_server()` using FastMCP and registered the approved
+  T02-T06 tools: `refresh_context`, `get_advisor_context`, `scan_nearby`,
+  `estimate_battle`, `find_route`, `explain_portal`, `list_colors`, and
+  `get_alerts`. Broader raw-state tools such as `get_state_summary` and
+  `get_state_raw` are deferred outside this T07 surface.
+- Expected user/input/config/path errors are converted to MCP `ToolError`
+  messages, while unexpected programming errors are left unmasked.
+- Added fake-SDK unit tests for CLI parsing, stdio startup wiring, tool
+  registration/delegation, expected error wrapping, unexpected error bubbling,
+  missing-SDK stderr behavior, and no stdout diagnostics. Added an optional real
+  SDK in-memory smoke test that is skipped on Python `<3.10` or when `mcp` is
+  unavailable.
 
 ---
 
@@ -794,6 +812,6 @@ transport, and context cache behavior.
 | T04 | Scan And Estimate Tools | done | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
 | T05 | Route And Portal Tools | done | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
 | T06 | Alerts And Color Scope Tools | done | T03 | compute-tools | Parallel | S | Core/Test | advisor module, MCP tests |
-| T07 | MCP Server Entry Point | todo | T03, T04, T05, T06 | interface | Main | M | CLI/Integration/Test | `tools/battle_estimator_mcp.py`, MCP tests |
-| T08 | Runbook And Client Setup Docs | blocked | T07 | docs | Main | S | Docs | `docs/mcp-strategic-advisor-runbook.md`, `README.md`, `AGENTS.md` |
+| T07 | MCP Server Entry Point | done | T03, T04, T05, T06 | interface | Main | M | CLI/Integration/Test | `tools/battle_estimator_mcp.py`, MCP tests |
+| T08 | Runbook And Client Setup Docs | todo | T07 | docs | Main | S | Docs | `docs/mcp-strategic-advisor-runbook.md`, `README.md`, `AGENTS.md` |
 | T09 | End-To-End MCP Verification | blocked | T07, T08 | quality | Main | M | Test/Docs | MCP tests, `CHANGELOG.md`, planning doc |

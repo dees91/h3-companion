@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import gzip
+import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,6 +35,72 @@ from tests.test_h3_map_parser import (
     _object_template_bytes,
     _town_payload,
 )
+
+
+class _FakeToolError(Exception):
+    pass
+
+
+class _FakeFastMCP:
+    instances = []
+
+    def __init__(self, name):
+        self.name = name
+        self.tools = {}
+        self.run_calls = []
+        self.__class__.instances.append(self)
+
+    def tool(self):
+        def register(func):
+            self.tools[func.__name__] = func
+            return func
+
+        return register
+
+    def run(self, *, transport="stdio"):
+        self.run_calls.append({"transport": transport})
+
+
+class _RecordingMcpService:
+    def __init__(self):
+        self.calls = []
+
+    def _record(self, name, *args, **kwargs):
+        self.calls.append((name, args, kwargs))
+        return {"tool": name, "call_count": len(self.calls)}
+
+    def refresh_context(self):
+        return self._record("refresh_context")
+
+    def get_advisor_context(self, color_id, **kwargs):
+        return self._record("get_advisor_context", color_id, **kwargs)
+
+    def scan_nearby(self, hero_id, **kwargs):
+        return self._record("scan_nearby", hero_id, **kwargs)
+
+    def estimate_battle(self, hero_id, target_id, **kwargs):
+        return self._record("estimate_battle", hero_id, target_id, **kwargs)
+
+    def find_route(self, hero_id, **kwargs):
+        return self._record("find_route", hero_id, **kwargs)
+
+    def explain_portal(self, portal_id, **kwargs):
+        return self._record("explain_portal", portal_id, **kwargs)
+
+    def list_colors(self, **kwargs):
+        return self._record("list_colors", **kwargs)
+
+    def get_alerts(self, color_id, **kwargs):
+        return self._record("get_alerts", color_id, **kwargs)
+
+
+class _FailingMcpService(_RecordingMcpService):
+    def __init__(self, exc):
+        super().__init__()
+        self.exc = exc
+
+    def list_colors(self, **kwargs):
+        raise self.exc
 
 
 class AdvisorContextServiceTests(unittest.TestCase):
@@ -182,6 +252,170 @@ class AdvisorContextServiceTests(unittest.TestCase):
 
             self.assertIs(service.get_domain_snapshot(), cached_snapshot)
             self.assertEqual(service.cached_metadata(), cached_metadata)
+
+
+class AdvisorMcpServerEntrypointTests(unittest.TestCase):
+    def setUp(self):
+        _FakeFastMCP.instances.clear()
+
+    def test_script_help_works_without_mcp_sdk(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(repo_root / "tools" / "battle_estimator_mcp.py"),
+                "--help",
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("H3 Companion MCP strategic advisor server", result.stdout)
+        self.assertIn("--map-file", result.stdout)
+        self.assertIn("--transport", result.stdout)
+
+    def test_service_from_args_defaults_save_file_to_pinned_mode(self):
+        parser = battle_estimator_mcp.build_mcp_arg_parser()
+        args = parser.parse_args([
+            "--save-file",
+            "001.GM2",
+            "--map-file",
+            "map.h3m",
+            "--config-path",
+            "config.json",
+        ])
+
+        service = battle_estimator_mcp._advisor_service_from_mcp_args(args)
+
+        self.assertEqual(service.mode, battle_estimator_gui.PINNED_MODE)
+        self.assertEqual(service.save_file, Path("001.GM2"))
+        self.assertEqual(service.map_file, Path("map.h3m"))
+        self.assertEqual(service.config_path, Path("config.json"))
+
+    def test_main_reports_missing_mcp_sdk_without_snapshot_load(self):
+        with patch.object(
+            battle_estimator_mcp,
+            "_load_mcp_sdk",
+            side_effect=battle_estimator_mcp.McpSdkUnavailableError("sdk missing"),
+        ):
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                exit_code = battle_estimator_mcp.main(["--map-file", "map.h3m"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("sdk missing", stderr.getvalue())
+
+    def test_run_mcp_server_uses_injected_sdk_and_stdio_transport(self):
+        exit_code = battle_estimator_mcp.run_mcp_server(
+            ["--save-file", "001.GM2", "--map-file", "map.h3m"],
+            fastmcp_cls=_FakeFastMCP,
+            tool_error_cls=_FakeToolError,
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(_FakeFastMCP.instances), 1)
+        self.assertEqual(
+            _FakeFastMCP.instances[0].run_calls,
+            [{"transport": battle_estimator_mcp.MCP_TRANSPORT_STDIO}],
+        )
+
+    def test_create_mcp_server_registers_approved_tools_and_delegates(self):
+        service = _RecordingMcpService()
+        server = battle_estimator_mcp.create_mcp_server(
+            service,
+            fastmcp_cls=_FakeFastMCP,
+            tool_error_cls=_FakeToolError,
+        )
+
+        self.assertEqual(set(server.tools), set(battle_estimator_mcp.MCP_TOOL_NAMES))
+        payload = server.tools["scan_nearby"](
+            "hero:isra",
+            radius=8,
+            sort_mode=battle_estimator_mcp.ADVISOR_SCAN_SORT_EASIEST,
+            refresh=False,
+        )
+
+        self.assertEqual(payload["tool"], "scan_nearby")
+        self.assertEqual(
+            service.calls[-1],
+            (
+                "scan_nearby",
+                ("hero:isra",),
+                {
+                    "radius": 8,
+                    "target_type": "all",
+                    "sort_mode": battle_estimator_mcp.ADVISOR_SCAN_SORT_EASIEST,
+                    "simulations": battle_estimator_mcp.battle_estimator.DEFAULT_SCAN_SIMULATIONS,
+                    "refresh": False,
+                    "include_removed": False,
+                    "include_hidden_targets": False,
+                },
+            ),
+        )
+
+    def test_mcp_tool_wrapper_converts_expected_errors(self):
+        service = _FailingMcpService(ValueError("bad input"))
+        server = battle_estimator_mcp.create_mcp_server(
+            service,
+            fastmcp_cls=_FakeFastMCP,
+            tool_error_cls=_FakeToolError,
+        )
+
+        with self.assertRaisesRegex(_FakeToolError, "ValueError: bad input"):
+            server.tools["list_colors"]()
+
+    def test_mcp_tool_wrapper_does_not_mask_unexpected_errors(self):
+        service = _FailingMcpService(RuntimeError("bug"))
+        server = battle_estimator_mcp.create_mcp_server(
+            service,
+            fastmcp_cls=_FakeFastMCP,
+            tool_error_cls=_FakeToolError,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "bug"):
+            server.tools["list_colors"]()
+
+
+class AdvisorMcpSdkSmokeTests(unittest.TestCase):
+    @unittest.skipIf(
+        sys.version_info < battle_estimator_mcp.MCP_MIN_PYTHON_VERSION,
+        "MCP SDK requires Python >=3.10",
+    )
+    def test_mcp_sdk_in_memory_smoke_lists_and_calls_tools(self):
+        try:
+            from mcp.shared.memory import create_connected_server_and_client_session
+        except ImportError as exc:
+            self.skipTest(f"MCP SDK unavailable: {exc}")
+
+        service = _RecordingMcpService()
+        server = battle_estimator_mcp.create_mcp_server(service)
+
+        async def run_smoke():
+            async with create_connected_server_and_client_session(
+                server,
+                raise_exceptions=True,
+            ) as session:
+                listed = await session.list_tools()
+                self.assertEqual(
+                    {tool.name for tool in listed.tools},
+                    set(battle_estimator_mcp.MCP_TOOL_NAMES),
+                )
+                result = await session.call_tool(
+                    "list_colors",
+                    {"refresh": False},
+                )
+                self.assertFalse(result.isError)
+
+        asyncio.run(run_smoke())
+        self.assertEqual(
+            service.calls[-1],
+            ("list_colors", (), {"refresh": False}),
+        )
 
 
 class AdvisorContextBuilderTests(unittest.TestCase):
