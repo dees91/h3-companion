@@ -79,6 +79,15 @@ Run the CLI wizard:
 python3 tools/battle_estimator.py
 ```
 
+Optional MCP strategic advisor server for local MCP clients:
+
+```bash
+uv run --python 3.13 --with mcp python tools/battle_estimator_mcp.py
+```
+
+See [docs/mcp-strategic-advisor-runbook.md](docs/mcp-strategic-advisor-runbook.md)
+for setup, tool sequence, limitations, and privacy rules.
+
 Run tests:
 
 ```bash

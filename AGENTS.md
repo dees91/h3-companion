@@ -81,6 +81,18 @@ Start the CLI wizard:
 python3 tools/battle_estimator.py
 ```
 
+Show MCP strategic advisor server options:
+
+```bash
+python3 tools/battle_estimator_mcp.py --help
+```
+
+Start the MCP strategic advisor server for local MCP clients:
+
+```bash
+uv run --python 3.13 --with mcp python tools/battle_estimator_mcp.py
+```
+
 Useful CLI examples:
 
 ```bash
@@ -150,6 +162,9 @@ For MCP strategic advisor and agent-facing analysis tools:
 - `planning/battle-estimator-mcp-strategic-advisor.md` for the MCP server
   scope, read-only/safe-compute tool contract, advisor context shape, runbook
   expectations, and implementation task breakdown.
+- `docs/mcp-strategic-advisor-runbook.md` for the operational server command,
+  supported CLI overrides, MCP tool sequence, advisor answer format, limitation
+  language, and privacy rules.
 
 Planning/history docs are useful context, but current code and tests are the
 source of truth when docs conflict. Update public docs (`README.md`,
@@ -168,7 +183,20 @@ planning docs for style-only updates.
 
 ## Runtime And Data Dependencies
 
-The project is mostly stdlib Python plus local static frontend assets.
+The project is mostly stdlib Python plus local static frontend assets. Normal
+GUI, CLI, and unit-test workflows do not require the MCP SDK.
+
+The optional MCP strategic advisor server requires Python `>=3.10` plus the
+official `mcp` Python SDK at server startup. The server keeps the SDK import
+lazy, so `python3 tools/battle_estimator_mcp.py --help` still works without the
+SDK. Prefer:
+
+```bash
+uv run --python 3.13 --with mcp python tools/battle_estimator_mcp.py
+```
+
+Alternatively use a Python `>=3.10` virtualenv and
+`python -m pip install mcp`.
 
 Vendored VCMI data snapshot:
 

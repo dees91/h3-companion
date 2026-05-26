@@ -70,8 +70,9 @@ Companion only provides truthful game context and analysis helpers.
   config, selected hero, hidden targets, map state, or local files.
 - A future GUI advisor board is deferred. No MCP tool should write advice back
   into the GUI in this improvement iteration.
-- The main tool should be a condensed `advisor_context`, not only raw
-  `/api/state`. Raw state can exist as a debug/fallback tool.
+- The main tool should be a condensed `advisor_context`, not raw `/api/state`.
+  Raw-state debug tools are deferred outside this MCP surface unless a future
+  task reintroduces them with explicit bounds and privacy review.
 - The MCP server should be a separate entrypoint, for example
   `python3 tools/battle_estimator_mcp.py`, while reusing existing backend
   functions from `battle_estimator_gui.py`, `h3_save_parser.py`,
@@ -117,32 +118,16 @@ Companion only provides truthful game context and analysis helpers.
 
 ## MCP Tool Contract
 
-Tool names are planning targets. Final names may change during implementation
-if a client or SDK imposes naming constraints.
+This is the implemented T07 server surface. Broader raw-state debug tools were
+deferred so the public MCP surface stays focused on bounded advisor context and
+safe compute helpers.
 
 ### `refresh_context`
 
-Reload the current save/map and rebuild cached advisor state.
-
-Input:
-
-```json
-{
-  "mode": "follow_latest",
-  "game_dir": null,
-  "save_file": null,
-  "map_file": null
-}
-```
-
-Output should include save/map identity, fingerprint, active color/team summary,
-and any load warnings.
-
-### `get_state_summary`
-
-Return a compact debug summary: current save, map, dimensions, players, teams,
-selected GUI hero if known, active colors, hero/town/portal/target counts, and
-snapshot freshness.
+Reload the service's configured save/map selection and rebuild cached advisor
+state. Startup CLI options select `mode`, `game_dir`, `save_file`, `map_file`,
+and `config_path`; `refresh_context()` does not accept path overrides at tool
+call time.
 
 ### `list_colors`
 
@@ -164,7 +149,7 @@ Input:
 }
 ```
 
-Recommended output sections:
+Output sections:
 
 - `subject`: color, color name, team ID, allied colors for `scope="team"`,
 - `snapshot`: save/map identity and limitations,
@@ -178,11 +163,6 @@ Recommended output sections:
 - `routes`: suggested route checks rather than huge precomputed paths,
 - `known_limitations`: explicit model limitations and unavailable data.
 
-### `get_state_raw`
-
-Debug/fallback tool. Return raw `/api/state`-equivalent data or a bounded subset
-if the snapshot is too large. This should be clearly marked as verbose.
-
 ### `scan_nearby`
 
 Run a safe radius scan for one hero.
@@ -193,26 +173,31 @@ Input:
 {
   "hero_id": "hero:731686",
   "radius": 10,
-  "target_filter": "both",
-  "sort": "distance",
-  "simulations": 200,
-  "refresh": false
+  "target_type": "all",
+  "sort_mode": "distance",
+  "simulations": 500,
+  "refresh": true,
+  "include_removed": false,
+  "include_hidden_targets": false
 }
 ```
 
 Output should reuse existing scan estimates and include target IDs that can be
-passed to other tools.
+passed to other tools. `sort_mode` supports `distance` and `easiest`.
 
 ### `estimate_battle`
 
 Estimate one selected hero versus one target hero or neutral target. Must remain
 read-only and expose the same combat model limitations as the GUI/CLI.
+Parameters are `hero_id`, `target_id`, `simulations`, `refresh`, and
+`include_hidden_targets`.
 
 ### `find_route`
 
 Find a strategic route from a hero to a target ID or explicit position using the
 existing land/portal pathfinding model. Must report target fallback,
 cross-level segments, portal segments, and non-deterministic portal traversal.
+Exactly one of `target_id` or `target_position` must be supplied.
 
 ### `explain_portal`
 
@@ -704,7 +689,19 @@ transport, and context cache behavior.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Added `docs/mcp-strategic-advisor-runbook.md` with the operational MCP server
+  command, Python `>=3.10` and official `mcp` SDK requirement, preferred
+  `uv --with mcp` startup path, virtualenv `pip install mcp` alternative,
+  supported CLI overrides, stdio protocol hygiene, exact current MCP tool
+  names/parameters, recommended tool sequence, answer format, limitation
+  language, and privacy rules.
+- README now mentions the MCP strategic advisor as an optional local workflow
+  and links to the runbook while keeping GUI/CLI flows primary.
+- AGENTS routing now points future MCP work to both this planning doc and the
+  runbook, and runtime dependency notes clarify that normal GUI/CLI/tests do
+  not require the MCP SDK.
+- Updated this planning doc's implemented MCP tool contract to match the T07
+  server surface and clarified that raw-state debug tools are deferred.
 
 ---
 
@@ -753,30 +750,30 @@ transport, and context cache behavior.
 
 ### Checkpoint: Foundation Ready
 
-- [ ] T01, T02, and T03 are `done`.
-- [ ] Advisor context can be built without starting the GUI.
-- [ ] Context is color-scoped by default and supports team scope.
-- [ ] Snapshot freshness and limitations are visible in output.
+- [x] T01, T02, and T03 are `done`.
+- [x] Advisor context can be built without starting the GUI.
+- [x] Context is color-scoped by default and supports team scope.
+- [x] Snapshot freshness and limitations are visible in output.
 
 ### Checkpoint: Compute Tools Ready
 
-- [ ] T04, T05, and T06 are `done`.
-- [ ] Scan, estimate, route, portal, color, and alert tools are read-only.
-- [ ] Tool outputs include IDs that can be used in follow-up calls.
-- [ ] Existing GUI scan/pathfinding tests still pass.
+- [x] T04, T05, and T06 are `done`.
+- [x] Scan, estimate, route, portal, color, and alert tools are read-only.
+- [x] Tool outputs include IDs that can be used in follow-up calls.
+- [x] Existing GUI scan/pathfinding tests still pass.
 
 ### Checkpoint: MCP Interface Ready
 
-- [ ] T07 is `done`.
-- [ ] Server starts as a standalone process.
-- [ ] MCP tool validation and errors are covered by tests.
-- [ ] No GUI process is required.
+- [x] T07 is `done`.
+- [x] Server starts as a standalone process.
+- [x] MCP tool validation and errors are covered by tests.
+- [x] No GUI process is required.
 
 ### Checkpoint: Complete
 
 - [ ] T08 and T09 are `done`.
 - [ ] Full Python suite passes.
-- [ ] Runbook is linked from README and AGENTS.
+- [x] Runbook is linked from README and AGENTS.
 - [ ] Real save/map smoke notes are anonymized.
 - [ ] No MCP client config, API keys, real saves, or real maps are staged.
 
@@ -785,7 +782,7 @@ transport, and context cache behavior.
 | Risk | Impact | Mitigation |
 |---|---|---|
 | MCP transport choice adds brittle dependencies. | High | Use the official MCP Python SDK selected in T01, keep the dependency explicit, and avoid optional SDK extras unless they are needed. |
-| Advisor context is too verbose for an LLM client. | Medium | Provide condensed `get_advisor_context` and keep raw state as debug/fallback. |
+| Advisor context is too verbose for an LLM client. | Medium | Provide condensed `get_advisor_context`; defer raw-state tools unless a future task adds explicit bounds and privacy review. |
 | Agent treats estimates as exact Heroes III truth. | High | Include model limitations in every advisor context and compute result. |
 | Tool calls accidentally mutate GUI/config state. | High | Keep advisor tools read-only plus in-memory cache refresh; test config files remain unchanged. |
 | Follow-latest context goes stale between user turns. | Medium | Default `get_advisor_context(refresh=true)` and expose snapshot save/map identity. |
@@ -813,5 +810,5 @@ transport, and context cache behavior.
 | T05 | Route And Portal Tools | done | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
 | T06 | Alerts And Color Scope Tools | done | T03 | compute-tools | Parallel | S | Core/Test | advisor module, MCP tests |
 | T07 | MCP Server Entry Point | done | T03, T04, T05, T06 | interface | Main | M | CLI/Integration/Test | `tools/battle_estimator_mcp.py`, MCP tests |
-| T08 | Runbook And Client Setup Docs | todo | T07 | docs | Main | S | Docs | `docs/mcp-strategic-advisor-runbook.md`, `README.md`, `AGENTS.md` |
-| T09 | End-To-End MCP Verification | blocked | T07, T08 | quality | Main | M | Test/Docs | MCP tests, `CHANGELOG.md`, planning doc |
+| T08 | Runbook And Client Setup Docs | done | T07 | docs | Main | S | Docs | `docs/mcp-strategic-advisor-runbook.md`, `README.md`, `AGENTS.md` |
+| T09 | End-To-End MCP Verification | todo | T07, T08 | quality | Main | M | Test/Docs | MCP tests, `CHANGELOG.md`, planning doc |
