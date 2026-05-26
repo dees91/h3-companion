@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from collections import Counter, defaultdict
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -15,6 +16,17 @@ try:
 except ImportError:  # pragma: no cover - direct script execution fallback.
     import battle_estimator_gui
     import h3_save_parser
+
+
+ADVISOR_SCOPE_COLOR = "color"
+ADVISOR_SCOPE_TEAM = "team"
+ADVISOR_SCOPES = frozenset((ADVISOR_SCOPE_COLOR, ADVISOR_SCOPE_TEAM))
+MAX_CONTEXT_HEROES_PER_GROUP = 12
+MAX_CONTEXT_TOWNS_PER_GROUP = 12
+MAX_CONTEXT_PORTAL_EXAMPLES = 12
+MAX_CONTEXT_PORTAL_IDS = 12
+MAX_CONTEXT_ALERTS = 8
+MAX_CONTEXT_STATUS_DETAIL_CHARS = 240
 
 
 @dataclass(frozen=True)
@@ -135,12 +147,591 @@ class AdvisorContextService:
             raise RuntimeError("advisor context refresh did not produce a snapshot")
         return snapshot
 
+    def get_advisor_context(
+        self,
+        color_id: int,
+        *,
+        scope: str = ADVISOR_SCOPE_COLOR,
+        refresh: bool = True,
+        include_raw_ids: bool = True,
+    ) -> dict[str, Any]:
+        """Build a bounded strategic context for one color or team."""
+
+        snapshot = self.get_domain_snapshot(refresh=refresh)
+        metadata = self.cached_metadata()
+        if metadata is None:
+            metadata = AdvisorContextMetadata.from_domain_snapshot(snapshot).as_dict()
+        config = h3_save_parser.load_config(self.config_path)
+        return build_advisor_context(
+            snapshot,
+            color_id,
+            scope=scope,
+            include_raw_ids=include_raw_ids,
+            metadata=metadata,
+            config=config,
+        )
+
     def cached_metadata(self) -> dict[str, Any] | None:
         """Return a defensive copy of cached snapshot metadata if loaded."""
 
         with self._lock:
             metadata = self._metadata
         return metadata.as_dict() if metadata is not None else None
+
+
+def build_advisor_context(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    color_id: int,
+    *,
+    scope: str = ADVISOR_SCOPE_COLOR,
+    include_raw_ids: bool = True,
+    metadata: dict[str, Any] | None = None,
+    config: h3_save_parser.BattleEstimatorConfig | None = None,
+) -> dict[str, Any]:
+    """Build a compact advisor context from one domain snapshot."""
+
+    normalized_color_id = _normalize_advisor_color_id(color_id)
+    if scope not in ADVISOR_SCOPES:
+        expected = ", ".join(sorted(ADVISOR_SCOPES))
+        raise ValueError(f"invalid advisor scope {scope!r}; expected {expected}")
+
+    state = domain_snapshot.state
+    players = tuple(state.get("players", ()))
+    subject = _advisor_subject(
+        normalized_color_id,
+        scope,
+        players,
+        domain_snapshot.team_by_color,
+        has_explicit_team_data=_has_explicit_team_data(players),
+    )
+    limitations = _known_advisor_limitations(subject)
+    context_metadata = (
+        copy.deepcopy(metadata)
+        if metadata is not None
+        else AdvisorContextMetadata.from_domain_snapshot(domain_snapshot).as_dict()
+    )
+    alert_config = replace(
+        config or h3_save_parser.BattleEstimatorConfig(),
+        my_color_id=normalized_color_id,
+    )
+    alert_result = _advisor_alert_result(domain_snapshot, alert_config, subject)
+
+    return {
+        "subject": subject,
+        "snapshot": _advisor_snapshot_section(context_metadata, state),
+        "heroes": _advisor_heroes_section(
+            state.get("heroes", ()),
+            subject,
+            include_raw_ids=include_raw_ids,
+        ),
+        "towns": _advisor_towns_section(
+            state.get("town_targets", ()),
+            subject,
+            include_raw_ids=include_raw_ids,
+        ),
+        "alerts": _advisor_alerts_section(
+            alert_result,
+            include_raw_ids=include_raw_ids,
+        ),
+        "nearby_opportunities": _advisor_opportunity_hints(
+            state.get("heroes", ()),
+            subject,
+            include_raw_ids=include_raw_ids,
+        ),
+        "portals": _advisor_portals_section(
+            state.get("portal_targets", ()),
+            state.get("portal_edges", ()),
+            include_raw_ids=include_raw_ids,
+        ),
+        "routes": _advisor_route_hints(
+            state.get("heroes", ()),
+            state.get("town_targets", ()),
+            subject,
+            include_raw_ids=include_raw_ids,
+        ),
+        "known_limitations": limitations,
+    }
+
+
+def _normalize_advisor_color_id(color_id: int) -> int:
+    if isinstance(color_id, bool) or not isinstance(color_id, int):
+        raise ValueError("color_id must be an integer player color id")
+    if color_id < 0 or color_id >= len(h3_save_parser.PLAYER_COLOR_NAMES):
+        raise ValueError("color_id must be between 0 and 7")
+    return color_id
+
+
+def _advisor_subject(
+    color_id: int,
+    scope: str,
+    players,
+    team_by_color: dict[int, int],
+    *,
+    has_explicit_team_data: bool,
+) -> dict[str, Any]:
+    player_by_id = {
+        int(player["player_index"]): player
+        for player in players
+        if "player_index" in player
+    }
+    player = player_by_id.get(color_id)
+    if not player or not player.get("enabled", False):
+        raise ValueError(f"color_id {color_id} is not an active map player")
+
+    active_color_ids = tuple(
+        sorted(
+            int(candidate["player_index"])
+            for candidate in players
+            if candidate.get("enabled", False)
+        )
+    )
+    team_id = team_by_color.get(color_id) if has_explicit_team_data else None
+    allied_color_ids = tuple(
+        candidate_id
+        for candidate_id in active_color_ids
+        if candidate_id != color_id
+        and has_explicit_team_data
+        and team_by_color.get(candidate_id) == team_id
+    ) if team_id is not None else ()
+    subject_color_ids = (
+        (color_id, *allied_color_ids)
+        if scope == ADVISOR_SCOPE_TEAM
+        else (color_id,)
+    )
+    return {
+        "scope": scope,
+        "color_id": color_id,
+        "color_name": player.get("color_name") or _player_color_name(color_id),
+        "team_id": team_id,
+        "team_scope_available": team_id is not None,
+        "allied_color_ids": list(allied_color_ids),
+        "allied_color_names": [
+            _player_color_name(candidate_id) for candidate_id in allied_color_ids
+        ],
+        "subject_color_ids": list(subject_color_ids),
+        "subject_color_names": [
+            _player_color_name(candidate_id) for candidate_id in subject_color_ids
+        ],
+        "active_color_ids": list(active_color_ids),
+        "active_color_names": [
+            _player_color_name(candidate_id) for candidate_id in active_color_ids
+        ],
+    }
+
+
+def _has_explicit_team_data(players) -> bool:
+    team_counts = Counter(
+        player.get("team_id")
+        for player in players
+        if player.get("enabled", False) and player.get("team_id") is not None
+    )
+    return any(count > 1 for count in team_counts.values())
+
+
+def _advisor_snapshot_section(metadata: dict[str, Any], state: dict) -> dict[str, Any]:
+    return {
+        "mode": metadata.get("mode", state.get("mode")),
+        "autosave_dir": metadata.get("autosave_dir", state.get("autosave_dir")),
+        "save_file": metadata.get("save_file", state.get("save_file")),
+        "save_name": metadata.get("save_name"),
+        "save_fingerprint": metadata.get("save_fingerprint"),
+        "map_file": metadata.get("map_file", state.get("map_file")),
+        "map_name": metadata.get("map_name"),
+        "map_fingerprint": metadata.get("map_fingerprint"),
+        "loaded_at": metadata.get("loaded_at"),
+        "map": copy.deepcopy(state.get("map", {})),
+        "counts": {
+            "heroes": metadata.get("hero_count", len(state.get("heroes", ()))),
+            "neutral_targets": metadata.get(
+                "neutral_target_count",
+                len(state.get("neutral_targets", ())),
+            ),
+            "towns": metadata.get("town_count", len(state.get("town_targets", ()))),
+            "portals": metadata.get(
+                "portal_count",
+                len(state.get("portal_targets", ())),
+            ),
+        },
+    }
+
+
+def _advisor_heroes_section(
+    heroes,
+    subject: dict[str, Any],
+    *,
+    include_raw_ids: bool,
+) -> dict[str, Any]:
+    groups = {"own": [], "allied": [], "enemy": [], "unknown": []}
+    for hero in sorted(heroes, key=_hero_sort_key):
+        relation = _hero_relation(hero, subject)
+        groups[relation].append(
+            _compact_hero(hero, include_raw_ids=include_raw_ids),
+        )
+    return {
+        relation: _bounded_items(items, MAX_CONTEXT_HEROES_PER_GROUP)
+        for relation, items in groups.items()
+    }
+
+
+def _hero_relation(hero: dict, subject: dict[str, Any]) -> str:
+    owner_color_id = hero.get("owner_color_id")
+    if owner_color_id is None:
+        return "unknown"
+    if owner_color_id == subject["color_id"]:
+        return "own"
+    if owner_color_id in set(subject["allied_color_ids"]):
+        return "allied"
+    return "enemy"
+
+
+def _compact_hero(hero: dict, *, include_raw_ids: bool) -> dict[str, Any]:
+    combat_context = hero.get("combat_context") or {}
+    compact = _maybe_with_id({
+        "name": hero.get("name"),
+        "position": copy.deepcopy(hero.get("position")),
+        "owner_color_id": hero.get("owner_color_id"),
+        "owner_color_name": hero.get("owner_color_name"),
+        "team_id": hero.get("team_id"),
+        "ai_value": hero.get("ai_value", 0),
+        "total_creatures": hero.get("total_creatures", 0),
+        "army_summary": hero.get("army_summary"),
+        "army": [
+            {
+                "creature_name": stack.get("creature_name"),
+                "count": stack.get("count"),
+            }
+            for stack in hero.get("army", ())
+        ],
+        "combat_context": {
+            "status": combat_context.get("status"),
+            "source": combat_context.get("source"),
+            "reason": combat_context.get("reason"),
+            "primary": copy.deepcopy(combat_context.get("primary")),
+            "passive_modifiers": copy.deepcopy(
+                combat_context.get("passive_modifiers", {}),
+            ),
+        },
+    }, hero.get("id"), include_raw_ids)
+    return compact
+
+
+def _advisor_towns_section(
+    towns,
+    subject: dict[str, Any],
+    *,
+    include_raw_ids: bool,
+) -> dict[str, Any]:
+    subject_color_ids = set(subject["subject_color_ids"])
+    grouped = {"subject_owned": [], "other": [], "ownership_unavailable": []}
+    for town in sorted(towns, key=lambda item: (item.get("object_index", 0), item.get("id", ""))):
+        compact = _compact_town(town, include_raw_ids=include_raw_ids)
+        status = town.get("ownership_status")
+        owner_color_id = town.get("current_owner_color_id")
+        if status == h3_save_parser.TOWN_OWNERSHIP_STATUS_UNAVAILABLE:
+            grouped["ownership_unavailable"].append(compact)
+        elif owner_color_id in subject_color_ids:
+            grouped["subject_owned"].append(compact)
+        else:
+            grouped["other"].append(compact)
+    return {
+        group: _bounded_items(items, MAX_CONTEXT_TOWNS_PER_GROUP)
+        for group, items in grouped.items()
+    }
+
+
+def _compact_town(town: dict, *, include_raw_ids: bool) -> dict[str, Any]:
+    return _maybe_with_id({
+        "name": town.get("custom_name") or town.get("id"),
+        "position": copy.deepcopy(town.get("position")),
+        "current_owner_color_id": town.get("current_owner_color_id"),
+        "current_owner_color_name": town.get("current_owner_color_name"),
+        "initial_owner": town.get("initial_owner"),
+        "initial_owner_color_name": town.get("initial_owner_color_name"),
+        "ownership_status": town.get("ownership_status"),
+        "ownership_reason": town.get("ownership_reason"),
+    }, town.get("id"), include_raw_ids)
+
+
+def _advisor_alerts_section(
+    alert_result: battle_estimator_gui.CastleAlertResult,
+    *,
+    include_raw_ids: bool,
+) -> dict[str, Any]:
+    alert_items = [
+        _compact_alert(alert, include_raw_ids=include_raw_ids)
+        for alert in alert_result.alerts[:MAX_CONTEXT_ALERTS]
+    ]
+    return {
+        "status": alert_result.status,
+        "status_detail": _bounded_text(
+            alert_result.status_detail,
+            MAX_CONTEXT_STATUS_DETAIL_CHARS,
+        ),
+        "count": len(alert_result.alerts),
+        "items": alert_items,
+        "omitted_count": max(0, len(alert_result.alerts) - len(alert_items)),
+    }
+
+
+def _advisor_alert_result(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    config: h3_save_parser.BattleEstimatorConfig,
+    subject: dict[str, Any],
+) -> battle_estimator_gui.CastleAlertResult:
+    if subject["scope"] != ADVISOR_SCOPE_TEAM:
+        return battle_estimator_gui.build_castle_alerts(domain_snapshot, config)
+
+    results = tuple(
+        battle_estimator_gui.build_castle_alerts(
+            domain_snapshot,
+            replace(config, my_color_id=color_id),
+        )
+        for color_id in subject["subject_color_ids"]
+    )
+    alerts = tuple(alert for result in results for alert in result.alerts)
+    if alerts:
+        return battle_estimator_gui.CastleAlertResult(
+            battle_estimator_gui.CASTLE_ALERT_STATUS_OK,
+            alerts=alerts,
+        )
+
+    statuses = tuple(result.status for result in results)
+    if battle_estimator_gui.CASTLE_ALERT_STATUS_OWNERSHIP_UNAVAILABLE in statuses:
+        details = tuple(
+            _bounded_text(result.status_detail, MAX_CONTEXT_STATUS_DETAIL_CHARS)
+            for result in results
+            if result.status_detail
+        )
+        return battle_estimator_gui.CastleAlertResult(
+            battle_estimator_gui.CASTLE_ALERT_STATUS_OWNERSHIP_UNAVAILABLE,
+            status_detail="; ".join(details) or None,
+        )
+    if battle_estimator_gui.CASTLE_ALERT_STATUS_UNCONFIGURED in statuses:
+        return battle_estimator_gui.CastleAlertResult(
+            battle_estimator_gui.CASTLE_ALERT_STATUS_UNCONFIGURED,
+        )
+    if all(
+        status == battle_estimator_gui.CASTLE_ALERT_STATUS_NO_OWNED_TOWNS
+        for status in statuses
+    ):
+        return battle_estimator_gui.CastleAlertResult(
+            battle_estimator_gui.CASTLE_ALERT_STATUS_NO_OWNED_TOWNS,
+        )
+    return battle_estimator_gui.CastleAlertResult(
+        battle_estimator_gui.CASTLE_ALERT_STATUS_NO_THREATS,
+    )
+
+
+def _compact_alert(
+    alert: battle_estimator_gui.CastleAlert,
+    *,
+    include_raw_ids: bool,
+) -> dict[str, Any]:
+    compact = {
+        "enemy_hero_name": alert.enemy_hero_name,
+        "enemy_color_id": alert.enemy_color_id,
+        "enemy_color_name": alert.enemy_color_name,
+        "town_name": alert.town_name,
+        "distance": alert.distance,
+        "other_towns_in_radius": alert.other_towns_in_radius,
+        "enemy_position": battle_estimator_gui._serialize_position(
+            alert.enemy_position,
+        ),
+        "town_position": battle_estimator_gui._serialize_position(
+            alert.town_position,
+        ),
+    }
+    if include_raw_ids:
+        compact.update({
+            "id": alert.id,
+            "enemy_hero_id": alert.enemy_hero_id,
+            "town_id": alert.town_id,
+        })
+    return compact
+
+
+def _advisor_opportunity_hints(
+    heroes,
+    subject: dict[str, Any],
+    *,
+    include_raw_ids: bool,
+) -> dict[str, Any]:
+    subject_colors = set(subject["subject_color_ids"])
+    candidates = [
+        _hero_tool_reference(hero, include_raw_ids=include_raw_ids)
+        for hero in sorted(heroes, key=_hero_sort_key)
+        if hero.get("owner_color_id") in subject_colors and hero.get("position")
+    ]
+    return {
+        "status": "not_computed",
+        "tool_hint": "scan_nearby",
+        "candidate_heroes": _bounded_items(candidates, MAX_CONTEXT_HEROES_PER_GROUP),
+    }
+
+
+def _advisor_portals_section(
+    portals,
+    portal_edges,
+    *,
+    include_raw_ids: bool,
+) -> dict[str, Any]:
+    portal_by_id = {portal.get("id"): portal for portal in portals}
+    by_role = Counter(portal.get("role") or "unknown" for portal in portals)
+    edges_by_source = defaultdict(list)
+    cross_level_edges = 0
+    for edge in portal_edges:
+        edges_by_source[edge.get("source_id")].append(edge)
+        source = portal_by_id.get(edge.get("source_id"))
+        destination = portal_by_id.get(edge.get("destination_id"))
+        source_z = (source.get("position") or {}).get("z") if source else None
+        destination_z = (
+            (destination.get("position") or {}).get("z") if destination else None
+        )
+        if source_z is not None and destination_z is not None and source_z != destination_z:
+            cross_level_edges += 1
+
+    non_deterministic_sources = sorted(
+        source_id
+        for source_id, edges in edges_by_source.items()
+        if source_id and len(edges) > 1
+    )
+    examples = [
+        _compact_portal(portal, edges_by_source, include_raw_ids=include_raw_ids)
+        for portal in sorted(portals, key=lambda item: (item.get("object_index", 0), item.get("id", "")))
+    ][:MAX_CONTEXT_PORTAL_EXAMPLES]
+    return {
+        "total": len(portals),
+        "edge_count": len(portal_edges),
+        "cross_level_edge_count": cross_level_edges,
+        "non_deterministic_source_ids": non_deterministic_sources[:MAX_CONTEXT_PORTAL_IDS]
+        if include_raw_ids
+        else [],
+        "non_deterministic_source_omitted_count": max(
+            0,
+            len(non_deterministic_sources) - MAX_CONTEXT_PORTAL_IDS,
+        ),
+        "by_role": dict(sorted(by_role.items())),
+        "examples": examples,
+        "omitted_count": max(0, len(portals) - len(examples)),
+    }
+
+
+def _compact_portal(portal: dict, edges_by_source, *, include_raw_ids: bool) -> dict[str, Any]:
+    outgoing = edges_by_source.get(portal.get("id"), ())
+    destination_ids = [edge.get("destination_id") for edge in outgoing]
+    return _maybe_with_id({
+        "position": copy.deepcopy(portal.get("position")),
+        "portal_type": portal.get("portal_type"),
+        "role": portal.get("role"),
+        "channel_key": portal.get("channel_key"),
+        "destination_count": len(outgoing),
+        "destination_ids": destination_ids[:MAX_CONTEXT_PORTAL_IDS]
+        if include_raw_ids
+        else [],
+        "destination_omitted_count": max(
+            0,
+            len(destination_ids) - MAX_CONTEXT_PORTAL_IDS,
+        ),
+    }, portal.get("id"), include_raw_ids)
+
+
+def _advisor_route_hints(
+    heroes,
+    towns,
+    subject: dict[str, Any],
+    *,
+    include_raw_ids: bool,
+) -> dict[str, Any]:
+    subject_colors = set(subject["subject_color_ids"])
+    candidate_heroes = [
+        _hero_tool_reference(hero, include_raw_ids=include_raw_ids)
+        for hero in sorted(heroes, key=_hero_sort_key)
+        if hero.get("owner_color_id") in subject_colors and hero.get("position")
+    ][:MAX_CONTEXT_HEROES_PER_GROUP]
+    owned_towns = [
+        _compact_town(town, include_raw_ids=include_raw_ids)
+        for town in towns
+        if town.get("current_owner_color_id") in subject_colors
+    ][:MAX_CONTEXT_TOWNS_PER_GROUP]
+    return {
+        "status": "not_computed",
+        "tool_hint": "find_route",
+        "candidate_heroes": candidate_heroes,
+        "subject_towns": owned_towns,
+    }
+
+
+def _hero_tool_reference(hero: dict, *, include_raw_ids: bool) -> dict[str, Any]:
+    return _maybe_with_id({
+        "name": hero.get("name"),
+        "position": copy.deepcopy(hero.get("position")),
+        "ai_value": hero.get("ai_value", 0),
+    }, hero.get("id"), include_raw_ids)
+
+
+def _known_advisor_limitations(subject: dict[str, Any]) -> list[dict[str, str]]:
+    limitations = [
+        {
+            "id": "fog_of_war",
+            "detail": "Fog of war and hidden enemy information are not modeled.",
+        },
+        {
+            "id": "movement_points",
+            "detail": "Exact movement points, roads, terrain costs, boats, and spells are not modeled.",
+        },
+        {
+            "id": "battle_model",
+            "detail": "Artifacts, active spells, morale/luck, tactics, terrain, and many special abilities remain simplified or omitted.",
+        },
+        {
+            "id": "save_parsing",
+            "detail": "Save parsing is best-effort for observed GM1/GM2 structures; unavailable fields are reported explicitly.",
+        },
+    ]
+    if subject["scope"] == ADVISOR_SCOPE_TEAM and not subject["team_scope_available"]:
+        limitations.append({
+            "id": "team_scope_unavailable",
+            "detail": "Team scope was requested, but the map has no team data for this color.",
+        })
+    return limitations
+
+
+def _bounded_items(items: list[dict[str, Any]], limit: int) -> dict[str, Any]:
+    return {
+        "items": items[:limit],
+        "total_count": len(items),
+        "omitted_count": max(0, len(items) - limit),
+    }
+
+
+def _bounded_text(value: str | None, limit: int) -> str | None:
+    if value is None or len(value) <= limit:
+        return value
+    return value[:max(0, limit - 3)].rstrip() + "..."
+
+
+def _maybe_with_id(
+    payload: dict[str, Any],
+    raw_id: str | None,
+    include_raw_ids: bool,
+) -> dict[str, Any]:
+    if include_raw_ids and raw_id is not None:
+        return {"id": raw_id, **payload}
+    return payload
+
+
+def _hero_sort_key(hero: dict) -> tuple:
+    return (
+        -(hero.get("ai_value") or 0),
+        hero.get("name") or "",
+        hero.get("id") or "",
+    )
+
+
+def _player_color_name(color_id: int) -> str:
+    if 0 <= color_id < len(h3_save_parser.PLAYER_COLOR_NAMES):
+        return h3_save_parser.PLAYER_COLOR_NAMES[color_id]
+    return f"color:{color_id}"
 
 
 def _resolve_context_mode(mode: str | None, save_file: str | Path | None) -> str:
@@ -162,4 +753,3 @@ def _resolve_context_mode(mode: str | None, save_file: str | Path | None) -> str
         ))
         raise ValueError(f"invalid mode {mode!r}; expected {expected}")
     return mode
-

@@ -5,7 +5,8 @@
 > This plan adds a local MCP interface for agent-facing strategic and tactical
 > advice. The companion app should expose current game state and safe analysis
 > tools to external coding/assistant clients such as Codex or Claude Code, while
-> keeping the H3 Companion GUI free of direct LLM API integration in the MVP.
+> keeping the H3 Companion GUI free of direct LLM API integration in this
+> improvement iteration.
 >
 > **Related**:
 > [README](../README.md),
@@ -35,7 +36,8 @@
 >    relevant Python verification available at that point.
 > 6. **Do not commit real saves, maps, private paths, MCP client config files,
 >    API keys, or assistant transcripts.**
-> 7. **Do not add direct LLM API integration to the GUI for this MVP.**
+> 7. **Do not add direct LLM API integration to the GUI for this improvement
+>    iteration.**
 >
 > Status values: `todo` = ready to pick up | `in-progress` = being worked on |
 > `done` = completed | `blocked` = waiting on dependencies.
@@ -56,9 +58,9 @@ an agent to answer questions such as:
 - Which portals or subterranean gates expose our towns?
 - How should one player coordinate with the allied team?
 
-The MVP is agent-facing, not GUI-native. The user will talk to an MCP-capable
-assistant in Codex, Claude Code, or another local client. H3 Companion only
-provides truthful game context and analysis helpers.
+This improvement iteration is agent-facing, not GUI-native. The user will talk
+to an MCP-capable assistant in Codex, Claude Code, or another local client. H3
+Companion only provides truthful game context and analysis helpers.
 
 ## Product Decisions
 
@@ -67,7 +69,7 @@ provides truthful game context and analysis helpers.
 - The MCP surface is read-only plus safe compute tools. It must not mutate GUI
   config, selected hero, hidden targets, map state, or local files.
 - A future GUI advisor board is deferred. No MCP tool should write advice back
-  into the GUI in the MVP.
+  into the GUI in this improvement iteration.
 - The main tool should be a condensed `advisor_context`, not only raw
   `/api/state`. Raw state can exist as a debug/fallback tool.
 - The MCP server should be a separate entrypoint, for example
@@ -428,7 +430,20 @@ transport, and context cache behavior.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Added `AdvisorContextService.get_advisor_context()` and
+  `build_advisor_context()` in `tools/battle_estimator_mcp.py`.
+- Context output is a bounded, deterministic dict with `subject`, `snapshot`,
+  `heroes`, `towns`, `alerts`, `nearby_opportunities`, `portals`, `routes`, and
+  `known_limitations` sections instead of raw state dumps.
+- `scope="color"` keeps the requested color as the subject while still grouping
+  same-team heroes as allied. `scope="team"` expands `subject_color_ids` to the
+  requested color plus allied colors from H3M team data.
+- The builder validates active player colors and invalid scopes, reports model
+  limitations, includes alert status through the existing castle-alert service,
+  and provides scan/route tool hints without running compute tools.
+- Added focused MCP tests for color scope grouping, team scope expansion,
+  unavailable team-scope limitations, unknown colors, invalid scopes, and
+  required context sections.
 
 ---
 
@@ -569,7 +584,8 @@ transport, and context cache behavior.
 **Acceptance Criteria:**
 
 1. `python3 tools/battle_estimator_mcp.py --help` works.
-2. The server exposes the approved MVP tools over the selected MCP transport.
+2. The server exposes the approved advisor tools over the selected MCP
+   transport.
 3. Tool argument validation returns clear structured errors.
 4. Server startup does not require the browser GUI to be running.
 5. Server remains read-only except for in-memory cache refresh.
@@ -705,7 +721,7 @@ transport, and context cache behavior.
 | MCP transport choice adds brittle dependencies. | High | Use the official MCP Python SDK selected in T01, keep the dependency explicit, and avoid optional SDK extras unless they are needed. |
 | Advisor context is too verbose for an LLM client. | Medium | Provide condensed `get_advisor_context` and keep raw state as debug/fallback. |
 | Agent treats estimates as exact Heroes III truth. | High | Include model limitations in every advisor context and compute result. |
-| Tool calls accidentally mutate GUI/config state. | High | Keep MVP tools read-only plus in-memory cache refresh; test config files remain unchanged. |
+| Tool calls accidentally mutate GUI/config state. | High | Keep advisor tools read-only plus in-memory cache refresh; test config files remain unchanged. |
 | Follow-latest context goes stale between user turns. | Medium | Default `get_advisor_context(refresh=true)` and expose snapshot save/map identity. |
 | Local real saves or paths leak into docs/tests. | High | Use synthetic fixtures for automated tests and anonymized manual verification notes. |
 | Existing GUI helpers are too coupled to HTTP handlers. | Medium | Extract small pure helpers rather than duplicating logic or starting the HTTP server. |
@@ -726,10 +742,10 @@ transport, and context cache behavior.
 |---|---|---|---|---|---|---|---|---|
 | T01 | MCP Transport Spike | done | -- | foundation | Main | S | Research/Docs | planning doc, docs if needed |
 | T02 | Read-Only Context Loader | done | T01 | foundation | Main | M | Core/Test | `tools/battle_estimator_mcp.py`, MCP tests |
-| T03 | Advisor Context Builder | todo | T02 | foundation | Main | M | Core/Test | advisor module, MCP tests |
+| T03 | Advisor Context Builder | done | T02 | foundation | Main | M | Core/Test | advisor module, MCP tests |
 | T04 | Scan And Estimate Tools | todo | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
 | T05 | Route And Portal Tools | todo | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
-| T06 | Alerts And Color Scope Tools | blocked | T03 | compute-tools | Parallel | S | Core/Test | advisor module, MCP tests |
+| T06 | Alerts And Color Scope Tools | todo | T03 | compute-tools | Parallel | S | Core/Test | advisor module, MCP tests |
 | T07 | MCP Server Entry Point | blocked | T03, T04, T05, T06 | interface | Main | M | CLI/Integration/Test | `tools/battle_estimator_mcp.py`, MCP tests |
 | T08 | Runbook And Client Setup Docs | blocked | T07 | docs | Main | S | Docs | `docs/mcp-strategic-advisor-runbook.md`, `README.md`, `AGENTS.md` |
 | T09 | End-To-End MCP Verification | blocked | T07, T08 | quality | Main | M | Test/Docs | MCP tests, `CHANGELOG.md`, planning doc |
