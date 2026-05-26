@@ -482,7 +482,22 @@ transport, and context cache behavior.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Added read-only `AdvisorContextService.scan_nearby()` and
+  `AdvisorContextService.estimate_battle()` wrappers plus pure module-level
+  helpers in `tools/battle_estimator_mcp.py`.
+- `scan_nearby` accepts hero ID, radius, target type, easiest/distance sort
+  mode, simulation count, refresh flag, removed-target inclusion, and hidden
+  target inclusion. It reuses existing nearby-scan and battle-estimator logic
+  and returns GUI-compatible serialized estimates with target IDs.
+- `estimate_battle` resolves an exact neutral or enemy-hero target ID without
+  scan-radius or same-level filtering, matching the existing GUI single-target
+  simulation behavior.
+- Hidden neutral/hero targets are read from config and filtered by default
+  without mutating config. Filtered responses report counts only; exact hidden
+  IDs are exposed only when hidden targets are explicitly included.
+- Added focused tests for neutral+hero scans, easiest sorting, hero-only scans,
+  exact hero-target estimates across levels, hidden-target filtering, invalid
+  inputs, model limitations, and config preservation.
 
 ---
 
@@ -743,7 +758,7 @@ transport, and context cache behavior.
 | T01 | MCP Transport Spike | done | -- | foundation | Main | S | Research/Docs | planning doc, docs if needed |
 | T02 | Read-Only Context Loader | done | T01 | foundation | Main | M | Core/Test | `tools/battle_estimator_mcp.py`, MCP tests |
 | T03 | Advisor Context Builder | done | T02 | foundation | Main | M | Core/Test | advisor module, MCP tests |
-| T04 | Scan And Estimate Tools | todo | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
+| T04 | Scan And Estimate Tools | done | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
 | T05 | Route And Portal Tools | todo | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
 | T06 | Alerts And Color Scope Tools | todo | T03 | compute-tools | Parallel | S | Core/Test | advisor module, MCP tests |
 | T07 | MCP Server Entry Point | blocked | T03, T04, T05, T06 | interface | Main | M | CLI/Integration/Test | `tools/battle_estimator_mcp.py`, MCP tests |

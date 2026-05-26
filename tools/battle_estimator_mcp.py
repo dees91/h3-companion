@@ -12,8 +12,9 @@ from threading import RLock
 from typing import Any
 
 try:
-    from tools import battle_estimator_gui, h3_save_parser
+    from tools import battle_estimator, battle_estimator_gui, h3_save_parser
 except ImportError:  # pragma: no cover - direct script execution fallback.
+    import battle_estimator
     import battle_estimator_gui
     import h3_save_parser
 
@@ -27,6 +28,12 @@ MAX_CONTEXT_PORTAL_EXAMPLES = 12
 MAX_CONTEXT_PORTAL_IDS = 12
 MAX_CONTEXT_ALERTS = 8
 MAX_CONTEXT_STATUS_DETAIL_CHARS = 240
+ADVISOR_SCAN_SORT_DISTANCE = "distance"
+ADVISOR_SCAN_SORT_EASIEST = "easiest"
+ADVISOR_SCAN_SORT_MODES = frozenset((
+    ADVISOR_SCAN_SORT_DISTANCE,
+    ADVISOR_SCAN_SORT_EASIEST,
+))
 
 
 @dataclass(frozen=True)
@@ -171,6 +178,56 @@ class AdvisorContextService:
             config=config,
         )
 
+    def scan_nearby(
+        self,
+        hero_id: str,
+        *,
+        radius: int = 10,
+        target_type: str = "all",
+        sort_mode: str = ADVISOR_SCAN_SORT_DISTANCE,
+        simulations: int = battle_estimator.DEFAULT_SCAN_SIMULATIONS,
+        refresh: bool = True,
+        include_removed: bool = False,
+        include_hidden_targets: bool = False,
+    ) -> dict[str, Any]:
+        """Run a read-only nearby target scan for one hero."""
+
+        snapshot = self.get_domain_snapshot(refresh=refresh)
+        config = h3_save_parser.load_config(self.config_path)
+        return scan_nearby(
+            snapshot,
+            hero_id,
+            radius=radius,
+            target_type=target_type,
+            sort_mode=sort_mode,
+            simulations=simulations,
+            config=config,
+            include_removed=include_removed,
+            include_hidden_targets=include_hidden_targets,
+        )
+
+    def estimate_battle(
+        self,
+        hero_id: str,
+        target_id: str,
+        *,
+        simulations: int = battle_estimator.DEFAULT_SCAN_SIMULATIONS,
+        refresh: bool = True,
+        include_hidden_targets: bool = False,
+    ) -> dict[str, Any]:
+        """Estimate one read-only battle for a hero and target ID."""
+
+        snapshot = self.get_domain_snapshot(refresh=refresh)
+        config = h3_save_parser.load_config(self.config_path)
+        return estimate_battle(
+            snapshot,
+            hero_id,
+            target_id,
+            simulations=simulations,
+            config=config,
+            include_hidden_targets=include_hidden_targets,
+        )
+
     def cached_metadata(self) -> dict[str, Any] | None:
         """Return a defensive copy of cached snapshot metadata if loaded."""
 
@@ -251,6 +308,352 @@ def build_advisor_context(
         ),
         "known_limitations": limitations,
     }
+
+
+def scan_nearby(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    hero_id: str,
+    *,
+    radius: int = 10,
+    target_type: str = "all",
+    sort_mode: str = ADVISOR_SCAN_SORT_DISTANCE,
+    simulations: int = battle_estimator.DEFAULT_SCAN_SIMULATIONS,
+    config: h3_save_parser.BattleEstimatorConfig | None = None,
+    include_removed: bool = False,
+    include_hidden_targets: bool = False,
+) -> dict[str, Any]:
+    """Run nearby scan computation without mutating GUI/config state."""
+
+    normalized_hero_id, selected_hero = _advisor_hero_by_id(
+        domain_snapshot,
+        hero_id,
+    )
+    normalized_radius = _bounded_advisor_int(
+        radius,
+        "radius",
+        minimum=0,
+        maximum=battle_estimator_gui.MAX_SCAN_RADIUS,
+    )
+    normalized_simulations = _bounded_advisor_int(
+        simulations,
+        "simulations",
+        minimum=1,
+        maximum=battle_estimator_gui.MAX_API_SIMULATIONS,
+    )
+    normalized_target_type = _normalize_target_type(target_type)
+    normalized_sort_mode = _normalize_scan_sort_mode(sort_mode)
+    hidden = _advisor_hidden_targets(
+        domain_snapshot,
+        config,
+        selected_hero_id=normalized_hero_id,
+        include_hidden_targets=include_hidden_targets,
+    )
+    hero_targets = h3_save_parser.build_other_hero_targets(
+        domain_snapshot.heroes,
+        selected_hero,
+        same_level_z=selected_hero.z,
+        team_by_color=domain_snapshot.team_by_color,
+    )
+    hero_targets = _filter_hidden_hero_targets(
+        domain_snapshot,
+        hero_targets,
+        hidden["filtered_hero_ids"],
+    )
+    neutral_targets = _filter_hidden_neutral_targets(
+        domain_snapshot.neutral_targets,
+        hidden["filtered_neutral_ids"],
+    )
+    scan_targets = battle_estimator.build_nearby_scan_targets(
+        selected_hero,
+        neutral_targets=neutral_targets,
+        hero_targets=hero_targets,
+        removed_records=domain_snapshot.removed_records,
+        radius=normalized_radius,
+        target_type=normalized_target_type,
+        include_removed=bool(include_removed),
+    )
+    estimates = battle_estimator.estimate_nearby_scan_targets(
+        selected_hero,
+        scan_targets,
+        simulations=normalized_simulations,
+    )
+    results = [
+        battle_estimator_gui._serialize_scan_estimate(domain_snapshot, estimate)
+        for estimate in estimates
+    ]
+    results = _sort_scan_results(results, normalized_sort_mode)
+    return {
+        "hero_id": normalized_hero_id,
+        "radius": normalized_radius,
+        "target_type": normalized_target_type,
+        "sort_mode": normalized_sort_mode,
+        "include_removed": bool(include_removed),
+        "include_hidden_targets": bool(include_hidden_targets),
+        "hidden_targets": _hidden_targets_summary(
+            hidden,
+            include_hidden_targets=bool(include_hidden_targets),
+        ),
+        "simulations": normalized_simulations,
+        "result_count": len(results),
+        "results": results,
+        "known_limitations": _base_advisor_limitations(),
+    }
+
+
+def estimate_battle(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    hero_id: str,
+    target_id: str,
+    *,
+    simulations: int = battle_estimator.DEFAULT_SCAN_SIMULATIONS,
+    config: h3_save_parser.BattleEstimatorConfig | None = None,
+    include_hidden_targets: bool = False,
+) -> dict[str, Any]:
+    """Estimate a single hero-vs-target battle without scan-radius filtering."""
+
+    normalized_hero_id, selected_hero = _advisor_hero_by_id(
+        domain_snapshot,
+        hero_id,
+    )
+    normalized_target_id = _normalize_non_empty_text(target_id, "target_id")
+    normalized_simulations = _bounded_advisor_int(
+        simulations,
+        "simulations",
+        minimum=1,
+        maximum=battle_estimator_gui.MAX_API_SIMULATIONS,
+    )
+    hidden = _advisor_hidden_targets(
+        domain_snapshot,
+        config,
+        selected_hero_id=normalized_hero_id,
+        include_hidden_targets=include_hidden_targets,
+    )
+    scan_target, resolved_target_id = _single_advisor_scan_target(
+        domain_snapshot,
+        selected_hero,
+        normalized_target_id,
+        hidden_neutral_target_ids=hidden["neutral_ids"],
+        hidden_hero_target_ids=hidden["hero_ids"],
+        include_hidden_targets=include_hidden_targets,
+    )
+    estimate = battle_estimator.estimate_nearby_scan_targets(
+        selected_hero,
+        (scan_target,),
+        simulations=normalized_simulations,
+    )[0]
+    return {
+        "hero_id": normalized_hero_id,
+        "target_id": resolved_target_id,
+        "include_hidden_targets": bool(include_hidden_targets),
+        "hidden_targets": _hidden_targets_summary(
+            hidden,
+            include_hidden_targets=bool(include_hidden_targets),
+        ),
+        "simulations": normalized_simulations,
+        "estimate": battle_estimator_gui._serialize_scan_estimate(
+            domain_snapshot,
+            estimate,
+        ),
+        "known_limitations": _base_advisor_limitations(),
+    }
+
+
+def _advisor_hero_by_id(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    hero_id: str,
+) -> tuple[str, h3_save_parser.HeroArmy]:
+    normalized_hero_id = _normalize_non_empty_text(hero_id, "hero_id")
+    hero = domain_snapshot.hero_by_id.get(normalized_hero_id)
+    if hero is None:
+        raise ValueError(f"unknown hero_id: {normalized_hero_id}")
+    return normalized_hero_id, hero
+
+
+def _normalize_non_empty_text(value: str, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
+    return value.strip()
+
+
+def _bounded_advisor_int(value: int, name: str, *, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    if value < minimum or value > maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+def _normalize_target_type(target_type: str) -> str:
+    normalized = _normalize_non_empty_text(target_type, "target_type")
+    if normalized not in battle_estimator.VALID_SCAN_TARGET_TYPES:
+        expected = ", ".join(battle_estimator.VALID_SCAN_TARGET_TYPES)
+        raise ValueError(f"invalid target_type {normalized!r}; expected {expected}")
+    return normalized
+
+
+def _normalize_scan_sort_mode(sort_mode: str) -> str:
+    normalized = _normalize_non_empty_text(sort_mode, "sort_mode")
+    if normalized not in ADVISOR_SCAN_SORT_MODES:
+        expected = ", ".join(sorted(ADVISOR_SCAN_SORT_MODES))
+        raise ValueError(f"invalid sort_mode {normalized!r}; expected {expected}")
+    return normalized
+
+
+def _advisor_hidden_targets(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    config: h3_save_parser.BattleEstimatorConfig | None,
+    *,
+    selected_hero_id: str,
+    include_hidden_targets: bool,
+) -> dict[str, tuple[str, ...]]:
+    loaded_config = config or h3_save_parser.BattleEstimatorConfig()
+    neutral_ids = battle_estimator_gui._hidden_neutral_target_ids_for_config(
+        loaded_config,
+        domain_snapshot,
+    )
+    hero_ids = battle_estimator_gui._hidden_hero_target_ids_for_config(
+        loaded_config,
+        domain_snapshot,
+        selected_hero_id,
+    )
+    if include_hidden_targets:
+        return {
+            "neutral_ids": tuple(neutral_ids),
+            "hero_ids": tuple(hero_ids),
+            "filtered_neutral_ids": (),
+            "filtered_hero_ids": (),
+        }
+    return {
+        "neutral_ids": tuple(neutral_ids),
+        "hero_ids": tuple(hero_ids),
+        "filtered_neutral_ids": tuple(neutral_ids),
+        "filtered_hero_ids": tuple(hero_ids),
+    }
+
+
+def _hidden_targets_summary(
+    hidden: dict[str, tuple[str, ...]],
+    *,
+    include_hidden_targets: bool,
+) -> dict[str, Any]:
+    summary = {
+        "neutral_count": len(hidden["neutral_ids"]),
+        "hero_count": len(hidden["hero_ids"]),
+        "filtered_neutral_count": len(hidden["filtered_neutral_ids"]),
+        "filtered_hero_count": len(hidden["filtered_hero_ids"]),
+    }
+    if include_hidden_targets:
+        summary["neutral_ids"] = list(hidden["neutral_ids"])
+        summary["hero_ids"] = list(hidden["hero_ids"])
+    return summary
+
+
+def _filter_hidden_neutral_targets(neutral_targets, hidden: tuple[str, ...]) -> tuple:
+    hidden_ids = set(hidden)
+    return tuple(
+        target
+        for target in neutral_targets
+        if battle_estimator_gui._neutral_target_id(target) not in hidden_ids
+    )
+
+
+def _filter_hidden_hero_targets(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    hero_targets,
+    hidden: tuple[str, ...],
+) -> tuple:
+    hidden_ids = set(hidden)
+    return tuple(
+        target
+        for target in hero_targets
+        if battle_estimator_gui._hero_id_for_army(domain_snapshot, target.army)
+        not in hidden_ids
+    )
+
+
+def _single_advisor_scan_target(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    selected_hero: h3_save_parser.HeroArmy,
+    target_id: str,
+    *,
+    hidden_neutral_target_ids: tuple[str, ...],
+    hidden_hero_target_ids: tuple[str, ...],
+    include_hidden_targets: bool,
+):
+    neutral = domain_snapshot.neutral_by_id.get(target_id)
+    if neutral is not None:
+        if target_id in set(hidden_neutral_target_ids) and not include_hidden_targets:
+            raise ValueError(f"unknown target_id: {target_id}")
+        return (
+            battle_estimator_gui._scan_target_for_raw_target(
+                "neutral",
+                selected_hero,
+                neutral,
+            ),
+            target_id,
+        )
+
+    hero_target = _advisor_hero_target_by_id(
+        domain_snapshot,
+        selected_hero,
+        target_id,
+    )
+    if hero_target is not None:
+        if target_id in set(hidden_hero_target_ids) and not include_hidden_targets:
+            raise ValueError(f"unknown target_id: {target_id}")
+        return (
+            battle_estimator_gui._scan_target_for_raw_target(
+                "hero",
+                selected_hero,
+                hero_target,
+            ),
+            target_id,
+        )
+
+    raise ValueError(f"unknown target_id: {target_id}")
+
+
+def _advisor_hero_target_by_id(
+    domain_snapshot: battle_estimator_gui.DomainSnapshot,
+    selected_hero: h3_save_parser.HeroArmy,
+    target_id: str,
+):
+    hero_targets = h3_save_parser.build_other_hero_targets(
+        domain_snapshot.heroes,
+        selected_hero,
+        same_level_z=None,
+        team_by_color=domain_snapshot.team_by_color,
+    )
+    for hero_target in hero_targets:
+        if battle_estimator_gui._hero_id_for_army(
+            domain_snapshot,
+            hero_target.army,
+        ) == target_id:
+            return hero_target
+    return None
+
+
+def _sort_scan_results(results: list[dict[str, Any]], sort_mode: str) -> list[dict[str, Any]]:
+    if sort_mode == ADVISOR_SCAN_SORT_DISTANCE:
+        return results
+    return sorted(results, key=_easiest_scan_sort_key)
+
+
+def _easiest_scan_sort_key(result: dict[str, Any]) -> tuple:
+    win_pct = result.get("win_pct")
+    has_no_win_pct = not isinstance(win_pct, (int, float)) or isinstance(win_pct, bool)
+    distance = result.get("distance")
+    if isinstance(distance, bool) or not isinstance(distance, int):
+        distance = battle_estimator_gui.MAX_SCAN_RADIUS + 1
+    target_id = result.get("target_id")
+    has_no_target_id = target_id is None
+    return (
+        has_no_win_pct,
+        0 if has_no_win_pct else -float(win_pct),
+        distance,
+        has_no_target_id,
+        "" if has_no_target_id else str(target_id),
+    )
 
 
 def _normalize_advisor_color_id(color_id: int) -> int:
@@ -669,8 +1072,8 @@ def _hero_tool_reference(hero: dict, *, include_raw_ids: bool) -> dict[str, Any]
     }, hero.get("id"), include_raw_ids)
 
 
-def _known_advisor_limitations(subject: dict[str, Any]) -> list[dict[str, str]]:
-    limitations = [
+def _base_advisor_limitations() -> list[dict[str, str]]:
+    return [
         {
             "id": "fog_of_war",
             "detail": "Fog of war and hidden enemy information are not modeled.",
@@ -688,6 +1091,10 @@ def _known_advisor_limitations(subject: dict[str, Any]) -> list[dict[str, str]]:
             "detail": "Save parsing is best-effort for observed GM1/GM2 structures; unavailable fields are reported explicitly.",
         },
     ]
+
+
+def _known_advisor_limitations(subject: dict[str, Any]) -> list[dict[str, str]]:
+    limitations = _base_advisor_limitations()
     if subject["scope"] == ADVISOR_SCOPE_TEAM and not subject["team_scope_available"]:
         limitations.append({
             "id": "team_scope_unavailable",

@@ -379,6 +379,208 @@ class AdvisorContextBuilderTests(unittest.TestCase):
                 service.get_advisor_context(0, scope="alliance", refresh=True)
 
 
+class AdvisorComputeToolTests(unittest.TestCase):
+    def test_scan_nearby_returns_neutral_and_enemy_hero_estimates(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, config_path = _advisor_scan_service(Path(temp_dir))
+            before_config = config_path.read_bytes()
+
+            with patch.object(
+                battle_estimator_mcp.battle_estimator,
+                "run_simulations",
+                side_effect=(91.5, 72.0),
+            ) as run_mock:
+                payload = service.scan_nearby(
+                    "hero:256",
+                    radius=2,
+                    target_type="all",
+                    simulations=7,
+                    refresh=True,
+                )
+
+            self.assertEqual(payload["hero_id"], "hero:256")
+            self.assertEqual(payload["radius"], 2)
+            self.assertEqual(payload["target_type"], "all")
+            self.assertEqual(payload["sort_mode"], "distance")
+            self.assertEqual(payload["simulations"], 7)
+            self.assertEqual(payload["result_count"], 2)
+            self.assertEqual(
+                [
+                    (item["target_id"], item["distance"], item["win_pct"])
+                    for item in payload["results"]
+                ],
+                [("neutral:0", 1, 91.5), ("hero:512", 2, 72.0)],
+            )
+            self.assertEqual(payload["results"][1]["target"]["name"], "Marius")
+            self.assertTrue(payload["known_limitations"])
+            self.assertEqual(run_mock.call_count, 2)
+            self.assertEqual(config_path.read_bytes(), before_config)
+
+    def test_scan_nearby_supports_easiest_sort_and_hero_filter(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, _ = _advisor_scan_service(Path(temp_dir))
+
+            with patch.object(
+                battle_estimator_mcp.battle_estimator,
+                "run_simulations",
+                side_effect=(20.0, 90.0),
+            ):
+                easiest_payload = service.scan_nearby(
+                    "hero:256",
+                    radius=2,
+                    sort_mode="easiest",
+                    simulations=5,
+                    refresh=True,
+                )
+            with patch.object(
+                battle_estimator_mcp.battle_estimator,
+                "run_simulations",
+                return_value=80.0,
+            ):
+                hero_payload = service.scan_nearby(
+                    "hero:256",
+                    radius=2,
+                    target_type="hero",
+                    simulations=5,
+                    refresh=False,
+                )
+
+            self.assertEqual(
+                [item["target_id"] for item in easiest_payload["results"]],
+                ["hero:512", "neutral:0"],
+            )
+            self.assertEqual(
+                [item["target_id"] for item in hero_payload["results"]],
+                ["hero:512"],
+            )
+
+    def test_estimate_battle_resolves_enemy_hero_target_on_other_level(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, _ = _advisor_scan_service(
+                Path(temp_dir),
+                enemy_position=(39, 71, 0),
+            )
+
+            with patch.object(
+                battle_estimator_mcp.battle_estimator,
+                "run_simulations",
+                return_value=72.0,
+            ):
+                payload = service.estimate_battle(
+                    "hero:256",
+                    "hero:512",
+                    simulations=9,
+                    refresh=True,
+                )
+
+            self.assertEqual(payload["hero_id"], "hero:256")
+            self.assertEqual(payload["target_id"], "hero:512")
+            self.assertEqual(payload["simulations"], 9)
+            self.assertEqual(payload["estimate"]["target_id"], "hero:512")
+            self.assertEqual(payload["estimate"]["target_type"], "hero")
+            self.assertEqual(payload["estimate"]["target"]["name"], "Marius")
+            self.assertEqual(payload["estimate"]["position"]["z"], 0)
+            self.assertEqual(payload["estimate"]["win_pct"], 72.0)
+            self.assertTrue(payload["known_limitations"])
+
+    def test_scan_and_estimate_filter_hidden_targets_without_mutating_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, config_path = _advisor_scan_service(Path(temp_dir))
+            snapshot = service.get_domain_snapshot(refresh=True)
+            map_key = battle_estimator_gui._hidden_neutral_map_key(snapshot)
+            config_path.write_text(
+                json.dumps({
+                    "hidden_neutral_targets_by_map": {map_key: ["neutral:0"]},
+                    "hidden_hero_targets_by_map": {map_key: ["hero:512"]},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            before_config = config_path.read_bytes()
+
+            with patch.object(
+                battle_estimator_mcp.battle_estimator,
+                "run_simulations",
+                return_value=99.0,
+            ) as hidden_run_mock:
+                hidden_payload = service.scan_nearby(
+                    "hero:256",
+                    radius=2,
+                    refresh=False,
+                )
+            with patch.object(
+                battle_estimator_mcp.battle_estimator,
+                "run_simulations",
+                side_effect=(91.5, 72.0),
+            ):
+                visible_payload = service.scan_nearby(
+                    "hero:256",
+                    radius=2,
+                    include_hidden_targets=True,
+                    refresh=False,
+                )
+
+            self.assertEqual(hidden_payload["results"], [])
+            self.assertEqual(hidden_payload["hidden_targets"]["neutral_count"], 1)
+            self.assertEqual(hidden_payload["hidden_targets"]["hero_count"], 1)
+            self.assertEqual(hidden_payload["hidden_targets"]["filtered_neutral_count"], 1)
+            self.assertEqual(hidden_payload["hidden_targets"]["filtered_hero_count"], 1)
+            self.assertNotIn("neutral_ids", hidden_payload["hidden_targets"])
+            self.assertNotIn("hero_ids", hidden_payload["hidden_targets"])
+            hidden_run_mock.assert_not_called()
+            self.assertEqual(
+                [item["target_id"] for item in visible_payload["results"]],
+                ["neutral:0", "hero:512"],
+            )
+            self.assertEqual(
+                visible_payload["hidden_targets"]["neutral_ids"],
+                ["neutral:0"],
+            )
+            self.assertEqual(
+                visible_payload["hidden_targets"]["hero_ids"],
+                ["hero:512"],
+            )
+            self.assertEqual(config_path.read_bytes(), before_config)
+            with self.assertRaisesRegex(ValueError, "unknown target_id"):
+                service.estimate_battle(
+                    "hero:256",
+                    "neutral:0",
+                    refresh=False,
+                )
+
+    def test_compute_tools_reject_invalid_inputs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, _ = _advisor_scan_service(Path(temp_dir))
+
+            with self.assertRaisesRegex(ValueError, "unknown hero_id"):
+                service.scan_nearby("hero:999", refresh=True)
+            with self.assertRaisesRegex(ValueError, "invalid target_type"):
+                service.scan_nearby("hero:256", target_type="town", refresh=False)
+            with self.assertRaisesRegex(ValueError, "invalid sort_mode"):
+                service.scan_nearby("hero:256", sort_mode="hardest", refresh=False)
+            with self.assertRaisesRegex(ValueError, "radius must be between"):
+                service.scan_nearby("hero:256", radius=-1, refresh=False)
+            with self.assertRaisesRegex(ValueError, "simulations must be between"):
+                service.estimate_battle("hero:256", "neutral:0", simulations=0)
+            with self.assertRaisesRegex(ValueError, "unknown target_id"):
+                service.estimate_battle("hero:256", "neutral:999", refresh=False)
+
+    def test_easiest_sort_places_missing_target_ids_last_on_ties(self):
+        results = [
+            {"target_id": None, "win_pct": 50.0, "distance": 1},
+            {"target_id": "hero:512", "win_pct": 50.0, "distance": 1},
+        ]
+
+        sorted_results = battle_estimator_mcp._sort_scan_results(
+            results,
+            "easiest",
+        )
+
+        self.assertEqual(
+            [item["target_id"] for item in sorted_results],
+            ["hero:512", None],
+        )
+
+
 def _advisor_service_with_team_map(
     temp_path: Path,
     hero_specs,
@@ -394,6 +596,44 @@ def _advisor_service_with_team_map(
         game_dir=game_dir,
         map_file=map_path,
         config_path=config_path,
+    )
+
+
+def _advisor_scan_service(
+    temp_path: Path,
+    *,
+    enemy_position=(39, 71, 1),
+) -> tuple[battle_estimator_mcp.AdvisorContextService, Path]:
+    game_dir = temp_path / "game"
+    game_dir.mkdir()
+    _write_multi_gui_save(
+        game_dir,
+        "001.GM2",
+        (
+            {
+                "hero_name": "Isra",
+                "name_offset": 256,
+                "position": (39, 69, 1),
+                "owner_color_id": 0,
+            },
+            {
+                "hero_name": "Marius",
+                "name_offset": 512,
+                "position": enemy_position,
+                "owner_color_id": 2,
+            },
+        ),
+    )
+    map_path = _write_h3m_map(temp_path / "map.h3m", position=(39, 70, 1))
+    config_path = temp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    return (
+        battle_estimator_mcp.AdvisorContextService(
+            game_dir=game_dir,
+            map_file=map_path,
+            config_path=config_path,
+        ),
+        config_path,
     )
 
 
