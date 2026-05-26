@@ -522,13 +522,27 @@ select:disabled {
   background: #e7ebf0;
 }
 
-.map-stage-toggle {
+.map-stage-controls {
   position: absolute;
   top: 12px;
   right: 12px;
   z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-stage-toggle,
+.map-stage-reset {
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 2px 8px rgba(24, 36, 52, 0.12);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.map-stage-reset {
+  min-height: 30px;
+  padding: 6px 10px;
 }
 
 #battle-map {

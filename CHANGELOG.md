@@ -36,6 +36,8 @@ defined in [docs/release-policy.md](docs/release-policy.md).
 - The map stage now has an `Auto center` toggle. Turning it off preserves the
   current pan during automatic focus actions while still allowing level changes
   and detail updates.
+- The map stage now also includes `Reset view` for manually fitting the current
+  map view without changing the `Auto center` setting.
 - Subterranean gates with a single resolved paired gate now click through to the
   destination level outside path mode.
 - Path, scan, context-menu, and portal-destination interactions now work in the

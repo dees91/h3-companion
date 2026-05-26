@@ -1913,6 +1913,7 @@ After Tasks 9, 17, 25, and 31:
 | Task | Title | Status | Notes |
 | --- | --- | --- | --- |
 | C01 | Auto Center Toggle | done | Added a session-only `Auto center` toggle inside the map stage. When off, hero selection, alerts, scan results, ranking rows, portal focus actions, and path segment focus preserve current pan while still allowing level switches and detail updates. Frontend tests cover default-on state, on-state centering, off-state pan preservation across snapshot renders, cross-level focus, castle-alert fallback, and path segment focus. |
+| C02 | Reset View Control | done | Added a `Reset view` button next to `Auto center` in the map stage. It manually fits the current map view even when `Auto center` is off, preserves the auto-center setting, current level, dual-level mode, active marker, and target details, and is disabled when no map snapshot is loaded. |
 
 ## Summary Table
 
@@ -1950,3 +1951,4 @@ After Tasks 9, 17, 25, and 31:
 | 30 | Preserve Path Mode Portal Semantics | done | 29 |
 | 31 | End-To-End Portal Readability Verification | done | 26, 27, 28, 29, 30 |
 | C01 | Auto Center Toggle | done | - |
+| C02 | Reset View Control | done | - |

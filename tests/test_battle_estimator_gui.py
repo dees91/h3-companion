@@ -328,6 +328,9 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "pathModeToggle",
             "autoCenterToggle",
             "autoCenter",
+            "mapResetViewButton",
+            "resetMapView",
+            "renderError",
             "pathState",
             "setPathMode",
             "drawPathRoute",
@@ -418,8 +421,10 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="portal-links-toggle"',
             'id="path-mode-toggle"',
             'id="auto-center-toggle"',
+            'id="map-reset-view-button"',
             'id="target-filter-control"',
             'Auto center',
+            'Reset view',
             'Route Overlay',
             'Portal Links',
             'Dual level',
@@ -463,7 +468,9 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".ranking-item",
             ".segmented-control",
             ".toggle-control",
+            ".map-stage-controls",
             ".map-stage-toggle",
+            ".map-stage-reset",
             ".map-tooltip",
             ".path-result",
             ".path-segment-list",
@@ -1139,6 +1146,7 @@ global.fetch = (path, options = {{}}) => {{
 require({json.dumps(app_js_path)});
 const helpers = window.__battleEstimatorGuiTest;
 assert.strictEqual(autoRefreshIntervalCalls, 0);
+assert.strictEqual(elements["map-reset-view-button"].disabled, true);
 async function flushPromises() {{
   for (let index = 0; index < 20; index += 1) {{
     await Promise.resolve();
@@ -1156,6 +1164,7 @@ assert.ok(!myColorControl.children.some((button) => button.dataset.colorId === "
 assert.ok(myColorControl.children[0].className.includes("active"));
 assert.strictEqual(alertRadiusInput.value, "10");
 assert.strictEqual(alertRadiusInput.disabled, false);
+assert.strictEqual(elements["map-reset-view-button"].disabled, false);
 const sampleCombatModel = {{
   player: {{
     status: "primary+secondary",
@@ -2353,7 +2362,11 @@ assert.ok(
   portalDrawIndex < heroDrawIndex,
   `portal should draw before hero: ${{portalDrawIndex}} vs ${{heroDrawIndex}}`
 );
+helpers.renderError("broken snapshot");
+assert.strictEqual(elements["map-reset-view-button"].disabled, true);
+assert.strictEqual(helpers.currentMapViewForTest().snapshot, null);
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+assert.strictEqual(elements["map-reset-view-button"].disabled, false);
 const renderedView = helpers.currentMapViewForTest();
 assert.strictEqual(elements["path-mode-toggle"].disabled, false);
 assert.strictEqual(elements["path-mode-toggle"].checked, false);
@@ -2370,6 +2383,12 @@ assert.strictEqual(singleLanes.length, 1);
 assert.strictEqual(singleLanes[0].level, 0);
 assert.strictEqual(elements["auto-center-toggle"].checked, true);
 assert.strictEqual(renderedView.autoCenter, true);
+const resetFitView = {{
+  zoom: renderedView.zoom,
+  pan: {{ ...renderedView.pan }},
+  level: renderedView.level,
+  dualLevel: renderedView.dualLevel
+}};
 const autoCenterCanvasRect = elements["battle-map"].getBoundingClientRect();
 const autoCenterPortal = renderedView.markers.find((marker) => marker.id === "portal:100");
 helpers.focusPortalDestination("portal:100");
@@ -2381,6 +2400,29 @@ assert.ok(Math.abs(autoCenterView.pan.x - (
 assert.ok(Math.abs(autoCenterView.pan.y - (
   (autoCenterCanvasRect.height / 2) - (autoCenterPortal.world.y * autoCenterView.zoom)
 )) < 0.001);
+const resetTargetDetail = targetStateText();
+elements["battle-map"].dispatch("wheel", {{
+  deltaY: 1,
+  clientX: 120,
+  clientY: 120,
+  preventDefault() {{}}
+}});
+elements["battle-map"].dispatch("pointerdown", {{ button: 0, clientX: 20, clientY: 20, pointerId: 31 }});
+elements["battle-map"].dispatch("pointermove", {{ clientX: 75, clientY: 45, pointerId: 31 }});
+elements["battle-map"].dispatch("pointerup", {{ button: 0, clientX: 75, clientY: 45, pointerId: 31 }});
+let dirtyResetView = helpers.currentMapViewForTest();
+assert.notStrictEqual(dirtyResetView.zoom, resetFitView.zoom);
+assert.notDeepStrictEqual(dirtyResetView.pan, resetFitView.pan);
+elements["map-reset-view-button"].dispatch("click", {{}});
+let resetView = helpers.currentMapViewForTest();
+assert.strictEqual(resetView.autoCenter, true);
+assert.strictEqual(resetView.activeMarkerId, "portal:100");
+assert.strictEqual(targetStateText(), resetTargetDetail);
+assert.strictEqual(resetView.level, resetFitView.level);
+assert.strictEqual(resetView.dualLevel, resetFitView.dualLevel);
+assert.ok(Math.abs(resetView.zoom - resetFitView.zoom) < 0.001);
+assert.ok(Math.abs(resetView.pan.x - resetFitView.pan.x) < 0.001);
+assert.ok(Math.abs(resetView.pan.y - resetFitView.pan.y) < 0.001);
 elements["auto-center-toggle"].checked = false;
 elements["auto-center-toggle"].dispatch("change", {{}});
 assert.strictEqual(helpers.currentMapViewForTest().autoCenter, false);
@@ -2388,6 +2430,24 @@ helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 let autoCenterOffView = helpers.currentMapViewForTest();
 assert.strictEqual(elements["auto-center-toggle"].checked, false);
 assert.strictEqual(autoCenterOffView.autoCenter, false);
+const autoCenterOffFitView = {{
+  zoom: autoCenterOffView.zoom,
+  pan: {{ ...autoCenterOffView.pan }}
+}};
+elements["battle-map"].dispatch("wheel", {{
+  deltaY: 1,
+  clientX: 160,
+  clientY: 160,
+  preventDefault() {{}}
+}});
+dirtyResetView = helpers.currentMapViewForTest();
+assert.notStrictEqual(dirtyResetView.zoom, autoCenterOffFitView.zoom);
+elements["map-reset-view-button"].dispatch("click", {{}});
+autoCenterOffView = helpers.currentMapViewForTest();
+assert.strictEqual(autoCenterOffView.autoCenter, false);
+assert.ok(Math.abs(autoCenterOffView.zoom - autoCenterOffFitView.zoom) < 0.001);
+assert.ok(Math.abs(autoCenterOffView.pan.x - autoCenterOffFitView.pan.x) < 0.001);
+assert.ok(Math.abs(autoCenterOffView.pan.y - autoCenterOffFitView.pan.y) < 0.001);
 let autoCenterOffPan = {{ ...autoCenterOffView.pan }};
 helpers.focusPortalDestination("portal:100");
 autoCenterOffView = helpers.currentMapViewForTest();
@@ -2399,6 +2459,13 @@ autoCenterOffView = helpers.currentMapViewForTest();
 assert.strictEqual(autoCenterOffView.level, 1);
 assert.strictEqual(autoCenterOffView.activeMarkerId, "portal:101");
 assert.deepStrictEqual(autoCenterOffView.pan, autoCenterOffPan);
+elements["battle-map"].dispatch("pointerdown", {{ button: 0, clientX: 30, clientY: 30, pointerId: 32 }});
+elements["battle-map"].dispatch("pointermove", {{ clientX: 90, clientY: 50, pointerId: 32 }});
+elements["battle-map"].dispatch("pointerup", {{ button: 0, clientX: 90, clientY: 50, pointerId: 32 }});
+elements["map-reset-view-button"].dispatch("click", {{}});
+autoCenterOffView = helpers.currentMapViewForTest();
+assert.strictEqual(autoCenterOffView.level, 1);
+assert.strictEqual(autoCenterOffView.autoCenter, false);
 helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 autoCenterOffView = helpers.currentMapViewForTest();
 autoCenterOffPan = {{ ...autoCenterOffView.pan }};
@@ -2438,11 +2505,27 @@ assert.strictEqual(dualView.dualLevel, true);
 assert.strictEqual(dualView.level, renderedView.level);
 assert.strictEqual(elements["dual-level-toggle"].checked, true);
 assert.ok(elements["map-summary"].textContent.includes("Dual level"));
+const dualFitView = {{
+  zoom: dualView.zoom,
+  pan: {{ ...dualView.pan }}
+}};
 const dualLanes = helpers.mapLaneGeometry(markerSnapshot, dualView);
 assert.strictEqual(dualLanes.length, 2);
 assert.deepStrictEqual(dualLanes.map((lane) => lane.level), [0, 1]);
 assert.strictEqual(dualLanes[0].tileSize, dualLanes[1].tileSize);
 assert.strictEqual(dualLanes[1].originWorld.x, dualLanes[0].widthWorld + dualLanes[0].gapWorld);
+elements["battle-map"].dispatch("wheel", {{
+  deltaY: 1,
+  clientX: 180,
+  clientY: 180,
+  preventDefault() {{}}
+}});
+elements["map-reset-view-button"].dispatch("click", {{}});
+const dualResetView = helpers.currentMapViewForTest();
+assert.strictEqual(dualResetView.dualLevel, true);
+assert.ok(Math.abs(dualResetView.zoom - dualFitView.zoom) < 0.001);
+assert.ok(Math.abs(dualResetView.pan.x - dualFitView.pan.x) < 0.001);
+assert.ok(Math.abs(dualResetView.pan.y - dualFitView.pan.y) < 0.001);
 assert.strictEqual(dualLanes[1].originWorld.y, 0);
 assert.ok(drawOperations.some((operation) => (
   operation.op === "fillText" && operation.text === "Surface"

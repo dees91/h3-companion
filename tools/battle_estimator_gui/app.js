@@ -37,6 +37,7 @@
     heroRankingButton: document.getElementById("hero-ranking-button"),
     mapStage: document.getElementById("map-stage"),
     autoCenterToggle: document.getElementById("auto-center-toggle"),
+    mapResetViewButton: document.getElementById("map-reset-view-button"),
     mapTooltip: document.getElementById("map-tooltip"),
     targetContextMenu: document.getElementById("target-context-menu"),
     mapOverlayTitle: document.getElementById("map-overlay-title"),
@@ -2321,6 +2322,28 @@
       x: (canvasSize.width / 2) - (worldPoint.x * mapView.zoom),
       y: (canvasSize.height / 2) - (worldPoint.y * mapView.zoom)
     };
+    drawMap();
+    return true;
+  }
+
+  function syncMapStageControls() {
+    elements.autoCenterToggle.checked = mapView.autoCenter;
+    elements.mapResetViewButton.disabled = !(mapView.snapshot && mapView.snapshot.map);
+  }
+
+  function resetMapView() {
+    if (!mapView.snapshot || !mapView.snapshot.map) {
+      syncMapStageControls();
+      return false;
+    }
+    mapView.hoveredMarkerId = null;
+    clearPortalRelationHover();
+    elements.canvas.classList.remove("has-marker-hover");
+    hideMapTooltip();
+    hideTargetContextMenu();
+    fitMapToCanvas(mapView.snapshot);
+    updateMapMetrics(mapView.snapshot);
+    syncMapStageControls();
     drawMap();
     return true;
   }
@@ -5897,6 +5920,7 @@
     updateLevelControls(snapshot);
     updateMapMetrics(snapshot);
     updatePathModeControl();
+    syncMapStageControls();
     drawMap();
 
     setEstimateMessage("No simulation run.");
@@ -5947,6 +5971,7 @@
     mapView.pathMode = false;
     syncDualLevelControl(null);
     updatePathModeControl();
+    syncMapStageControls();
     hideMapTooltip();
     hideTargetContextMenu();
     invalidateEstimateRequests();
@@ -6154,6 +6179,10 @@
 
   elements.autoCenterToggle.addEventListener("change", () => {
     mapView.autoCenter = elements.autoCenterToggle.checked;
+  });
+
+  elements.mapResetViewButton.addEventListener("click", () => {
+    resetMapView();
   });
 
   elements.pathModeToggle.addEventListener("change", () => {
@@ -6413,6 +6442,8 @@
     drawPortalMarkerSymbol,
     portalMarkerLabel,
     portalTypeLabel,
+    renderError,
+    resetMapView,
     resetHeroSkills,
     saveHeroSkills,
     setDualLevelView,
@@ -6436,7 +6467,7 @@
   elements.routeOverlayToggle.checked = mapView.showRouteOverlay;
   elements.portalLinksToggle.checked = mapView.showPortalLinks;
   elements.portalLinksToggle.disabled = true;
-  elements.autoCenterToggle.checked = mapView.autoCenter;
+  syncMapStageControls();
   syncDualLevelControl(null);
   updatePathModeControl();
   renderTargetFilterControl();

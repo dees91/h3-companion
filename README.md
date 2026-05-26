@@ -16,8 +16,8 @@ maps, saves, or binaries; you need your own legally installed copy of the game.
   enemy heroes.
 - Browser GUI with a simple tile map, optional dual-level view, hero/monster
   markers, target hiding, combat-score hero ranking with map marker numbers,
-  an Auto center control, radius scans, town threat alerts, portal hints, and
-  pathfinding overlays.
+  an Auto center control with manual Reset view, radius scans, town threat
+  alerts, portal hints, and pathfinding overlays.
 - H3M map parsing for neutral monsters, towns, portals, subterranean gates, and
   route layers.
 - Secondary-skill recommendations for standard heroes.
