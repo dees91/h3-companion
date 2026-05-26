@@ -376,7 +376,20 @@ transport, and context cache behavior.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Added `AdvisorContextService` in `tools/battle_estimator_mcp.py`.
+- The service wraps `battle_estimator_gui.build_domain_snapshot()` directly,
+  keeps an in-memory cached `DomainSnapshot`, and exposes `refresh_context()`,
+  `get_domain_snapshot(refresh=False)`, and defensive-copy metadata.
+- Constructor overrides support `game_dir`, `save_file`, `map_file`, and
+  `config_path`. `save_file` without an explicit mode selects pinned mode;
+  explicit `follow_latest` plus `save_file` is rejected to avoid silently
+  ignoring the pinned override.
+- The loader does not use `GuiAppState`, `_state_payload_for_app()`, selected
+  hero mutation, hidden-target writes, or the persistent removed-neutral cache.
+  Failed refreshes leave the previous cached snapshot and metadata intact.
+- Added `tests/test_battle_estimator_mcp.py` for config/follow-latest loading,
+  game/save/map overrides, cache refresh semantics, metadata deep-copy behavior,
+  and preservation of cached state after refresh errors.
 
 ---
 
@@ -712,10 +725,10 @@ transport, and context cache behavior.
 | ID | Title | Status | Blocked By | Wave | Execution | Effort | Scope | Files Likely Touched |
 |---|---|---|---|---|---|---|---|---|
 | T01 | MCP Transport Spike | done | -- | foundation | Main | S | Research/Docs | planning doc, docs if needed |
-| T02 | Read-Only Context Loader | todo | T01 | foundation | Main | M | Core/Test | `tools/battle_estimator_mcp.py`, MCP tests |
-| T03 | Advisor Context Builder | blocked | T02 | foundation | Main | M | Core/Test | advisor module, MCP tests |
-| T04 | Scan And Estimate Tools | blocked | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
-| T05 | Route And Portal Tools | blocked | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
+| T02 | Read-Only Context Loader | done | T01 | foundation | Main | M | Core/Test | `tools/battle_estimator_mcp.py`, MCP tests |
+| T03 | Advisor Context Builder | todo | T02 | foundation | Main | M | Core/Test | advisor module, MCP tests |
+| T04 | Scan And Estimate Tools | todo | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
+| T05 | Route And Portal Tools | todo | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
 | T06 | Alerts And Color Scope Tools | blocked | T03 | compute-tools | Parallel | S | Core/Test | advisor module, MCP tests |
 | T07 | MCP Server Entry Point | blocked | T03, T04, T05, T06 | interface | Main | M | CLI/Integration/Test | `tools/battle_estimator_mcp.py`, MCP tests |
 | T08 | Runbook And Client Setup Docs | blocked | T07 | docs | Main | S | Docs | `docs/mcp-strategic-advisor-runbook.md`, `README.md`, `AGENTS.md` |
