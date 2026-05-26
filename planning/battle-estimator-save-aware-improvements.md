@@ -1944,6 +1944,18 @@ atomic commit before the next task.
 | D03 | Frontend Current Owner Rendering | done | Updated town markers to carry current ownership metadata, render exact/proxy current owners before initial owners in summaries/details, color town bodies by current owner, and render exact neutral current ownership with the unowned style. |
 | D04 | Documentation And Final Notes | done | Updated README, CHANGELOG, AGENTS, checkpoint notes, and this planning doc to describe exact save-town-state ownership, proxy fallback limits, neutral exact ownership, and no fallback to initial H3M owners for alert logic. |
 
+## Alert Hover Radius Follow-Up
+
+These tasks add a hover/focus preview for existing castle alert rows. Alert
+calculation remains same-level Manhattan distance; the drawn circle is a visual
+radius cue, while the backend-provided threatened town list remains the source
+of truth for highlighted towns.
+
+| ID | Title | Status | Completion Notes |
+|---|---|---|---|
+| A01 | Backend Threatened Town Payload | done | Added a `CastleAlertTown` payload and serialized `threatened_towns` list for each alert while preserving nearest-town fields. Backend tests cover sorted threatened towns, nearest-field compatibility, and `/api/state` serialization. |
+| A02 | Frontend Alert Hover Overlay | pending | -- |
+
 ## Summary Table
 
 | ID | Title | Status | Blocked By | Wave | Execution | Effort | Scope | Files Likely Touched |
@@ -1977,3 +1989,5 @@ atomic commit before the next task.
 | T20 | Expose Combat Model Notes | done | T19 | hero-combat-api | Main | S | API/CLI | `tools/battle_estimator.py`, `tools/battle_estimator_gui.py`, tests |
 | T21 | Render Estimate Model Details | done | T20 | hero-combat-frontend | Main | S | GUI | `app.js`, `style.css`, GUI tests |
 | T22 | Hero Combat Docs And Verification | done | T21 | hero-combat-quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint doc |
+| A01 | Backend Threatened Town Payload | done | -- | alert-hover-preview | Main | S | API/Test | `tools/battle_estimator_gui.py`, GUI backend tests, planning doc |
+| A02 | Frontend Alert Hover Overlay | pending | A01 | alert-hover-preview | Main | M | GUI/Docs/Test | `app.js`, `style.css`, GUI tests, README/CHANGELOG/planning doc |

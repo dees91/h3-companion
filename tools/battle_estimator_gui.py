@@ -182,8 +182,18 @@ class HeroSkillApiContext:
 
 
 @dataclass(frozen=True)
+class CastleAlertTown:
+    """One owned town threatened by a castle alert enemy hero."""
+
+    town_id: str
+    town_name: str
+    distance: int
+    position: h3_save_parser.HeroPosition
+
+
+@dataclass(frozen=True)
 class CastleAlert:
-    """One enemy hero threatening the nearest owned town."""
+    """One enemy hero threatening one or more owned towns."""
 
     id: str
     enemy_hero_id: str
@@ -196,6 +206,7 @@ class CastleAlert:
     other_towns_in_radius: int
     enemy_position: h3_save_parser.HeroPosition
     town_position: h3_save_parser.HeroPosition
+    threatened_towns: tuple[CastleAlertTown, ...]
 
 
 @dataclass(frozen=True)
@@ -1498,7 +1509,16 @@ def _castle_alerts_for_owned_towns(
         )
         if not threatened_towns:
             continue
-        distance, town_id, town = threatened_towns[0]
+        alert_towns = tuple(
+            CastleAlertTown(
+                town_id=town_id,
+                town_name=_town_alert_name(town),
+                distance=distance,
+                position=h3_save_parser.HeroPosition(town.x, town.y, town.z),
+            )
+            for distance, town_id, town in threatened_towns
+        )
+        nearest_town = alert_towns[0]
         alerts.append(
             CastleAlert(
                 id=f"castle-threat:{hero_id}",
@@ -1506,12 +1526,13 @@ def _castle_alerts_for_owned_towns(
                 enemy_hero_name=hero.hero_name,
                 enemy_color_id=hero.owner_color_id,
                 enemy_color_name=hero.owner_color_name,
-                town_id=town_id,
-                town_name=_town_alert_name(town),
-                distance=distance,
+                town_id=nearest_town.town_id,
+                town_name=nearest_town.town_name,
+                distance=nearest_town.distance,
                 other_towns_in_radius=len(threatened_towns) - 1,
                 enemy_position=hero.position,
-                town_position=h3_save_parser.HeroPosition(town.x, town.y, town.z),
+                town_position=nearest_town.position,
+                threatened_towns=alert_towns,
             )
         )
     return tuple(sorted(alerts, key=lambda alert: (alert.distance, alert.enemy_hero_id)))
@@ -2593,6 +2614,19 @@ def _serialize_castle_alert(alert: CastleAlert) -> dict:
         "other_towns_in_radius": alert.other_towns_in_radius,
         "enemy_position": _serialize_position(alert.enemy_position),
         "town_position": _serialize_position(alert.town_position),
+        "threatened_towns": [
+            _serialize_castle_alert_town(town)
+            for town in alert.threatened_towns
+        ],
+    }
+
+
+def _serialize_castle_alert_town(town: CastleAlertTown) -> dict:
+    return {
+        "town_id": town.town_id,
+        "town_name": town.town_name,
+        "distance": town.distance,
+        "position": _serialize_position(town.position),
     }
 
 

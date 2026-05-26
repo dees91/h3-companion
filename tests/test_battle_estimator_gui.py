@@ -5172,6 +5172,17 @@ assert.ok(pathSegmentButtons().length >= 4);
                 self.assertEqual(alert["other_towns_in_radius"], 0)
                 self.assertEqual(alert["enemy_position"], {"x": 8, "y": 5, "z": 0})
                 self.assertEqual(alert["town_position"], {"x": 6, "y": 5, "z": 0})
+                self.assertEqual(
+                    alert["threatened_towns"],
+                    [
+                        {
+                            "town_id": "town:0",
+                            "town_name": "Castle Keep",
+                            "distance": 2,
+                            "position": {"x": 6, "y": 5, "z": 0},
+                        },
+                    ],
+                )
 
             self._with_server(check, app_state=app_state)
 
@@ -7967,9 +7978,37 @@ class BattleEstimatorGuiCastleAlertTests(unittest.TestCase):
         self.assertEqual(first_alert.other_towns_in_radius, 1)
         self.assertEqual(first_alert.enemy_position, h3_save_parser.HeroPosition(1, 0, 0))
         self.assertEqual(first_alert.town_position, h3_save_parser.HeroPosition(0, 0, 0))
+        self.assertEqual(
+            first_alert.threatened_towns,
+            (
+                battle_estimator_gui.CastleAlertTown(
+                    town_id="town:1",
+                    town_name="Castle Keep",
+                    distance=1,
+                    position=h3_save_parser.HeroPosition(0, 0, 0),
+                ),
+                battle_estimator_gui.CastleAlertTown(
+                    town_id="town:2",
+                    town_name="Second Castle",
+                    distance=1,
+                    position=h3_save_parser.HeroPosition(2, 0, 0),
+                ),
+            ),
+        )
         self.assertEqual(second_alert.enemy_hero_id, "hero:300")
         self.assertEqual(second_alert.town_id, "town:3")
         self.assertEqual(second_alert.distance, 2)
+        self.assertEqual(
+            second_alert.threatened_towns,
+            (
+                battle_estimator_gui.CastleAlertTown(
+                    town_id="town:3",
+                    town_name="Town 3",
+                    distance=2,
+                    position=h3_save_parser.HeroPosition(7, 0, 0),
+                ),
+            ),
+        )
 
     def test_castle_alerts_order_equal_distance_alerts_by_hero_id(self):
         owned_town, ownership = _alert_town(1, (5, 5, 0), owner_color_id=0)
