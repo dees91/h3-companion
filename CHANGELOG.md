@@ -30,6 +30,9 @@ defined in [docs/release-policy.md](docs/release-policy.md).
 
 - Map marker overlap now prioritizes towns, portals, and heroes above neutral
   monster markers.
+- Hero Ranking now sorts positioned save heroes by pairwise combat score from
+  current battle estimates, while keeping army AI value visible as secondary
+  context.
 - Subterranean gates with a single resolved paired gate now click through to the
   destination level outside path mode.
 - Path, scan, context-menu, and portal-destination interactions now work in the

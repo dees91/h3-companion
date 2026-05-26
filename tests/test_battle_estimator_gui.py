@@ -21,6 +21,7 @@ from tests.test_battle_estimator_cli import (
     _write_h3m_map,
     _write_xor_hero_window,
 )
+from tests.test_h3_map_parser import _build_minimal_sod_h3m_with_teams
 from tests.test_h3_save_parser import (
     HERO_COMBAT_ARCHERY_INDEX,
     HERO_COMBAT_ARMORER_INDEX,
@@ -246,6 +247,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             '"/api/select-hero"',
             '"/api/simulate-target"',
             '"/api/scan-radius"',
+            '"/api/hero-ranking"',
             '"/api/path-route"',
             '"/api/hidden-target"',
             '"/api/show-hidden"',
@@ -275,6 +277,9 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "heroRankingButton",
             "heroRankingDialog",
             "renderHeroRanking",
+            "requestHeroRanking",
+            "formatCombatScore",
+            "heroRankingSnapshotKey",
             "loadState",
             "gameFolderPath",
             "gameFolderInFlight",
@@ -793,6 +798,10 @@ let deferNextHeroSkillsResponse = false;
 let nextHeroSkillsError = null;
 const pendingHeroSkillsResponses = [];
 let heroSkillPayload = null;
+let deferNextHeroRankingResponse = false;
+let nextHeroRankingPayload = null;
+let nextHeroRankingError = null;
+const pendingHeroRankingResponses = [];
 function buildHeroSkillPayload(overrides = {{}}) {{
   const base = {{
     hero_id: "hero:0",
@@ -1005,6 +1014,27 @@ global.fetch = (path, options = {{}}) => {{
         message: null
       }};
       nextPathPayload = null;
+    }}
+  }} else if (path === "/api/hero-ranking") {{
+    const requestPayload = JSON.parse(options.body || "{{}}");
+    deferResponse = deferNextHeroRankingResponse;
+    deferredResponses = pendingHeroRankingResponses;
+    deferNextHeroRankingResponse = false;
+    if (nextHeroRankingError) {{
+      responseOk = false;
+      responseStatus = nextHeroRankingError.status || 400;
+      payload = {{ error: nextHeroRankingError.error || "ranking failed" }};
+      nextHeroRankingError = null;
+    }} else {{
+      payload = nextHeroRankingPayload || {{
+        ranking_mode: "combat_score",
+        simulations: requestPayload.simulations || 80,
+        entries: [
+          {{ hero_id: "hero:1", combat_score: 52.5, opponents: 1, ai_value: 1200 }},
+          {{ hero_id: "hero:0", combat_score: 47.5, opponents: 1, ai_value: 500 }}
+        ]
+      }};
+      nextHeroRankingPayload = null;
     }}
   }} else if (path === "/api/hero-skills") {{
     const requestPayload = JSON.parse(options.body || "{{}}");
@@ -1916,6 +1946,104 @@ assert.deepStrictEqual(
   helpers.rankedMapHeroes(markerSnapshot).map((hero) => hero.id),
   ["hero:1", "hero:0"]
 );
+const combatRankingPayload = {{
+  ranking_mode: "combat_score",
+  simulations: 80,
+  entries: [
+    {{ hero_id: "hero:0", combat_score: 87.5, opponents: 1, ai_value: 500 }},
+    {{ hero_id: "hero:1", combat_score: 12.5, opponents: 1, ai_value: 1200 }}
+  ]
+}};
+assert.deepStrictEqual(
+  helpers.rankedMapHeroes(markerSnapshot, combatRankingPayload).map((hero) => hero.id),
+  ["hero:0", "hero:1"]
+);
+assert.strictEqual(
+  helpers.formatCombatScore(combatRankingPayload.entries[0]),
+  "87.5"
+);
+assert.notStrictEqual(
+  helpers.heroRankingSnapshotKey({{
+    save_file: "a.GM2",
+    save_fingerprint: {{ mtime_ns: 1 }},
+    map_file: "a.h3m",
+    map_fingerprint: {{ mtime_ns: 1 }}
+  }}),
+  helpers.heroRankingSnapshotKey({{
+    save_file: "a.GM2",
+    save_fingerprint: {{ mtime_ns: 2 }},
+    map_file: "a.h3m",
+    map_fingerprint: {{ mtime_ns: 1 }}
+  }})
+);
+const rankingSnapshot = {{
+  ...markerSnapshot,
+  save_file: "ranking-a.GM2",
+  save_fingerprint: {{ mtime_ns: 1 }},
+  map_file: "ranking-a.h3m",
+  map_fingerprint: {{ mtime_ns: 1 }}
+}};
+helpers.renderSnapshot(rankingSnapshot);
+nextHeroRankingPayload = combatRankingPayload;
+await Promise.all(elements["hero-ranking-button"].dispatch("click"));
+await flushPromises();
+let rankingText = treeText(elements["hero-ranking-list"]);
+assert.ok(rankingText.includes("1. Isra"));
+assert.ok(rankingText.includes("Combat 87.5"));
+assert.ok(rankingText.includes("AI 500"));
+assert.ok(rankingText.includes("Red team 0"));
+assert.ok(rankingText.includes("1,2,0"));
+let rankingRequests = fetchRequests.filter((request) => request.path === "/api/hero-ranking");
+assert.deepStrictEqual(
+  JSON.parse(rankingRequests[rankingRequests.length - 1].options.body),
+  {{ simulations: 80 }}
+);
+deferNextHeroRankingResponse = true;
+nextHeroRankingPayload = {{
+  ranking_mode: "combat_score",
+  simulations: 80,
+  entries: [
+    {{ hero_id: "hero:1", combat_score: 99.0, opponents: 1, ai_value: 1200 }}
+  ]
+}};
+helpers.renderSnapshot({{
+  ...rankingSnapshot,
+  save_file: "ranking-stale-a.GM2",
+  save_fingerprint: {{ mtime_ns: 2 }}
+}});
+await flushPromises();
+assert.ok(treeText(elements["hero-ranking-list"]).includes("Calculating ranking"));
+nextHeroRankingPayload = {{
+  ranking_mode: "combat_score",
+  simulations: 80,
+  entries: [
+    {{ hero_id: "hero:0", combat_score: 33.0, opponents: 1, ai_value: 500 }}
+  ]
+}};
+helpers.renderSnapshot({{
+  ...rankingSnapshot,
+  save_file: "ranking-b.GM2",
+  save_fingerprint: {{ mtime_ns: 3 }}
+}});
+await flushPromises();
+pendingHeroRankingResponses.shift()();
+await flushPromises();
+rankingText = treeText(elements["hero-ranking-list"]);
+assert.ok(rankingText.includes("Combat 33.0"));
+assert.ok(!rankingText.includes("Combat 99.0"));
+nextHeroRankingError = {{ status: 500, error: "ranking exploded" }};
+helpers.renderSnapshot({{
+  ...rankingSnapshot,
+  save_file: "ranking-error.GM2",
+  save_fingerprint: {{ mtime_ns: 4 }}
+}});
+await flushPromises();
+rankingText = treeText(elements["hero-ranking-list"]);
+assert.ok(rankingText.includes("Ranking error: ranking exploded"));
+assert.ok(rankingText.includes("AI 1200"));
+elements["hero-ranking-close-button"].dispatch("click");
+helpers.renderSnapshot(snapshot, {{ preserveView: false }});
+drawOperations.length = 0;
 assert.strictEqual(helpers.defaultLevelForSnapshot(markerSnapshot, "hero:1"), 1);
 assert.strictEqual(helpers.resolveSelectedHeroId(markerSnapshot, "hero:1"), "hero:1");
 assert.strictEqual(helpers.resolveSelectedHeroId(markerSnapshot, "hero:missing"), "hero:0");
@@ -7266,6 +7394,143 @@ assert.ok(pathSegmentButtons().length >= 4);
 
             self._with_server(check, app_state=app_state)
 
+    def test_hero_ranking_endpoint_sorts_by_combat_score(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            _write_multi_gui_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {
+                        "hero_name": "Isra",
+                        "name_offset": 256,
+                        "position": (10, 10, 0),
+                        "owner_color_id": 0,
+                    },
+                    {
+                        "hero_name": "Ally",
+                        "name_offset": 512,
+                        "position": (11, 10, 0),
+                        "owner_color_id": 0,
+                        "counts": (1, 0, 0, 0, 0, 0, 0),
+                    },
+                    {
+                        "hero_name": "BlueAlly",
+                        "name_offset": 640,
+                        "position": (11, 11, 0),
+                        "owner_color_id": 1,
+                        "counts": (2, 0, 0, 0, 0, 0, 0),
+                    },
+                    {
+                        "hero_name": "Enemy",
+                        "name_offset": 768,
+                        "position": (12, 10, 1),
+                        "owner_color_id": 2,
+                        "counts": (5, 0, 0, 0, 0, 0, 0),
+                    },
+                    {
+                        "hero_name": "Dormant",
+                        "name_offset": 1024,
+                        "owner_color_id": 3,
+                    },
+                ),
+            )
+            map_path = temp_path / "teams.h3m"
+            map_path.write_bytes(gzip.compress(_build_minimal_sod_h3m_with_teams()))
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+            win_pct_by_pair = {
+                ("Isra", "Ally"): 0.0,
+                ("Isra", "BlueAlly"): 0.0,
+                ("Isra", "Enemy"): 0.0,
+                ("Ally", "Isra"): 100.0,
+                ("Ally", "BlueAlly"): 100.0,
+                ("Ally", "Enemy"): 100.0,
+                ("BlueAlly", "Isra"): 75.0,
+                ("BlueAlly", "Ally"): 75.0,
+                ("BlueAlly", "Enemy"): 75.0,
+                ("Enemy", "Isra"): 50.0,
+                ("Enemy", "Ally"): 50.0,
+                ("Enemy", "BlueAlly"): 50.0,
+            }
+            observed_pairs = []
+            expected = {"simulations": 7}
+
+            def fake_estimates(selected_hero, scan_targets, simulations):
+                self.assertEqual(simulations, expected["simulations"])
+                estimates = []
+                for scan_target in scan_targets:
+                    defender_name = scan_target.target.hero_name
+                    observed_pairs.append((selected_hero.hero_name, defender_name))
+                    estimates.append(
+                        battle_estimator_gui.battle_estimator.NearbyScanEstimate(
+                            scan_target=scan_target,
+                            enemy_army=(),
+                            enemy_ai_value=scan_target.target.ai_value,
+                            combat_model=(
+                                battle_estimator_gui.battle_estimator
+                                .build_combat_model_summary()
+                            ),
+                            win_pct=win_pct_by_pair[
+                                (selected_hero.hero_name, defender_name)
+                            ],
+                        )
+                    )
+                return tuple(estimates)
+
+            def check(base_url):
+                with patch.object(
+                    battle_estimator_gui.battle_estimator,
+                    "estimate_nearby_scan_targets",
+                    side_effect=fake_estimates,
+                ):
+                    status, _, payload = self._post_json(
+                        base_url,
+                        "/api/hero-ranking",
+                        {"simulations": 7},
+                    )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["ranking_mode"], "combat_score")
+                self.assertEqual(payload["simulations"], 7)
+                self.assertEqual(
+                    [entry["hero_id"] for entry in payload["entries"]],
+                    ["hero:512", "hero:640", "hero:768", "hero:256"],
+                )
+                self.assertEqual(
+                    [entry["combat_score"] for entry in payload["entries"]],
+                    [100.0, 75.0, 50.0, 0.0],
+                )
+                self.assertEqual(
+                    [entry["opponents"] for entry in payload["entries"]],
+                    [3, 3, 3, 3],
+                )
+                self.assertIn(("Isra", "Ally"), observed_pairs)
+                self.assertIn(("Ally", "Isra"), observed_pairs)
+                self.assertIn(("Isra", "BlueAlly"), observed_pairs)
+                self.assertIn(("BlueAlly", "Isra"), observed_pairs)
+                self.assertNotIn(("Dormant", "Isra"), observed_pairs)
+
+                expected["simulations"] = (
+                    battle_estimator_gui.DEFAULT_HERO_RANKING_SIMULATIONS
+                )
+                status, _, default_payload = self._post_json(
+                    base_url,
+                    "/api/hero-ranking",
+                    {},
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    default_payload["simulations"],
+                    battle_estimator_gui.DEFAULT_HERO_RANKING_SIMULATIONS,
+                )
+
+            self._with_server(check, app_state=app_state)
+
     def test_scan_radius_endpoint_returns_distance_sorted_neutral_and_hero_results(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -10003,13 +10268,17 @@ def _write_multi_gui_save(
         battle_estimator_gui.h3_save_parser.H3SVG_SIGNATURE
     )
     for spec in hero_specs:
-        _write_xor_hero_window(
-            data,
-            hero_name=spec["hero_name"],
-            name_offset=spec["name_offset"],
-            position=spec.get("position"),
-            owner_color_id=spec.get("owner_color_id", 0),
-        )
+        hero_window_kwargs = {
+            "hero_name": spec["hero_name"],
+            "name_offset": spec["name_offset"],
+            "position": spec.get("position"),
+            "owner_color_id": spec.get("owner_color_id", 0),
+        }
+        if "creature_ids" in spec:
+            hero_window_kwargs["creature_ids"] = spec["creature_ids"]
+        if "counts" in spec:
+            hero_window_kwargs["counts"] = spec["counts"]
+        _write_xor_hero_window(data, **hero_window_kwargs)
     for record in town_state_records:
         data.extend(b"\xFF" + record + b"\x00" * 17)
     save_path = game_dir / name

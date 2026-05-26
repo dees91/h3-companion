@@ -33,6 +33,7 @@ DEFAULT_PORT = 8765
 FOLLOW_LATEST_MODE = "follow_latest"
 PINNED_MODE = "pinned"
 DEFAULT_API_SIMULATIONS = battle_estimator.DEFAULT_SCAN_SIMULATIONS
+DEFAULT_HERO_RANKING_SIMULATIONS = 80
 MAX_API_SIMULATIONS = 2000
 MAX_SCAN_RADIUS = 200
 CASTLE_ALERT_STATUS_OK = "ok"
@@ -539,6 +540,7 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
             "/api/alert-settings": self._api_alert_settings,
             "/api/simulate-target": self._api_simulate_target,
             "/api/scan-radius": self._api_scan_radius,
+            "/api/hero-ranking": self._api_hero_ranking,
             "/api/path-route": self._api_path_route,
             "/api/hero-skills": self._api_hero_skills,
             "/api/hero-skills/save": self._api_hero_skills_save,
@@ -877,6 +879,17 @@ class BattleEstimatorGuiHandler(BaseHTTPRequestHandler):
                 for estimate in estimates
             ],
         }
+
+    def _api_hero_ranking(self, payload: dict) -> dict:
+        simulations = _bounded_int(
+            payload,
+            "simulations",
+            DEFAULT_HERO_RANKING_SIMULATIONS,
+            minimum=1,
+            maximum=MAX_API_SIMULATIONS,
+        )
+        domain_snapshot = _domain_snapshot_for_app(self.app_state)
+        return _hero_ranking_payload(domain_snapshot, simulations)
 
     def _api_path_route(self, payload: dict) -> dict:
         hero_id = _required_text(payload, "hero_id")
@@ -3433,6 +3446,94 @@ def _hero_id_for_army(domain_snapshot: DomainSnapshot, hero_army) -> str | None:
         ):
             return hero_id
     return None
+
+
+def _hero_ranking_payload(
+    domain_snapshot: DomainSnapshot,
+    simulations: int,
+) -> dict:
+    candidates = _hero_ranking_candidates(domain_snapshot)
+    rows = []
+    for hero_id, hero in candidates:
+        scan_targets = _hero_ranking_scan_targets(hero_id, hero, candidates)
+        win_pcts = []
+        if scan_targets:
+            estimates = battle_estimator.estimate_nearby_scan_targets(
+                hero,
+                scan_targets,
+                simulations=simulations,
+            )
+            win_pcts = [
+                estimate.win_pct
+                for estimate in estimates
+                if estimate.win_pct is not None
+            ]
+        combat_score = (
+            None
+            if not win_pcts
+            else sum(win_pcts) / len(win_pcts)
+        )
+        rows.append((
+            {
+                "hero_id": hero_id,
+                "combat_score": combat_score,
+                "opponents": len(win_pcts),
+                "ai_value": hero.ai_value,
+            },
+            hero,
+        ))
+
+    rows.sort(key=_hero_ranking_sort_key)
+    return {
+        "ranking_mode": "combat_score",
+        "simulations": simulations,
+        "entries": [entry for entry, _ in rows],
+    }
+
+
+def _hero_ranking_candidates(domain_snapshot: DomainSnapshot) -> tuple:
+    return tuple(
+        (hero_id, hero)
+        for hero_id, hero in domain_snapshot.hero_entries
+        if hero.position is not None and _hero_has_army(hero)
+    )
+
+
+def _hero_has_army(hero) -> bool:
+    return any(stack.count > 0 for stack in getattr(hero, "stacks", ()))
+
+
+def _hero_ranking_scan_targets(
+    attacker_id: str,
+    attacker,
+    candidates,
+) -> tuple[battle_estimator.NearbyScanTarget, ...]:
+    return tuple(
+        _scan_target_for_raw_target(
+            "hero",
+            attacker,
+            h3_save_parser.HeroTarget(
+                hero_name=defender.hero_name,
+                position=defender.position,
+                army=defender,
+            ),
+        )
+        for defender_id, defender in candidates
+        if defender_id != attacker_id
+    )
+
+
+def _hero_ranking_sort_key(row) -> tuple:
+    entry, hero = row
+    combat_score = entry["combat_score"]
+    return (
+        combat_score is None,
+        0 if combat_score is None else -combat_score,
+        -hero.ai_value,
+        -hero.total_creatures,
+        hero.hero_name.casefold(),
+        entry["hero_id"],
+    )
 
 
 def _scan_target_for_raw_target(target_type: str, selected_hero, target):

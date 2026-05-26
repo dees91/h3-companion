@@ -154,6 +154,13 @@
     comparing: false,
     dirty: false
   };
+  const heroRankingState = {
+    requestId: 0,
+    snapshotKey: null,
+    payload: null,
+    loading: false,
+    error: null
+  };
   const saveNavigation = {
     saves: []
   };
@@ -304,6 +311,30 @@
 
   function heroAiValue(hero) {
     return typeof hero.ai_value === "number" ? hero.ai_value : 0;
+  }
+
+  function heroRankingSnapshotKey(snapshot) {
+    if (!snapshot) {
+      return "";
+    }
+    return JSON.stringify({
+      save_file: snapshot.save_file || "",
+      save_fingerprint: snapshot.save_fingerprint || null,
+      map_file: snapshot.map_file || "",
+      map_fingerprint: snapshot.map_fingerprint || null
+    });
+  }
+
+  function syncHeroRankingSnapshot(snapshot) {
+    const snapshotKey = heroRankingSnapshotKey(snapshot);
+    if (snapshotKey === heroRankingState.snapshotKey) {
+      return;
+    }
+    heroRankingState.requestId += 1;
+    heroRankingState.snapshotKey = snapshotKey;
+    heroRankingState.payload = null;
+    heroRankingState.loading = false;
+    heroRankingState.error = null;
   }
 
   function nextStateEpoch() {
@@ -4605,26 +4636,78 @@
     elements.followLatestDialog.hidden = true;
   }
 
-  function rankedMapHeroes(snapshot) {
+  function heroRankingEntriesById(payload) {
+    const entries = new Map();
+    ((payload && payload.entries) || []).forEach((entry, index) => {
+      if (entry && entry.hero_id) {
+        entries.set(entry.hero_id, { ...entry, rankIndex: index });
+      }
+    });
+    return entries;
+  }
+
+  function heroRankingEntryForHero(hero, entryByHeroId) {
+    if (!hero || !hero.id) {
+      return null;
+    }
+    return entryByHeroId.get(hero.id) || null;
+  }
+
+  function rankedMapHeroes(snapshot, rankingPayload) {
+    const entryByHeroId = heroRankingEntriesById(rankingPayload);
     return ((snapshot && snapshot.heroes) || [])
       .filter((hero) => hero.position)
       .slice()
       .sort((left, right) => (
+        (
+          entryByHeroId.has(left.id)
+          ? entryByHeroId.get(left.id).rankIndex
+          : Number.MAX_SAFE_INTEGER
+        ) - (
+          entryByHeroId.has(right.id)
+          ? entryByHeroId.get(right.id).rankIndex
+          : Number.MAX_SAFE_INTEGER
+        )
+        || (
+          entryByHeroId.has(right.id) ? 1 : 0
+        ) - (
+          entryByHeroId.has(left.id) ? 1 : 0
+        )
+        ||
         heroAiValue(right) - heroAiValue(left)
         || (right.total_creatures || 0) - (left.total_creatures || 0)
         || String(left.name || left.id).localeCompare(String(right.name || right.id))
       ));
   }
 
+  function formatCombatScore(entry) {
+    return entry && typeof entry.combat_score === "number"
+      ? entry.combat_score.toFixed(1)
+      : "not available";
+  }
+
   function renderHeroRanking() {
-    const heroes = rankedMapHeroes(mapView.snapshot);
+    const payload = heroRankingState.payload;
+    const entryByHeroId = heroRankingEntriesById(payload);
+    const heroes = rankedMapHeroes(mapView.snapshot, payload);
     clearNode(elements.heroRankingList);
     if (heroes.length === 0) {
       appendEmpty(elements.heroRankingList, "No positioned heroes.");
       return;
     }
+    if (heroRankingState.loading) {
+      appendEmpty(elements.heroRankingList, "Calculating ranking...");
+      return;
+    }
+    if (heroRankingState.error) {
+      const error = document.createElement("p");
+      error.className = "empty-state error-text";
+      error.textContent = `Ranking error: ${heroRankingState.error}`;
+      elements.heroRankingList.appendChild(error);
+    }
 
     heroes.forEach((hero, index) => {
+      const rankingEntry = heroRankingEntryForHero(hero, entryByHeroId);
       const row = document.createElement("button");
       row.type = "button";
       row.className = "list-item ranking-item";
@@ -4643,12 +4726,17 @@
 
       const meta = document.createElement("div");
       meta.className = "item-meta";
-      meta.textContent = [
-        heroOwnerText(hero),
+      const metaItems = [];
+      if (rankingEntry) {
+        metaItems.push(`Combat ${formatCombatScore(rankingEntry)}`);
+      }
+      metaItems.push(
         `AI ${formatNumber(hero.ai_value)}`,
+        heroOwnerText(hero),
         positionText(hero.position),
         `${hero.total_creatures || 0} creatures`
-      ].join(" | ");
+      );
+      meta.textContent = metaItems.join(" | ");
       meta.title = hero.army_summary || meta.textContent;
 
       row.appendChild(titleRow);
@@ -4658,12 +4746,70 @@
   }
 
   function showHeroRankingDialog() {
-    renderHeroRanking();
     elements.heroRankingDialog.hidden = false;
+    requestHeroRanking();
   }
 
   function hideHeroRankingDialog() {
     elements.heroRankingDialog.hidden = true;
+  }
+
+  function heroRankingRequestMatches(requestId, snapshotKey) {
+    return (
+      requestId === heroRankingState.requestId
+      && snapshotKey === heroRankingSnapshotKey(mapView.snapshot)
+    );
+  }
+
+  function requestHeroRanking() {
+    const snapshot = mapView.snapshot;
+    const snapshotKey = heroRankingSnapshotKey(snapshot);
+    syncHeroRankingSnapshot(snapshot);
+    if (!snapshot || rankedMapHeroes(snapshot).length === 0) {
+      renderHeroRanking();
+      return Promise.resolve();
+    }
+    if (
+      heroRankingState.payload
+      && heroRankingState.snapshotKey === snapshotKey
+      && !heroRankingState.error
+    ) {
+      heroRankingState.loading = false;
+      renderHeroRanking();
+      return Promise.resolve(heroRankingState.payload);
+    }
+
+    const requestId = heroRankingState.requestId + 1;
+    heroRankingState.requestId = requestId;
+    heroRankingState.snapshotKey = snapshotKey;
+    heroRankingState.loading = true;
+    heroRankingState.error = null;
+    renderHeroRanking();
+    return postJson(
+      "/api/hero-ranking",
+      { simulations: 80 },
+      "hero ranking failed"
+    )
+      .then((payload) => {
+        if (!heroRankingRequestMatches(requestId, snapshotKey)) {
+          return null;
+        }
+        heroRankingState.payload = payload;
+        heroRankingState.loading = false;
+        heroRankingState.error = null;
+        renderHeroRanking();
+        return payload;
+      })
+      .catch((error) => {
+        if (!heroRankingRequestMatches(requestId, snapshotKey)) {
+          return null;
+        }
+        heroRankingState.payload = null;
+        heroRankingState.loading = false;
+        heroRankingState.error = error.message;
+        renderHeroRanking();
+        return null;
+      });
   }
 
   function focusRankedHero(heroId) {
@@ -5585,6 +5731,7 @@
     renderRecentHeroes(heroState.recentHeroes);
     renderHeroes();
     mapView.snapshot = snapshot;
+    syncHeroRankingSnapshot(snapshot);
     mapView.level = nextViewState.level;
     mapView.dualLevel = nextViewState.dualLevel;
     mapView.showHiddenNeutrals = Boolean(snapshot.show_hidden);
@@ -5622,7 +5769,7 @@
     syncGameFolderControls();
     syncHeroRankingControls();
     if (!elements.heroRankingDialog.hidden) {
-      renderHeroRanking();
+      requestHeroRanking();
     }
   }
 
@@ -5646,6 +5793,7 @@
     setText(elements.mapOverlayDetail, message);
     clearNode(elements.mapLevelControl);
     mapView.snapshot = null;
+    syncHeroRankingSnapshot(null);
     mapView.markers = [];
     mapView.level = 0;
     mapView.dualLevel = false;
@@ -6055,7 +6203,9 @@
     formatCombatModelSummary,
     estimateTargetLabel,
     filterHeroesForQuery,
+    formatCombatScore,
     formatWinPct,
+    heroRankingSnapshotKey,
     hitTestPortalGhostMarker,
     hitTestMarker,
     markerTooltipText,
@@ -6065,6 +6215,7 @@
     nextViewStateForSnapshot,
     rankedMapHeroes,
     recentHeroChipState,
+    requestHeroRanking,
     renderSnapshot,
     loadState,
     activeCastleAlertPreview,

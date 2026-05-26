@@ -1970,6 +1970,18 @@ derived from validated active level/slot vectors.
 | G02 | GUI/API/Estimator Integration | done | Confirmed the existing estimator/API path consumes any save-sourced combat context generically. Added supported GM2 integration coverage for GUI snapshot serialization, `/api/simulate-target` hero-vs-hero estimates with both player and enemy combat contexts, and CLI nearby scan propagation. GM2 fixtures use offset-65 `H3SVG`, XOR `0x01`, and `secondary_count=0` to exercise derived secondary count. |
 | G03 | Docs And Final Verification | done | Updated README, CHANGELOG, AGENTS, planning notes, and the save parsing checkpoint to describe bounded GM2 combat-context support without claiming broad GM2 coverage. Final verification includes the full Python suite, GUI JavaScript syntax check, diff whitespace check, git status review, and repo-wide private-path scan. |
 
+## Hero Ranking Combat Score Follow-Up
+
+These tasks replace the misleading raw-AI primary sort in the GUI Hero Ranking
+dialog with a save-local combat score. A hero's combat score is the average
+estimated win percentage when attacking every other positioned hero with an
+army in the currently loaded save. Same-owner and same-team heroes are included
+because the ranking is a global strength comparison, not a hostile-target scan.
+
+| ID | Title | Status | Completion Notes |
+|---|---|---|---|
+| H01 | Combat-Score Hero Ranking | done | Added `/api/hero-ranking`, defaulting to 80 simulations per matchup, and switched the frontend ranking dialog to request combat-score rows with stale-response guards. AI value remains visible as secondary context and as a tie-breaker. Backend tests cover same-owner inclusion and unpositioned hero exclusion; frontend tests cover combat sorting, loading/error states, request payload, and stale ranking responses. |
+
 ## Summary Table
 
 | ID | Title | Status | Blocked By | Wave | Execution | Effort | Scope | Files Likely Touched |
@@ -2008,3 +2020,4 @@ derived from validated active level/slot vectors.
 | G01 | Parser GM2 Combat Profile | done | -- | gm2-combat-context | Main | M | Parser/Test | `tools/h3_save_parser.py`, parser tests, planning/checkpoint docs |
 | G02 | GUI/API/Estimator Integration | done | G01 | gm2-combat-context | Main | M | API/Core/Test | GUI/CLI estimator integration tests, planning doc |
 | G03 | Docs And Final Verification | done | G02 | gm2-combat-context | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint/planning docs |
+| H01 | Combat-Score Hero Ranking | done | -- | hero-ranking-combat-score | Main | M | API/GUI/Test/Docs | `tools/battle_estimator_gui.py`, `app.js`, GUI tests, README/CHANGELOG/planning doc |
