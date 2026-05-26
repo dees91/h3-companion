@@ -101,9 +101,11 @@ provides truthful game context and analysis helpers.
   for compatibility. Do not casually rename it.
 - Local real saves and maps may be used for manual verification, but must not
   be committed or copied into the repo.
-- The project currently avoids runtime third-party dependencies. Prefer a
-  stdlib-compatible MCP server if practical. If the official MCP Python SDK is
-  needed, introduce it deliberately with docs, tests, and compatibility notes.
+- The project usually avoids runtime third-party dependencies, but T01 selects
+  the official MCP Python SDK because it is a task-specific implementation that
+  reduces protocol and client-compatibility risk. Introduce the dependency
+  deliberately with docs, tests, and compatibility notes when the server entry
+  point is implemented.
 - MCP clients can differ in configuration format. Keep project docs focused on
   the server command and tool contracts rather than committing local client
   config.
@@ -314,7 +316,28 @@ transport, and context cache behavior.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Selected transport/library: local MCP over `stdio` using the official Model
+  Context Protocol Python SDK (`mcp`) for the server implementation.
+- Rationale: the official SDK is a maintained, task-specific library that avoids
+  hand-rolled protocol, framing, and lifecycle bugs, while `stdio` remains the
+  best fit for local MCP clients and avoids opening a local HTTP port or adding
+  an auth surface.
+- Third-party dependency decision: a Python dependency on the base `mcp` package
+  is required and deliberate. Avoid `mcp[cli]` unless T07 proves SDK CLI tooling
+  is needed.
+- Dependency management requirement for T07: when the entry point is
+  implemented, add an explicit install path such as a dependency manifest or
+  documented `pip install mcp`, plus matching tests and runbook notes.
+- Protocol target: the server entry point should use the SDK's stdio server
+  support for the stable 2025-06-18/2025-03-26-style initialize-based MCP
+  lifecycle used by current local clients.
+- Stdio constraints for T07: stdout must contain only MCP messages, logs must
+  go to stderr, and stdin EOF should terminate the process cleanly. These should
+  be satisfied through SDK transport behavior rather than a custom protocol
+  loop.
+- Future command: `python3 tools/battle_estimator_mcp.py`.
+- No MCP client configuration, credentials, transcripts, real saves, or real
+  maps were added for this spike.
 
 ---
 
@@ -666,7 +689,7 @@ transport, and context cache behavior.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| MCP transport choice adds brittle dependencies. | High | Start with a transport spike and prefer stdlib/minimal dependency unless SDK value is clear. |
+| MCP transport choice adds brittle dependencies. | High | Use the official MCP Python SDK selected in T01, keep the dependency explicit, and avoid optional SDK extras unless they are needed. |
 | Advisor context is too verbose for an LLM client. | Medium | Provide condensed `get_advisor_context` and keep raw state as debug/fallback. |
 | Agent treats estimates as exact Heroes III truth. | High | Include model limitations in every advisor context and compute result. |
 | Tool calls accidentally mutate GUI/config state. | High | Keep MVP tools read-only plus in-memory cache refresh; test config files remain unchanged. |
@@ -688,8 +711,8 @@ transport, and context cache behavior.
 
 | ID | Title | Status | Blocked By | Wave | Execution | Effort | Scope | Files Likely Touched |
 |---|---|---|---|---|---|---|---|---|
-| T01 | MCP Transport Spike | todo | -- | foundation | Main | S | Research/Docs | planning doc, docs if needed |
-| T02 | Read-Only Context Loader | blocked | T01 | foundation | Main | M | Core/Test | `tools/battle_estimator_mcp.py`, MCP tests |
+| T01 | MCP Transport Spike | done | -- | foundation | Main | S | Research/Docs | planning doc, docs if needed |
+| T02 | Read-Only Context Loader | todo | T01 | foundation | Main | M | Core/Test | `tools/battle_estimator_mcp.py`, MCP tests |
 | T03 | Advisor Context Builder | blocked | T02 | foundation | Main | M | Core/Test | advisor module, MCP tests |
 | T04 | Scan And Estimate Tools | blocked | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
 | T05 | Route And Portal Tools | blocked | T02 | compute-tools | Parallel | M | Core/Test | advisor module, GUI helpers, MCP tests |
