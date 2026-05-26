@@ -1,0 +1,4 @@
+interface:
+  display_name: "H3 Strategic Goal"
+  short_description: "Long-term Heroes III strategic planning"
+  default_prompt: "Use $h3-strategic-goal to set a long-term Heroes III plan for the current MCP save."

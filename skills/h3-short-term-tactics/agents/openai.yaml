@@ -1,0 +1,4 @@
+interface:
+  display_name: "H3 Short-Term Tactics"
+  short_description: "Immediate Heroes III move decisions"
+  default_prompt: "Use $h3-short-term-tactics to choose the next concrete Heroes III moves for the current MCP save."
