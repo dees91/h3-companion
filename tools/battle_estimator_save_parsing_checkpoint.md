@@ -505,16 +505,15 @@ approaches:
 
 1. A provisional ownership inference based on visible hero owner + exact town
    tile occupancy.
-2. A direct current-town-owner parser, still requiring a better save-side
-   structure hypothesis and synthetic fixtures.
+2. A direct current-town-owner parser. This was later implemented for the
+   observed town-state record pattern described below.
 
 ## Bounded Current Town Ownership Hypothesis
 
-This section deliberately documents a bounded proxy hypothesis, not a direct
-save-side town-owner parser. The direct town-owner byte or save-side town record
-has not been isolated. Any implementation based on this section must expose its
-confidence and must return `ownership_unavailable` outside the narrow supported
-case.
+This section deliberately documents the older bounded proxy hypothesis, not the
+direct save-side town-owner parser implemented later. Any proxy implementation
+based on this section must expose its confidence and must return
+`ownership_unavailable` outside the narrow supported case.
 
 ### Town Target Identity
 
@@ -534,8 +533,8 @@ hero state that may imply current control.
 
 ### Proxy Owner Inference
 
-Current owner color is not decoded directly from a town record. The supported
-proxy path is:
+The proxy path does not decode current owner color directly from a town record.
+Its supported flow is:
 
 1. Parse visible hero records with the existing supported save scanner.
 2. Decode the hero owner color from the hero struct start
@@ -552,21 +551,50 @@ ownership_source = hero_on_town_tile_proxy
 ownership_confidence = proxy
 ```
 
-If a future direct save-side town-owner field is discovered and passes its own
-validation, it should supersede this proxy. If the direct field and proxy
-conflict, the parser must not silently choose one; it should expose
-`ownership_unavailable` or a dedicated conflict status until the conflict is
-understood.
+The direct town-state record parser described below supersedes this proxy.
+Proxy inference remains a fallback only when no direct candidate record is
+present; duplicated, invalid, or ambiguous direct records stay unavailable and
+do not fall back to proxy inference.
+
+## Direct Town-State Ownership Parser
+
+`detect_current_town_ownership(data, town_targets)` now first scans decompressed
+save bytes for exact town-state records joined to parsed H3M town targets. The
+supported observed record pattern is deliberately strict:
+
+- town identity uses the H3M town sequence index from `enumerate(town_targets)`,
+  not `object_index`,
+- the record owner byte is accepted only as `0..7` for player colors or `0xff`
+  for neutral/unowned,
+- `h3m_subid` and the town's projected visitable `(x, y, z)` must match,
+- the observed record context must match the supported town-state shape,
+- duplicate matching records or invalid owner bytes return
+  `ownership_unavailable` instead of falling back to proxy.
+
+Successful direct observations use:
+
+```text
+ownership_status = exact
+ownership_source = save_town_state_record
+ownership_confidence = exact
+```
+
+An exact neutral/unowned town has `current_owner_color_id = None` with
+`ownership_status = exact`; this is known current ownership, not an unavailable
+state. If an exact record and a hero-on-town proxy disagree, the exact record
+wins because it is the direct town-state source.
 
 ### Implemented Parser Contract
 
-The implemented T04 parser contract lives in `tools/h3_save_parser.py`:
+The implemented parser contract lives in `tools/h3_save_parser.py`:
 
-- `infer_current_town_ownership(town_targets, heroes)` is the core API. It
-  accepts parsed H3M town targets and the raw detected visible save heroes.
-- `detect_current_town_ownership(data, town_targets)` is a convenience wrapper
-  that scans hero records from decompressed save bytes and delegates to
-  `infer_current_town_ownership`.
+- `detect_current_town_ownership(data, town_targets)` is the main save-byte API.
+  It scans direct town-state records from decompressed save bytes first, then
+  uses proxy inference only when no direct candidate record is present for a
+  town.
+- `infer_current_town_ownership(town_targets, heroes)` is the proxy fallback
+  helper. It accepts parsed H3M town targets and the raw detected visible save
+  heroes.
 - Results are `TownOwnershipObservation` records with explicit
   `ownership_status`, `ownership_source`, `ownership_confidence`, optional
   `current_owner_color_id`, `reason`, and matching-hero details.
@@ -595,8 +623,8 @@ apply:
 - the H3M map is unavailable, mismatched, or cannot be parsed,
 - the object is not a standard parsed H3M town target,
 - the town's visitable tile cannot be resolved deterministically,
-- the save format is unsupported or hero records cannot be scanned with a
-  supported key/layout,
+- the save format lacks the supported direct town-state record and proxy
+  inference is also unavailable,
 - no eligible visible hero occupies the town visitable tile,
 - the matching hero has no decoded owner color or is unowned,
 - the matching hero has no decoded position, an out-of-bounds position, or a
@@ -604,7 +632,7 @@ apply:
 - multiple visible owned heroes occupy the same town tile, even when their
   owner colors agree,
 - a hidden or otherwise parser-invisible hero is required to explain ownership,
-- a future direct current-owner field is present but conflicts with the proxy,
+- direct town-state records are duplicated or have invalid owner bytes,
 - any candidate structure is truncated, ambiguous, or only matches by loose byte
   patterns such as object index or coordinates without semantic validation.
 

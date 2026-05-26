@@ -13,8 +13,11 @@ defined in [docs/release-policy.md](docs/release-policy.md).
   rendered side by side.
 - Portal relation hints now include cross-level ghost destinations, destination
   level badges, and multi-exit/non-deterministic indicators.
-- Best-effort save-derived current town ownership for observed GM1/GM2
-  snapshots, exposed in town targets and used by the GUI.
+- Exact save-derived current town ownership for observed GM1/GM2 town-state
+  records, with proxy fallback only when exact records are absent. Current
+  owners are exposed in town targets, map markers, town details, and owned-town
+  alerts; invalid or ambiguous ownership remains unavailable rather than
+  falling back to initial H3M owners.
 - Defensive owned-town alerts in the GUI, configured with `My color` and
   `Alert radius`, with alert rows that focus the threatening enemy hero.
 - Save-derived hero combat context for verified GM1 records, exposing current

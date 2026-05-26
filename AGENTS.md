@@ -210,7 +210,8 @@ those files instead of raw `json.loads()`.
 - Cache handling under:
   - `~/.cache/vcmi-battle-estimator`
 - Hero army scanner for observed multiplayer/hotseat save structures.
-- Best-effort current town ownership inference for observed GM1/GM2 structures.
+- Exact current town ownership parsing for observed GM1/GM2 town-state records,
+  with hero-on-town proxy fallback only when exact records are absent.
 - Bounded hero combat context parsing for loaded `.GM1` saves with `H3SVG` at
   offset `0` and raw `0x00` hero records.
 - Hidden target persistence.

@@ -50,12 +50,13 @@ fight.
 
 ![H3 Companion radius scan with target difficulty results](docs/images/radius-scan.png)
 
-Town threat alerts use save-derived current ownership when it is available for
-the loaded snapshot. Set `My color` in the Heroes sidebar, then use
-`Alert radius` to list enemy heroes within that same-level map-tile distance of
-your owned towns. Alert rows focus the enemy hero marker on the map when it is
-visible. When current town ownership cannot be inferred from the save, the GUI
-shows a diagnostic and does not fall back to initial map owners.
+Town markers and threat alerts use save-derived current ownership when it is
+available for the loaded snapshot. Set `My color` in the Heroes sidebar, then
+use `Alert radius` to list enemy heroes within that same-level map-tile distance
+of your owned towns. Alert rows focus the enemy hero marker on the map when it
+is visible. Town details show current owner before initial map owner. When
+current town ownership cannot be inferred from the save, the GUI shows a
+diagnostic and does not fall back to initial map owners for alert logic.
 
 ## Quick Start
 

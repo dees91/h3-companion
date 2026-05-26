@@ -125,7 +125,8 @@ underground together.
 ## Critical Implementation Notes
 
 - Current town ownership is implemented for observed supported structures as
-  best-effort save-derived fields joined to H3M town targets. Older planning
+  exact save-town-state ownership joined to H3M town targets, with bounded
+  hero-on-town proxy fallback only when exact records are absent. Older planning
   that says current ownership is out of scope is historical.
 - The parser extracts save-derived hero army, position, owner color, current
   town ownership evidence, and bounded hero combat context from observed
@@ -145,9 +146,9 @@ underground together.
   multiplicative reductions.
 - `config/skills.json` already contains Offense, Armorer, and Archery effect
   values. Use the existing JSONC loader path instead of raw `json.loads()`.
-- Current town ownership needs to join save-derived ownership records to H3M
-  town targets. The join should be based on coordinates/object identity when
-  supported by observed save data, not on display name alone.
+- Current town ownership joins save-derived town-state records to H3M town
+  targets by sequence, subid, and visitable tile coordinates. It must not use
+  display name alone.
 - If the parser can identify ownership only for a subset of towns, the alert
   service should expose a confidence/diagnostic status instead of silently
   treating missing towns as unowned.
@@ -1912,9 +1913,8 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 ## Open Questions
 
-- Which exact real save examples will be used for parser research?
-- Does the observed save ownership record include stable town object identity,
-  coordinates, or only list ordering?
+- Which additional save/map families should be sampled to broaden exact town
+  ownership support beyond the currently observed record pattern?
 - Are random town/current faction changes relevant to alert display, or only
   current owner color?
 - Should a later iteration add an `Include allied towns` toggle?
@@ -1931,17 +1931,18 @@ side-by-side view changes map geometry, rendering, and hit testing.
 
 ## Direct Town Ownership Follow-Up
 
-These tasks replace the bounded hero-on-town proxy with a direct current town
-state parser while keeping the work split into reviewable atomic commits. Each
-implementation task must use a plan review subagent, a code review subagent,
-focused tests, completion notes, and an atomic commit before the next task.
+These tasks make a direct current town-state parser the primary path while
+retaining the bounded hero-on-town proxy as fallback. The work stays split into
+reviewable atomic commits. Each implementation task must use a plan review
+subagent, a code review subagent, focused tests, completion notes, and an
+atomic commit before the next task.
 
 | ID | Title | Status | Completion Notes |
 |---|---|---|---|
-| D01 | Direct Town-State Parser + Contract Tests | done | Added exact save-town-state ownership parsing in `h3_save_parser`, including owner `0..7`, neutral `0xff`, duplicate/invalid record diagnostics, proxy fallback when no direct record exists, and focused synthetic parser coverage. Local verification against the observed Diamond save resolved 24/24 towns as `exact`. |
+| D01 | Direct Town-State Parser + Contract Tests | done | Added exact save-town-state ownership parsing in `h3_save_parser`, including owner `0..7`, neutral `0xff`, duplicate/invalid record diagnostics, proxy fallback when no direct record exists, and focused synthetic parser coverage. Local verification against the observed same-map save series resolved all parsed towns as `exact`. |
 | D02 | Backend Snapshot And Castle Alerts | done | Switched GUI domain snapshots to `detect_current_town_ownership()` so `/api/state` uses exact save-town-state ownership with proxy fallback, updated castle alerts to accept `exact` and `proxy`, and added GUI/backend tests for exact owners, neutral exact towns, exact-vs-proxy conflicts, and alert behavior. |
 | D03 | Frontend Current Owner Rendering | done | Updated town markers to carry current ownership metadata, render exact/proxy current owners before initial owners in summaries/details, color town bodies by current owner, and render exact neutral current ownership with the unowned style. |
-| D04 | Documentation And Final Notes | pending | -- |
+| D04 | Documentation And Final Notes | done | Updated README, CHANGELOG, AGENTS, checkpoint notes, and this planning doc to describe exact save-town-state ownership, proxy fallback limits, neutral exact ownership, and no fallback to initial H3M owners for alert logic. |
 
 ## Summary Table
 
