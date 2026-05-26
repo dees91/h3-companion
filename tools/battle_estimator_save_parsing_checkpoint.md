@@ -758,27 +758,36 @@ estimator in this pass. In particular:
   a save-side id is validated.
 
 The local `h3sed` version rejected the observed offset-65 multiplayer `GM2`
-saves as unrecognized. Existing `GM2` army/name/position/owner parsing still
-works through XOR `0x01`, and these combat offsets are plausible under the same
-relative layout, but `GM2` combat context must remain unsupported until at
-least two `GM2` saves have independent Attack/Defense and secondary-skill
-ground truth.
+saves as unrecognized. Existing `GM2` army/name/position/owner parsing works
+through XOR `0x01`. Later local validation against an anonymized same-map GM2
+series found stable primary and secondary vectors for the accepted owned hero
+records, so the parser now supports the bounded offset-65 GM2 profile described
+below.
 
 ## Bounded Hero Combat Data Hypothesis
 
-This section is a parser hypothesis for future implementation tasks, not a
-claim that combat context is already parsed. It deliberately supports only the
-validated narrow case and must return explicit non-complete statuses outside
-that case.
+This section records the bounded parser hypothesis that was later implemented
+for narrow GM1 and GM2 combat-context profiles. It deliberately supports only
+validated narrow cases and must return explicit non-complete statuses outside
+those cases.
 
 ### Supported Structure
 
-The first supported combat-context structure should be:
+The first supported combat-context structure was:
 
 - Shadow of Death `GM1`,
 - `H3SVG` at offset `0`,
 - accepted hero record using raw `0x00` encoding,
 - same hero struct already accepted by name, army, position, and owner parsing.
+
+The second supported combat-context structure is:
+
+- `GM2`,
+- `H3SVG` at offset `65`,
+- accepted hero record using XOR `0x01` encoding,
+- same hero struct already accepted by name, army, position, and owner parsing,
+- secondary-skill count derived from active level/slot vectors instead of the
+  `-126` count byte.
 
 The hero name offset remains the stable anchor (`source_offset`). The candidate
 combat fields are in the same hero struct:
@@ -793,9 +802,10 @@ combat fields are in the same hero struct:
 | secondary skill slots | `+41..+68` | 28 `u8` values |
 | primary skills | `+69..+72` | attack, defense, power, knowledge as `u8` |
 
-When future fixtures validate XOR `0x01` combat data, the same relative offsets
-may be tested with the same per-hero decode key used for name/army parsing.
-Until then, `GM2` and XOR `0x01` combat context are unsupported.
+For the supported GM2 profile, the same relative offsets are decoded with the
+same per-hero XOR `0x01` key used for name/army parsing. The count byte at
+`-126` is not trusted for GM2; the parser derives secondary count from active
+level/slot vectors and validates the resulting `1..N` slot permutation.
 
 ### Primary Skill Decode
 
@@ -905,7 +915,7 @@ skills or manually maintained recommendation state.
 
 Implemented on 2026-05-25.
 
-The supported parser gate remains deliberately narrow:
+The originally implemented parser gate was deliberately narrow:
 
 - loaded save path suffix is `.GM1` case-insensitively,
 - `H3SVG` starts at offset `0`,
@@ -913,11 +923,19 @@ The supported parser gate remains deliberately narrow:
 - the hero record is already accepted by name, army, position, and owner
   parsing.
 
+G01 extended that gate with a second bounded profile:
+
+- loaded save path suffix is `.GM2` case-insensitively,
+- `H3SVG` starts at offset `65`,
+- the accepted hero record uses XOR `0x01` encoding,
+- secondary-skill count is derived from active level/slot vectors before the
+  same secondary-skill validation is applied.
+
 `HeroCombatContext` now carries `status`, `source`, `reason`,
 `primary_skills`, and validated `secondary_skills`. Only the loaded-save-aware
-parser path can set `source = save`. Direct byte scans, GM2 combat context, and
-XOR `0x01` combat context still return unavailable combat context, although
-their armies may still be parsed for army-only estimates.
+parser path can set `source = save`. Direct byte scans and unsupported
+save/key profiles still return unavailable combat context, although their
+armies may still be parsed for army-only estimates.
 
 The estimator applies only these save-derived combat effects:
 
@@ -954,7 +972,8 @@ covered by synthetic tests.
 
 Return `unavailable` when:
 
-- the save is not a supported `GM1`/`H3SVG=0`/raw-hero-struct case,
+- the save is not a supported `GM1`/`H3SVG=0`/raw-hero-struct case or
+  supported `GM2`/`H3SVG=65`/XOR-`0x01` hero-struct case,
 - the existing hero scanner does not accept the hero record,
 - the primary window is truncated or cannot be decoded,
 - the candidate structure only matches by loose byte patterns without a valid
@@ -980,7 +999,7 @@ Leave these fields unsupported until separately validated:
 - current morale, luck, terrain, tactics, active spell effects, and battle-side
   modifiers,
 - save-side numeric hero specialty identifiers,
-- `GM2`/XOR `0x01` combat context.
+- unsupported `GM2`/XOR `0x01` variants outside the offset-65 profile.
 
 ## Important Caveats
 

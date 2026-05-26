@@ -1956,6 +1956,19 @@ of truth for highlighted towns.
 | A01 | Backend Threatened Town Payload | done | Added a `CastleAlertTown` payload and serialized `threatened_towns` list for each alert while preserving nearest-town fields. Backend tests cover sorted threatened towns, nearest-field compatibility, and `/api/state` serialization. |
 | A02 | Frontend Alert Hover Overlay | done | Added alert-row hover/focus preview state, canvas radius overlays around threatening heroes, and highlighted rings for every backend-reported threatened town. Frontend tests cover pointer and keyboard preview state, dashed radius rendering, multi-town highlighting, stale preview clearing, and existing click behavior. README and CHANGELOG now describe the hover preview. |
 
+## GM2 Hero Combat Context Follow-Up
+
+These tasks extend save-derived hero combat context beyond the original GM1
+profile. The supported GM2 profile is intentionally bounded to `.GM2` saves
+with `H3SVG` at offset `65`, XOR `0x01` hero records, and secondary count
+derived from validated active level/slot vectors.
+
+| ID | Title | Status | Completion Notes |
+|---|---|---|---|
+| G01 | Parser GM2 Combat Profile | done | Added a `HeroCombatContextProfile` parser gate for GM1 explicit-count and GM2 derived-count layouts. Synthetic parser tests cover supported GM2 `primary+secondary`, GM2 secondary fallback to `primary-only`, wrong-key GM2 records, and unsupported GM2 offsets. Local evidence from the observed same-map GM2 series was kept anonymous; no real save files or paths were committed. |
+| G02 | GUI/API/Estimator Integration | pending | -- |
+| G03 | Docs And Final Verification | pending | -- |
+
 ## Summary Table
 
 | ID | Title | Status | Blocked By | Wave | Execution | Effort | Scope | Files Likely Touched |
@@ -1991,3 +2004,6 @@ of truth for highlighted towns.
 | T22 | Hero Combat Docs And Verification | done | T21 | hero-combat-quality | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint doc |
 | A01 | Backend Threatened Town Payload | done | -- | alert-hover-preview | Main | S | API/Test | `tools/battle_estimator_gui.py`, GUI backend tests, planning doc |
 | A02 | Frontend Alert Hover Overlay | done | A01 | alert-hover-preview | Main | M | GUI/Docs/Test | `app.js`, `style.css`, GUI tests, README/CHANGELOG/planning doc |
+| G01 | Parser GM2 Combat Profile | done | -- | gm2-combat-context | Main | M | Parser/Test | `tools/h3_save_parser.py`, parser tests, planning/checkpoint docs |
+| G02 | GUI/API/Estimator Integration | pending | G01 | gm2-combat-context | Main | M | API/Core/Test | `tools/battle_estimator_gui.py`, estimator/GUI tests |
+| G03 | Docs And Final Verification | pending | G02 | gm2-combat-context | Main | S | Docs/Test | `README.md`, `CHANGELOG.md`, `AGENTS.md`, checkpoint/planning docs |

@@ -35,6 +35,14 @@ HERO_COMBAT_OFFENSE_INDEX = 22
 HERO_COMBAT_ARMORER_INDEX = 23
 
 
+def _gm1_combat_context_profile():
+    return h3_save_parser.HeroCombatContextProfile(
+        source=h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
+        xor_key=h3_save_parser.HERO_COMBAT_SUPPORTED_XOR_KEY,
+        secondary_count_mode=h3_save_parser.HERO_COMBAT_SECONDARY_COUNT_MODE_EXPLICIT,
+    )
+
+
 def _xor_encode(raw: bytes, key=h3_save_parser.HERO_ARMY_XOR_KEY) -> bytes:
     return bytes(byte ^ key for byte in raw)
 
@@ -2761,8 +2769,7 @@ class H3SaveParserContractTests(unittest.TestCase):
                     data,
                     name_offset,
                     key=0x00,
-                    combat_context_supported=True,
-                    combat_context_source=h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
+                    combat_context_profile=_gm1_combat_context_profile(),
                     hero_skill_id_by_index=skill_id_by_index,
                 )
 
@@ -2790,7 +2797,6 @@ class H3SaveParserContractTests(unittest.TestCase):
             data,
             name_offset,
             key=0x00,
-            combat_context_supported=True,
         )
 
         self.assertIsNotNone(hero)
@@ -2802,10 +2808,115 @@ class H3SaveParserContractTests(unittest.TestCase):
         self.assertIsNone(hero.primary_skills)
         self.assertEqual(hero.secondary_skills, ())
 
-    def test_gm2_primary_combat_context_is_unavailable(self):
+    def test_gm2_offset65_xor01_reads_primary_and_secondary_combat_context(self):
+        secondary_skills = (
+            (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 2),
+            (HERO_COMBAT_ARMORER_INDEX, HERO_COMBAT_LEVEL_ADVANCED, 3),
+            (HERO_COMBAT_ARCHERY_INDEX, HERO_COMBAT_LEVEL_BASIC, 1),
+        )
         data, _ = _build_hero_combat_fixture(
             primary_skills=(8, 6, 4, 5),
+            secondary_skills=secondary_skills,
+            secondary_count=0,
+            xor_key=h3_save_parser.HERO_ARMY_XOR_KEY,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "001.GM2"
+            _write_gzip_save(save_path, b"x" * 65 + data)
+
+            hero = h3_save_parser.load_hero_armies_from_save(save_path)[0]
+
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
+        )
+        self.assertIsNone(hero.combat_context.reason)
+        self.assertEqual(
+            hero.primary_skills,
+            h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
+        )
+        self.assertEqual(
+            hero.secondary_skills,
+            (
+                hero_skill_recommender.CurrentSkill("archery", "basic"),
+                hero_skill_recommender.CurrentSkill("offence", "expert"),
+                hero_skill_recommender.CurrentSkill("armorer", "advanced"),
+            ),
+        )
+        self.assertEqual(
+            h3_save_parser.hero_combat_passive_modifiers(hero.combat_context),
+            {
+                "offence_melee_pct": 30,
+                "armorer_all_pct": 10,
+                "archery_ranged_pct": 10,
+            },
+        )
+
+    def test_gm2_offset65_secondary_failure_keeps_primary_only_context(self):
+        data, _ = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            secondary_count=0,
+            secondary_skills=(
+                (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 3),
+            ),
+            xor_key=h3_save_parser.HERO_ARMY_XOR_KEY,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "001.GM2"
+            _write_gzip_save(save_path, b"x" * 65 + data)
+
+            hero = h3_save_parser.load_hero_armies_from_save(save_path)[0]
+
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_ONLY,
+        )
+        self.assertEqual(
+            hero.primary_skills,
+            h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
+        )
+        self.assertEqual(hero.secondary_skills, ())
+        self.assertEqual(
+            hero.combat_context.reason,
+            h3_save_parser.HERO_COMBAT_REASON_INVALID_SECONDARY_SLOT,
+        )
+
+    def test_gm2_offset65_raw_hero_combat_context_is_unavailable(self):
+        data, _ = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            secondary_skills=(
+                (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+            ),
             xor_key=0x00,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "001.GM2"
+            _write_gzip_save(save_path, b"x" * 65 + data)
+
+            hero = h3_save_parser.load_hero_armies_from_save(save_path)[0]
+
+        self.assertEqual(hero.hero_name, "Isra")
+        self.assertIsNone(hero.primary_skills)
+        self.assertEqual(
+            hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_UNAVAILABLE,
+        )
+        self.assertEqual(
+            hero.combat_context.reason,
+            h3_save_parser.HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE,
+        )
+
+    def test_gm2_without_offset65_combat_context_is_unavailable(self):
+        data, _ = _build_hero_combat_fixture(
+            primary_skills=(8, 6, 4, 5),
+            secondary_skills=(
+                (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+            ),
+            xor_key=h3_save_parser.HERO_ARMY_XOR_KEY,
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:

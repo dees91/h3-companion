@@ -103,8 +103,15 @@ HERO_STRUCT_POSITION_FROM_NAME_OFFSET = -194
 HERO_POSITION_SIZE = 5
 MAX_HERO_POSITION_COORD = 255
 MAX_HERO_POSITION_LEVEL = 1
-HERO_COMBAT_SUPPORTED_SAVE_EXTENSION = ".GM1"
+HERO_COMBAT_GM1_SAVE_EXTENSION = ".GM1"
+HERO_COMBAT_GM2_SAVE_EXTENSION = ".GM2"
+HERO_COMBAT_GM1_H3SVG_OFFSET = 0
+HERO_COMBAT_GM2_H3SVG_OFFSET = 65
+HERO_COMBAT_SUPPORTED_SAVE_EXTENSION = HERO_COMBAT_GM1_SAVE_EXTENSION
 HERO_COMBAT_SUPPORTED_XOR_KEY = 0x00
+HERO_COMBAT_GM2_XOR_KEY = HERO_ARMY_XOR_KEY
+HERO_COMBAT_SECONDARY_COUNT_MODE_EXPLICIT = "explicit"
+HERO_COMBAT_SECONDARY_COUNT_MODE_DERIVED = "derived"
 HERO_COMBAT_SECONDARY_COUNT_FROM_NAME_OFFSET = -126
 HERO_COMBAT_SECONDARY_LEVELS_FROM_NAME_OFFSET = 13
 HERO_COMBAT_SECONDARY_SLOTS_FROM_NAME_OFFSET = 41
@@ -247,6 +254,27 @@ class LoadedSave:
     path: Path
     data: bytes
     h3svg_offset: int
+
+
+@dataclass(frozen=True)
+class HeroCombatContextProfile:
+    """Save-level hero combat context layout accepted by the parser."""
+
+    source: str
+    xor_key: int
+    secondary_count_mode: str
+
+    def __post_init__(self) -> None:
+        if self.source != HERO_COMBAT_SOURCE_SAVE:
+            raise ValueError(f"unknown hero combat context source: {self.source!r}")
+        if self.secondary_count_mode not in (
+            HERO_COMBAT_SECONDARY_COUNT_MODE_EXPLICIT,
+            HERO_COMBAT_SECONDARY_COUNT_MODE_DERIVED,
+        ):
+            raise ValueError(
+                "unknown hero combat secondary count mode: "
+                f"{self.secondary_count_mode!r}"
+            )
 
 
 @dataclass(frozen=True)
@@ -1016,31 +1044,48 @@ def load_hero_armies_from_save(path: str | Path) -> tuple[HeroArmy, ...]:
 def scan_hero_armies_from_loaded_save(loaded_save: LoadedSave) -> tuple[HeroArmy, ...]:
     """Scan a loaded save with save-level context for bounded hero combat fields."""
 
-    combat_context_supported = _loaded_save_supports_hero_combat_context(
+    combat_context_profile = _loaded_save_hero_combat_context_profile(
         loaded_save,
     )
     return scan_xor01_hero_armies(
         loaded_save.data,
-        combat_context_supported=combat_context_supported,
-        combat_context_source=(
-            HERO_COMBAT_SOURCE_SAVE
-            if combat_context_supported
-            else None
-        ),
+        combat_context_profile=combat_context_profile,
         hero_skill_id_by_index=(
             _hero_skill_id_by_index()
-            if combat_context_supported
+            if combat_context_profile is not None
             else None
         ),
     )
 
 
 def _loaded_save_supports_hero_combat_context(loaded_save: LoadedSave) -> bool:
-    return (
-        loaded_save.path.suffix.upper() == HERO_COMBAT_SUPPORTED_SAVE_EXTENSION
-        and loaded_save.h3svg_offset == 0
+    return _loaded_save_hero_combat_context_profile(loaded_save) is not None
+
+
+def _loaded_save_hero_combat_context_profile(
+    loaded_save: LoadedSave,
+) -> HeroCombatContextProfile | None:
+    suffix = loaded_save.path.suffix.upper()
+    if (
+        suffix == HERO_COMBAT_GM1_SAVE_EXTENSION
+        and loaded_save.h3svg_offset == HERO_COMBAT_GM1_H3SVG_OFFSET
         and loaded_save.data.startswith(H3SVG_SIGNATURE)
-    )
+    ):
+        return HeroCombatContextProfile(
+            source=HERO_COMBAT_SOURCE_SAVE,
+            xor_key=HERO_COMBAT_SUPPORTED_XOR_KEY,
+            secondary_count_mode=HERO_COMBAT_SECONDARY_COUNT_MODE_EXPLICIT,
+        )
+    if (
+        suffix == HERO_COMBAT_GM2_SAVE_EXTENSION
+        and loaded_save.h3svg_offset == HERO_COMBAT_GM2_H3SVG_OFFSET
+    ):
+        return HeroCombatContextProfile(
+            source=HERO_COMBAT_SOURCE_SAVE,
+            xor_key=HERO_COMBAT_GM2_XOR_KEY,
+            secondary_count_mode=HERO_COMBAT_SECONDARY_COUNT_MODE_DERIVED,
+        )
+    return None
 
 
 def load_removed_neutral_records_from_save(
@@ -1924,16 +1969,11 @@ def decode_hero_secondary_skills(
     name_offset: int,
     key: int = HERO_COMBAT_SUPPORTED_XOR_KEY,
     skill_id_by_index: dict[int, str] | None = None,
+    count_mode: str = HERO_COMBAT_SECONDARY_COUNT_MODE_EXPLICIT,
 ) -> tuple["CurrentSkill", ...]:
     """Decode validated current secondary skills from a hero record."""
 
     try:
-        count = xor_decode_bytes(
-            data,
-            name_offset + HERO_COMBAT_SECONDARY_COUNT_FROM_NAME_OFFSET,
-            1,
-            key,
-        )[0]
         levels = xor_decode_bytes(
             data,
             name_offset + HERO_COMBAT_SECONDARY_LEVELS_FROM_NAME_OFFSET,
@@ -1951,6 +1991,25 @@ def decode_hero_secondary_skills(
             HERO_COMBAT_REASON_TRUNCATED_SECONDARY
         ) from exc
 
+    if count_mode == HERO_COMBAT_SECONDARY_COUNT_MODE_EXPLICIT:
+        try:
+            count = xor_decode_bytes(
+                data,
+                name_offset + HERO_COMBAT_SECONDARY_COUNT_FROM_NAME_OFFSET,
+                1,
+                key,
+            )[0]
+        except ValueError as exc:
+            raise HeroSecondarySkillDecodeError(
+                HERO_COMBAT_REASON_TRUNCATED_SECONDARY
+            ) from exc
+    elif count_mode == HERO_COMBAT_SECONDARY_COUNT_MODE_DERIVED:
+        count = _derived_hero_secondary_skill_count(levels, slots)
+    else:
+        raise HeroSecondarySkillDecodeError(
+            HERO_COMBAT_REASON_UNSUPPORTED_SAVE_STRUCTURE
+        )
+
     skill_id_by_index = (
         _hero_skill_id_by_index()
         if skill_id_by_index is None
@@ -1961,6 +2020,14 @@ def decode_hero_secondary_skills(
         levels,
         slots,
         skill_id_by_index,
+    )
+
+
+def _derived_hero_secondary_skill_count(levels: bytes, slots: bytes) -> int:
+    return sum(
+        1
+        for level_id, slot in zip(levels, slots)
+        if level_id != 0 or slot != 0
     )
 
 
@@ -2087,15 +2154,13 @@ def _hero_combat_context_for_record(
     data: bytes,
     name_offset: int,
     key: int,
-    combat_context_supported: bool,
-    combat_context_source: str | None,
+    combat_context_profile: HeroCombatContextProfile | None,
     hero_skill_id_by_index: dict[int, str] | None,
 ) -> HeroCombatContext:
     if (
-        not combat_context_supported
-        or combat_context_source != HERO_COMBAT_SOURCE_SAVE
-        or key != HERO_COMBAT_SUPPORTED_XOR_KEY
-        or not data.startswith(H3SVG_SIGNATURE)
+        combat_context_profile is None
+        or combat_context_profile.source != HERO_COMBAT_SOURCE_SAVE
+        or key != combat_context_profile.xor_key
     ):
         return HeroCombatContext()
 
@@ -2111,17 +2176,18 @@ def _hero_combat_context_for_record(
             name_offset,
             key,
             hero_skill_id_by_index,
+            combat_context_profile.secondary_count_mode,
         )
     except HeroSecondarySkillDecodeError as exc:
         return HeroCombatContext(
             status=HERO_COMBAT_STATUS_PRIMARY_ONLY,
-            source=combat_context_source,
+            source=combat_context_profile.source,
             primary_skills=primary_skills,
             reason=exc.reason,
         )
     return HeroCombatContext(
         status=HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
-        source=combat_context_source,
+        source=combat_context_profile.source,
         primary_skills=primary_skills,
         secondary_skills=secondary_skills,
         reason=None,
@@ -2133,8 +2199,7 @@ def parse_hero_at(
     name_offset: int,
     key: int = HERO_ARMY_XOR_KEY,
     *,
-    combat_context_supported: bool = False,
-    combat_context_source: str | None = None,
+    combat_context_profile: HeroCombatContextProfile | None = None,
     hero_skill_id_by_index: dict[int, str] | None = None,
 ) -> HeroArmy | None:
     """Parse one hero-army candidate by hero-name offset and XOR key."""
@@ -2184,8 +2249,7 @@ def parse_hero_at(
             data,
             name_offset,
             key,
-            combat_context_supported,
-            combat_context_source,
+            combat_context_profile,
             hero_skill_id_by_index,
         ),
     )
@@ -2195,8 +2259,7 @@ def parse_xor01_hero_at(
     data: bytes,
     name_offset: int,
     *,
-    combat_context_supported: bool = False,
-    combat_context_source: str | None = None,
+    combat_context_profile: HeroCombatContextProfile | None = None,
     hero_skill_id_by_index: dict[int, str] | None = None,
 ) -> HeroArmy | None:
     """Parse one XOR 0x01 hero-army candidate by hero-name offset."""
@@ -2205,8 +2268,7 @@ def parse_xor01_hero_at(
         data,
         name_offset,
         HERO_ARMY_XOR_KEY,
-        combat_context_supported=combat_context_supported,
-        combat_context_source=combat_context_source,
+        combat_context_profile=combat_context_profile,
         hero_skill_id_by_index=hero_skill_id_by_index,
     )
 
@@ -2214,8 +2276,7 @@ def parse_xor01_hero_at(
 def scan_xor01_hero_armies(
     data: bytes,
     *,
-    combat_context_supported: bool = False,
-    combat_context_source: str | None = None,
+    combat_context_profile: HeroCombatContextProfile | None = None,
     hero_skill_id_by_index: dict[int, str] | None = None,
 ) -> tuple[HeroArmy, ...]:
     """Scan decompressed save bytes for encoded and hotseat hero armies."""
@@ -2231,8 +2292,7 @@ def scan_xor01_hero_armies(
                 data,
                 name_offset,
                 key,
-                combat_context_supported=combat_context_supported,
-                combat_context_source=combat_context_source,
+                combat_context_profile=combat_context_profile,
                 hero_skill_id_by_index=hero_skill_id_by_index,
             )
             if hero_army is not None:
