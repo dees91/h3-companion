@@ -742,7 +742,25 @@ transport, and context cache behavior.
 
 **Completion Notes:**
 
-- Fill in after implementation.
+- Added a real-SDK synthetic MCP end-to-end smoke test that uses
+  `AdvisorContextService` with temporary synthetic save/map/config fixtures and
+  calls every public MCP tool through an in-memory MCP client:
+  `refresh_context`, `list_colors`, `get_advisor_context`, `scan_nearby`,
+  `estimate_battle`, `find_route`, `explain_portal`, and `get_alerts`.
+- The synthetic SDK smoke is skipped by the normal Python 3.8 suite unless
+  Python `>=3.10` and the official `mcp` SDK are available; fake-SDK tests keep
+  the standard suite SDK-free.
+- Local real-save/map MCP smoke was run with the current follow-latest config
+  through the in-memory MCP server. Anonymized result: `load=ok`,
+  `mode=follow_latest`, `tool_count=8`, `hero_count=12`, `neutral_target_count=377`,
+  `town_count=24`, `portal_count=46`, `active_color_count=4`,
+  `configured_color_available=false`, selected fallback color available, and
+  tool statuses `refresh_context=ok`, `list_colors=ok`,
+  `get_advisor_context=color`, `get_alerts=no_threats`.
+- No real saves, maps, MCP client configs, absolute private paths, save/map
+  names, hero names, raw MCP payloads, API keys, or transcripts were added.
+- Updated `CHANGELOG.md` for the optional MCP strategic advisor workflow and
+  the Python `>=3.10` plus optional `mcp` SDK startup requirement.
 
 ---
 
@@ -771,11 +789,11 @@ transport, and context cache behavior.
 
 ### Checkpoint: Complete
 
-- [ ] T08 and T09 are `done`.
-- [ ] Full Python suite passes.
+- [x] T08 and T09 are `done`.
+- [x] Full Python suite passes.
 - [x] Runbook is linked from README and AGENTS.
-- [ ] Real save/map smoke notes are anonymized.
-- [ ] No MCP client config, API keys, real saves, or real maps are staged.
+- [x] Real save/map smoke notes are anonymized.
+- [x] No MCP client config, API keys, real saves, or real maps are staged.
 
 ## Risks And Mitigations
 
@@ -811,4 +829,4 @@ transport, and context cache behavior.
 | T06 | Alerts And Color Scope Tools | done | T03 | compute-tools | Parallel | S | Core/Test | advisor module, MCP tests |
 | T07 | MCP Server Entry Point | done | T03, T04, T05, T06 | interface | Main | M | CLI/Integration/Test | `tools/battle_estimator_mcp.py`, MCP tests |
 | T08 | Runbook And Client Setup Docs | done | T07 | docs | Main | S | Docs | `docs/mcp-strategic-advisor-runbook.md`, `README.md`, `AGENTS.md` |
-| T09 | End-To-End MCP Verification | todo | T07, T08 | quality | Main | M | Test/Docs | MCP tests, `CHANGELOG.md`, planning doc |
+| T09 | End-To-End MCP Verification | done | T07, T08 | quality | Main | M | Test/Docs | MCP tests, `CHANGELOG.md`, planning doc |

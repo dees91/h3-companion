@@ -25,6 +25,9 @@ defined in [docs/release-policy.md](docs/release-policy.md).
   offset-65/XOR-`0x01` GM2 profile, exposing current primary and secondary
   skills in hero snapshots plus applied passive combat modifiers and per-side
   model labels in estimate payloads, CLI output, and the GUI estimate panel.
+- Optional local MCP strategic advisor server for MCP-capable clients, exposing
+  read-only advisor context, color/team discovery, nearby scan, battle estimate,
+  route, portal explanation, and town-alert tools.
 
 ### Changed
 
@@ -57,6 +60,9 @@ defined in [docs/release-policy.md](docs/release-policy.md).
   omitted components. Artifacts, active spells, morale/luck, and tactics are
   visible as omitted model components; terrain, specialties, and many creature
   special abilities remain simplified or unmodeled.
+- The optional MCP strategic advisor server requires Python `>=3.10` plus the
+  official `mcp` Python SDK at server startup. Normal GUI, CLI, and standard
+  unit-test workflows do not require the SDK.
 
 ## [0.1.0] - 2026-05-21
 

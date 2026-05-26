@@ -28,7 +28,10 @@ from tests.test_battle_estimator_gui import (
     _write_multi_gui_save,
 )
 from tests.test_h3_map_parser import (
+    _base_string,
+    _build_minimal_h3m_header,
     _build_minimal_sod_h3m_with_teams,
+    _enabled_sod_player,
     _minimal_h3m_with_templates_and_objects,
     _monster_payload,
     _object_bytes,
@@ -416,6 +419,119 @@ class AdvisorMcpSdkSmokeTests(unittest.TestCase):
             service.calls[-1],
             ("list_colors", (), {"refresh": False}),
         )
+
+    @unittest.skipIf(
+        sys.version_info < battle_estimator_mcp.MCP_MIN_PYTHON_VERSION,
+        "MCP SDK requires Python >=3.10",
+    )
+    def test_mcp_sdk_e2e_smoke_with_synthetic_context(self):
+        try:
+            from mcp.shared.memory import create_connected_server_and_client_session
+        except ImportError as exc:
+            self.skipTest(f"MCP SDK unavailable: {exc}")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = _advisor_e2e_service(Path(temp_dir))
+            server = battle_estimator_mcp.create_mcp_server(service)
+
+            async def run_smoke():
+                async with create_connected_server_and_client_session(
+                    server,
+                    raise_exceptions=True,
+                ) as session:
+                    listed = await session.list_tools()
+                    self.assertEqual(
+                        {tool.name for tool in listed.tools},
+                        set(battle_estimator_mcp.MCP_TOOL_NAMES),
+                    )
+
+                    refresh = await _mcp_call_ok(session, "refresh_context")
+                    self.assertEqual(refresh["hero_count"], 2)
+                    self.assertEqual(refresh["neutral_target_count"], 1)
+                    self.assertEqual(refresh["town_count"], 1)
+                    self.assertEqual(refresh["portal_count"], 3)
+
+                    colors = await _mcp_call_ok(
+                        session,
+                        "list_colors",
+                        {"refresh": False},
+                    )
+                    self.assertTrue(colors["configured_my_color_available"])
+                    self.assertEqual(len(colors["active_colors"]), 4)
+
+                    context = await _mcp_call_ok(
+                        session,
+                        "get_advisor_context",
+                        {"color_id": 0, "scope": "color", "refresh": False},
+                    )
+                    self.assertEqual(context["subject"]["color_name"], "red")
+                    self.assertEqual(context["heroes"]["own"]["total_count"], 1)
+                    self.assertEqual(context["heroes"]["enemy"]["total_count"], 1)
+
+                    scan = await _mcp_call_ok(
+                        session,
+                        "scan_nearby",
+                        {
+                            "hero_id": "hero:256",
+                            "radius": 3,
+                            "simulations": 1,
+                            "refresh": False,
+                        },
+                    )
+                    self.assertEqual(scan["result_count"], 2)
+                    self.assertIn(
+                        "neutral:0",
+                        {item["target_id"] for item in scan["results"]},
+                    )
+
+                    estimate = await _mcp_call_ok(
+                        session,
+                        "estimate_battle",
+                        {
+                            "hero_id": "hero:256",
+                            "target_id": "hero:512",
+                            "simulations": 1,
+                            "refresh": False,
+                        },
+                    )
+                    self.assertEqual(estimate["estimate"]["target_type"], "hero")
+
+                    route = await _mcp_call_ok(
+                        session,
+                        "find_route",
+                        {
+                            "hero_id": "hero:256",
+                            "target_id": "portal:4",
+                            "refresh": False,
+                        },
+                    )
+                    self.assertEqual(route["target_id"], "portal:4")
+                    self.assertIn("status", route)
+                    self.assertIn("fallback_status", route)
+
+                    portal = await _mcp_call_ok(
+                        session,
+                        "explain_portal",
+                        {"portal_id": "portal:2", "refresh": False},
+                    )
+                    self.assertTrue(portal["is_non_deterministic"])
+                    self.assertEqual(portal["destination_count"], 2)
+
+                    alerts = await _mcp_call_ok(
+                        session,
+                        "get_alerts",
+                        {"color_id": 0, "refresh": False},
+                    )
+                    self.assertIn(
+                        alerts["alerts"]["status"],
+                        {
+                            battle_estimator_gui.CASTLE_ALERT_STATUS_OK,
+                            battle_estimator_gui.CASTLE_ALERT_STATUS_OWNERSHIP_UNAVAILABLE,
+                        },
+                    )
+                    self.assertIn("town_ownership", alerts)
+
+            asyncio.run(run_smoke())
 
 
 class AdvisorContextBuilderTests(unittest.TestCase):
@@ -1398,6 +1514,60 @@ def _advisor_route_service(
     )
 
 
+async def _mcp_call_ok(session, tool_name: str, arguments=None):
+    result = await session.call_tool(tool_name, arguments or {})
+    if result.isError:
+        self_text = getattr(result, "content", None)
+        raise AssertionError(f"{tool_name} returned MCP error: {self_text!r}")
+    structured_content = getattr(result, "structuredContent", None)
+    if structured_content is not None:
+        return structured_content
+    for content in result.content:
+        if getattr(content, "type", None) == "text":
+            return json.loads(content.text)
+    raise AssertionError(f"{tool_name} returned no structured/text content")
+
+
+def _advisor_e2e_service(temp_path: Path) -> battle_estimator_mcp.AdvisorContextService:
+    game_dir = temp_path / "game"
+    game_dir.mkdir()
+    _write_multi_gui_save(
+        game_dir,
+        "001.GM2",
+        (
+            {
+                "hero_name": "Redmain",
+                "name_offset": 256,
+                "position": (0, 0, 0),
+                "owner_color_id": 0,
+            },
+            {
+                "hero_name": "Enemy",
+                "name_offset": 512,
+                "position": (1, 2, 0),
+                "owner_color_id": 2,
+            },
+        ),
+        town_state_records=(
+            _gui_town_state_record_bytes(owner_color_id=0),
+        ),
+    )
+    map_path = _write_e2e_h3m(temp_path / "e2e.h3m")
+    config_path = temp_path / "config.json"
+    config_path.write_text(
+        json.dumps({
+            "my_color_id": 0,
+            "alert_radius": 3,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    return battle_estimator_mcp.AdvisorContextService(
+        game_dir=game_dir,
+        map_file=map_path,
+        config_path=config_path,
+    )
+
+
 def _write_route_neutral_h3m(path: Path) -> Path:
     payload = _minimal_h3m_with_templates_and_objects(
         h3_map_parser.H3M_FORMAT_SOD,
@@ -1417,6 +1587,92 @@ def _write_route_neutral_h3m(path: Path) -> Path:
         ),
         map_size=3,
     )
+    path.write_bytes(gzip.compress(payload))
+    return path
+
+
+def _write_e2e_h3m(path: Path) -> Path:
+    visit_mask = bytes((0x01, 0x00, 0x00, 0x00, 0x00, 0x40))
+    map_size = 3
+    levels = 2
+    header = b"".join((
+        _build_minimal_h3m_header(map_size=map_size, levels=levels),
+        _base_string("Synthetic MCP E2E"),
+        _base_string(""),
+        b"\x00",  # difficulty
+        b"\x00",  # level limit
+    ))
+    players = b"".join((
+        _enabled_sod_player((0, 1, 0)),
+        _enabled_sod_player((1, 1, 0)),
+        _enabled_sod_player((2, 1, 0)),
+        _enabled_sod_player((2, 2, 0)),
+        (b"\x00\x00" + (b"\x00" * 13)) * 4,
+    ))
+    base_without_objects = b"".join((
+        header,
+        players,
+        b"\xff",  # standard victory
+        b"\xff",  # standard loss
+        b"\x08",  # team assignments present
+        bytes([0, 0, 1, 1, 4, 5, 6, 7]),
+        b"\x00" * 20,  # allowed heroes
+        (0).to_bytes(4, "little"),  # placeholder heroes
+        b"\x00",  # disposed heroes
+        b"\x00" * 31,  # map options
+        b"\x00" * 18,  # allowed artifacts
+        b"\x00" * 9,  # allowed spells
+        b"\x00" * 4,  # allowed skills
+        (0).to_bytes(4, "little"),  # rumors
+        b"\x00" * 156,  # predefined heroes
+        b"\x00" * (map_size * map_size * levels * 7),
+    ))
+    templates = (
+        _object_template_bytes(
+            "AVWgnll0.def",
+            h3_map_parser.H3M_OBJECT_MONSTER,
+            subid=98,
+        ),
+        _object_template_bytes(
+            "AVCcasx0.def",
+            h3_map_parser.H3M_OBJECT_TOWN,
+            subid=3,
+            visit_mask=visit_mask,
+        ),
+        _object_template_bytes(
+            "AVXmn1e.def",
+            h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_ENTRANCE,
+            subid=4,
+        ),
+        _object_template_bytes(
+            "AVXmn1x.def",
+            h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+            subid=4,
+        ),
+        _object_template_bytes(
+            "AVXmn1x.def",
+            h3_map_parser.H3M_OBJECT_MONOLITH_ONE_WAY_EXIT,
+            subid=4,
+        ),
+    )
+    objects = (
+        _object_bytes((2, 0, 0), 0, _monster_payload(count=37)),
+        _object_bytes(
+            (1, 1, 0),
+            1,
+            _town_payload(owner=0, custom_name="Red Keep", has_garrison=True),
+        ),
+        _object_bytes((0, 0, 0), 2, b""),
+        _object_bytes((2, 0, 0), 3, b""),
+        _object_bytes((2, 0, 1), 4, b""),
+    )
+    payload = b"".join((
+        base_without_objects,
+        len(templates).to_bytes(4, "little"),
+        b"".join(templates),
+        len(objects).to_bytes(4, "little"),
+        b"".join(objects),
+    ))
     path.write_bytes(gzip.compress(payload))
     return path
 
