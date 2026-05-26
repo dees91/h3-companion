@@ -1940,7 +1940,7 @@ focused tests, completion notes, and an atomic commit before the next task.
 |---|---|---|---|
 | D01 | Direct Town-State Parser + Contract Tests | done | Added exact save-town-state ownership parsing in `h3_save_parser`, including owner `0..7`, neutral `0xff`, duplicate/invalid record diagnostics, proxy fallback when no direct record exists, and focused synthetic parser coverage. Local verification against the observed Diamond save resolved 24/24 towns as `exact`. |
 | D02 | Backend Snapshot And Castle Alerts | done | Switched GUI domain snapshots to `detect_current_town_ownership()` so `/api/state` uses exact save-town-state ownership with proxy fallback, updated castle alerts to accept `exact` and `proxy`, and added GUI/backend tests for exact owners, neutral exact towns, exact-vs-proxy conflicts, and alert behavior. |
-| D03 | Frontend Current Owner Rendering | pending | -- |
+| D03 | Frontend Current Owner Rendering | done | Updated town markers to carry current ownership metadata, render exact/proxy current owners before initial owners in summaries/details, color town bodies by current owner, and render exact neutral current ownership with the unowned style. |
 | D04 | Documentation And Final Notes | pending | -- |
 
 ## Summary Table

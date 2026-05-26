@@ -1389,6 +1389,11 @@ const markerSnapshot = {{
       faction_subid: 3,
       initial_owner: 0,
       initial_owner_color_name: "red",
+      current_owner_color_id: 3,
+      current_owner_color_name: "green",
+      ownership_status: "exact",
+      ownership_source: "save_town_state_record",
+      ownership_confidence: "exact",
       custom_name: "Castle Keep",
       has_garrison: true
     }},
@@ -1402,19 +1407,29 @@ const markerSnapshot = {{
       faction_subid: null,
       initial_owner: null,
       initial_owner_color_name: null,
+      current_owner_color_id: null,
+      current_owner_color_name: null,
+      ownership_status: "ownership_unavailable",
+      ownership_source: null,
+      ownership_confidence: "ownership_unavailable",
       custom_name: null,
       has_garrison: false
     }},
     {{
       id: "town:1",
       object_index: 1,
-      position: {{ x: 3, y: 0, z: 1 }},
-      anchor_position: {{ x: 3, y: 0, z: 1 }},
+      position: {{ x: 3, y: 0, z: 0 }},
+      anchor_position: {{ x: 3, y: 0, z: 0 }},
       object_id: 98,
       h3m_subid: 5,
       faction_subid: 5,
-      initial_owner: 2,
-      initial_owner_color_name: "tan",
+      initial_owner: 0,
+      initial_owner_color_name: "red",
+      current_owner_color_id: null,
+      current_owner_color_name: null,
+      ownership_status: "exact",
+      ownership_source: "save_town_state_record",
+      ownership_confidence: "exact",
       custom_name: "",
       has_garrison: false
     }}
@@ -1611,6 +1626,7 @@ assert.deepStrictEqual(level0Markers.map((marker) => marker.id), [
   "neutral:0",
   "town:0",
   "town:random",
+  "town:1",
   "portal:100",
   "portal:110",
   "portal:120",
@@ -1620,10 +1636,28 @@ const townMarker = level0Markers.find((marker) => marker.id === "town:0");
 assert.strictEqual(townMarker.type, "town");
 assert.strictEqual(townMarker.label, "Castle Keep");
 assert.strictEqual(townMarker.initialOwnerColorName, "red");
+assert.strictEqual(townMarker.currentOwnerColorName, "green");
+assert.strictEqual(townMarker.ownershipStatus, "exact");
+assert.strictEqual(townMarker.ownershipSource, "save_town_state_record");
+assert.strictEqual(townMarker.ownershipConfidence, "exact");
+const currentOwnerTownTooltip = helpers.markerTooltipText(townMarker);
+assert.ok(currentOwnerTownTooltip.includes("Current owner: Green"));
+assert.ok(currentOwnerTownTooltip.includes("Initial owner: Red"));
+assert.ok(
+  currentOwnerTownTooltip.indexOf("Current owner: Green")
+  < currentOwnerTownTooltip.indexOf("Initial owner: Red")
+);
 const randomTown = level0Markers.find((marker) => marker.id === "town:random");
 assert.strictEqual(randomTown.label, "Random town");
 assert.ok(helpers.markerTooltipText(randomTown).includes("Random town subid: 99"));
 assert.ok(!helpers.markerTooltipText(randomTown).includes("null"));
+assert.ok(!helpers.markerTooltipText(randomTown).includes("Current owner"));
+const neutralCurrentTown = level0Markers.find((marker) => marker.id === "town:1");
+assert.strictEqual(neutralCurrentTown.currentOwnerColorName, null);
+assert.strictEqual(neutralCurrentTown.initialOwnerColorName, "red");
+assert.strictEqual(neutralCurrentTown.ownershipStatus, "exact");
+assert.ok(helpers.markerTooltipText(neutralCurrentTown).includes("Current owner: none"));
+assert.ok(helpers.markerTooltipText(neutralCurrentTown).includes("Initial owner: Red"));
 const portalMarker = level0Markers.find((marker) => marker.id === "portal:100");
 assert.strictEqual(portalMarker.type, "portal");
 assert.strictEqual(portalMarker.label, "One-way monolith entrance");
@@ -1724,13 +1758,14 @@ assert.strictEqual(helpers.routeStyleForChar("X"), null);
 const level0WithRemoved = helpers.buildMarkerCache(markerSnapshot, 10, 0, true);
 assert.deepStrictEqual(
   level0WithRemoved.map((marker) => marker.id),
-  ["neutral:0", "neutral:removed", "town:0", "town:random", "portal:100", "portal:110", "portal:120", "hero:0"]
+  ["neutral:0", "neutral:removed", "town:0", "town:random", "town:1", "portal:100", "portal:110", "portal:120", "hero:0"]
 );
 assert.strictEqual(level0WithRemoved.find((marker) => marker.id === "neutral:removed").removed, true);
 const level0HeroesOnly = helpers.buildMarkerCache(markerSnapshot, 10, 0, false, false, "heroes");
 assert.deepStrictEqual(level0HeroesOnly.map((marker) => marker.id), [
   "town:0",
   "town:random",
+  "town:1",
   "portal:100",
   "portal:110",
   "portal:120",
@@ -1741,6 +1776,7 @@ assert.deepStrictEqual(level0MonstersOnly.map((marker) => marker.id), [
   "neutral:0",
   "town:0",
   "town:random",
+  "town:1",
   "portal:100",
   "portal:110",
   "portal:120"
@@ -1773,13 +1809,11 @@ assert.ok(!helpers.buildMarkerCache(hiddenHeroSnapshot, 10, 0, false, true, "mon
 const level1Markers = helpers.buildMarkerCache(markerSnapshot, 10, 1, false);
 assert.deepStrictEqual(level1Markers.map((marker) => marker.id), [
   "neutral:1",
-  "town:1",
   "portal:101",
   "portal:102",
   "portal:111",
   "hero:1"
 ]);
-assert.strictEqual(level1Markers.find((marker) => marker.id === "town:1").label, "Dungeon town");
 const overlapSnapshot = {{
   map: {{ width: 4, height: 4, levels: 1 }},
   selected_hero_id: "hero:0",
@@ -2058,6 +2092,18 @@ const townFillsAfterRender = drawOperations.filter((operation) => (
   operation.op === "fillRect" && townFillStyles.has(operation.fillStyle)
 ));
 assert.ok(townFillsAfterRender.length >= 1);
+const currentOwnerTownBodyFillsAfterRender = drawOperations.filter((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#2f8f46"
+));
+assert.ok(currentOwnerTownBodyFillsAfterRender.length >= 1);
+const initialOwnerTownBodyFillsAfterRender = drawOperations.filter((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#e11d2e"
+));
+assert.strictEqual(initialOwnerTownBodyFillsAfterRender.length, 0);
+const exactNeutralTownBodyFillsAfterRender = drawOperations.filter((operation) => (
+  operation.op === "fillRect" && operation.fillStyle === "#f4e7c4"
+));
+assert.ok(exactNeutralTownBodyFillsAfterRender.length >= 1);
 const portalFillsAfterRender = drawOperations.filter((operation) => (
   operation.op === "fillRect" && portalFillStyles.has(operation.fillStyle)
 ));
@@ -3876,7 +3922,12 @@ elements["battle-map"].dispatch("pointerup", {{
 }});
 assert.strictEqual(fetchCalls, fetchCallsBeforeTownClick);
 assert.ok(targetStateText().includes("town town:0"));
+assert.ok(targetStateText().includes("Current owner: Green"));
 assert.ok(targetStateText().includes("Initial owner: Red"));
+assert.ok(
+  targetStateText().indexOf("Current owner: Green")
+  < targetStateText().indexOf("Initial owner: Red")
+);
 assert.ok(elements["estimate-state"].textContent.includes("Town target"));
 const renderedNeutral = renderedView.markers.find((marker) => marker.id === "neutral:0");
 const renderedNeutralScreen = helpers.worldToScreen(renderedNeutral.world, renderedView);

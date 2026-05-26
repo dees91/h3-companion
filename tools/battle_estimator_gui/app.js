@@ -594,6 +594,24 @@
     return "Initial owner: none";
   }
 
+  function townHasCurrentOwner(marker) {
+    return Boolean(
+      marker
+      && marker.type === "town"
+      && (marker.ownershipStatus === "exact" || marker.ownershipStatus === "proxy")
+    );
+  }
+
+  function townCurrentOwnerText(marker) {
+    if (!townHasCurrentOwner(marker)) {
+      return "";
+    }
+    if (marker.currentOwnerColorName) {
+      return `Current owner: ${titleCase(marker.currentOwnerColorName)}`;
+    }
+    return "Current owner: none";
+  }
+
   function townGarrisonText(marker) {
     if (!marker || marker.type !== "town") {
       return "";
@@ -604,6 +622,7 @@
   function townSummaryParts(marker) {
     return [
       townFactionText(marker),
+      townCurrentOwnerText(marker),
       townInitialOwnerText(marker),
       townGarrisonText(marker)
     ].filter(Boolean);
@@ -1386,6 +1405,11 @@
           factionSubid: town.faction_subid,
           initialOwner: town.initial_owner,
           initialOwnerColorName: town.initial_owner_color_name,
+          currentOwner: town.current_owner_color_id,
+          currentOwnerColorName: town.current_owner_color_name,
+          ownershipStatus: town.ownership_status,
+          ownershipSource: town.ownership_source,
+          ownershipConfidence: town.ownership_confidence,
           hasGarrison: Boolean(town.has_garrison),
           summary: ""
         };
@@ -2740,8 +2764,12 @@
           drawMarkerRing(screen, radius + 7, "#7a4d00", 2);
         }
       } else if (marker.type === "town") {
-        const townOwnerColors = playerColorStyle(marker.initialOwnerColorName);
-        const hasOwner = Boolean(marker.initialOwnerColorName);
+        const useCurrentOwner = townHasCurrentOwner(marker);
+        const ownerColorName = useCurrentOwner
+          ? marker.currentOwnerColorName
+          : marker.initialOwnerColorName;
+        const townOwnerColors = playerColorStyle(ownerColorName);
+        const hasOwner = Boolean(ownerColorName);
         const bodyFill = hasOwner ? townOwnerColors.fill : TOWN_MARKER_STYLE.unownedFill;
         const bodyStroke = hasOwner ? townOwnerColors.stroke : TOWN_MARKER_STYLE.unownedStroke;
         canvasContext.fillStyle = TOWN_MARKER_STYLE.fill;
