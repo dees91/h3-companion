@@ -145,6 +145,12 @@ For hero skill recommendations:
 - `config/battle_estimator/hero_skill_recommendations.json` for the active
   recommendation rule data.
 
+For MCP strategic advisor and agent-facing analysis tools:
+
+- `planning/battle-estimator-mcp-strategic-advisor.md` for the MCP server
+  scope, read-only/safe-compute tool contract, advisor context shape, runbook
+  expectations, and implementation task breakdown.
+
 Planning/history docs are useful context, but current code and tests are the
 source of truth when docs conflict. Update public docs (`README.md`,
 `CHANGELOG.md`, `docs/release-policy.md`, `NOTICE.md`) when behavior,
