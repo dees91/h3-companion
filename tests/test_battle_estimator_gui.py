@@ -326,6 +326,8 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             "routeStateForChar",
             "routeStyleForChar",
             "pathModeToggle",
+            "autoCenterToggle",
+            "autoCenter",
             "pathState",
             "setPathMode",
             "drawPathRoute",
@@ -415,7 +417,9 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             'id="show-route-overlay-toggle"',
             'id="portal-links-toggle"',
             'id="path-mode-toggle"',
+            'id="auto-center-toggle"',
             'id="target-filter-control"',
+            'Auto center',
             'Route Overlay',
             'Portal Links',
             'Dual level',
@@ -459,6 +463,7 @@ class BattleEstimatorGuiServerTests(unittest.TestCase):
             ".ranking-item",
             ".segmented-control",
             ".toggle-control",
+            ".map-stage-toggle",
             ".map-tooltip",
             ".path-result",
             ".path-segment-list",
@@ -2363,6 +2368,68 @@ assert.strictEqual(helpers.supportsDualLevelView({{ map: {{ width: 4, height: 4,
 const singleLanes = helpers.mapLaneGeometry(markerSnapshot, renderedView);
 assert.strictEqual(singleLanes.length, 1);
 assert.strictEqual(singleLanes[0].level, 0);
+assert.strictEqual(elements["auto-center-toggle"].checked, true);
+assert.strictEqual(renderedView.autoCenter, true);
+const autoCenterCanvasRect = elements["battle-map"].getBoundingClientRect();
+const autoCenterPortal = renderedView.markers.find((marker) => marker.id === "portal:100");
+helpers.focusPortalDestination("portal:100");
+let autoCenterView = helpers.currentMapViewForTest();
+assert.strictEqual(autoCenterView.activeMarkerId, "portal:100");
+assert.ok(Math.abs(autoCenterView.pan.x - (
+  (autoCenterCanvasRect.width / 2) - (autoCenterPortal.world.x * autoCenterView.zoom)
+)) < 0.001);
+assert.ok(Math.abs(autoCenterView.pan.y - (
+  (autoCenterCanvasRect.height / 2) - (autoCenterPortal.world.y * autoCenterView.zoom)
+)) < 0.001);
+elements["auto-center-toggle"].checked = false;
+elements["auto-center-toggle"].dispatch("change", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().autoCenter, false);
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+let autoCenterOffView = helpers.currentMapViewForTest();
+assert.strictEqual(elements["auto-center-toggle"].checked, false);
+assert.strictEqual(autoCenterOffView.autoCenter, false);
+let autoCenterOffPan = {{ ...autoCenterOffView.pan }};
+helpers.focusPortalDestination("portal:100");
+autoCenterOffView = helpers.currentMapViewForTest();
+assert.strictEqual(autoCenterOffView.activeMarkerId, "portal:100");
+assert.deepStrictEqual(autoCenterOffView.pan, autoCenterOffPan);
+autoCenterOffPan = {{ ...autoCenterOffView.pan }};
+helpers.focusPortalDestination("portal:101");
+autoCenterOffView = helpers.currentMapViewForTest();
+assert.strictEqual(autoCenterOffView.level, 1);
+assert.strictEqual(autoCenterOffView.activeMarkerId, "portal:101");
+assert.deepStrictEqual(autoCenterOffView.pan, autoCenterOffPan);
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+autoCenterOffView = helpers.currentMapViewForTest();
+autoCenterOffPan = {{ ...autoCenterOffView.pan }};
+helpers.focusCastleAlert({{
+  enemy_hero_id: "hero:not-visible",
+  enemy_position: {{ x: 3, y: 1, z: 1 }}
+}});
+autoCenterOffView = helpers.currentMapViewForTest();
+assert.strictEqual(autoCenterOffView.level, 1);
+assert.deepStrictEqual(autoCenterOffView.pan, autoCenterOffPan);
+assert.ok(targetStateText().includes("hero hero:not-visible"));
+assert.ok(targetStateText().includes("no visible marker"));
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
+autoCenterOffView = helpers.currentMapViewForTest();
+autoCenterOffPan = {{ ...autoCenterOffView.pan }};
+assert.strictEqual(helpers.focusPathSegment({{
+  segment_type: "walk",
+  start_position: {{ x: 0, y: 0, z: 1 }},
+  end_position: {{ x: 3, y: 0, z: 1 }},
+  steps: [
+    {{ position: {{ x: 0, y: 0, z: 1 }} }},
+    {{ position: {{ x: 3, y: 0, z: 1 }} }}
+  ]
+}}), true);
+autoCenterOffView = helpers.currentMapViewForTest();
+assert.strictEqual(autoCenterOffView.level, 1);
+assert.deepStrictEqual(autoCenterOffView.pan, autoCenterOffPan);
+elements["auto-center-toggle"].checked = true;
+elements["auto-center-toggle"].dispatch("change", {{}});
+assert.strictEqual(helpers.currentMapViewForTest().autoCenter, true);
+helpers.renderSnapshot(markerSnapshot, {{ preserveView: false }});
 drawOperations.length = 0;
 elements["dual-level-toggle"].checked = true;
 elements["dual-level-toggle"].dispatch("change", {{}});

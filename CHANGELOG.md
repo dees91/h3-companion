@@ -33,6 +33,9 @@ defined in [docs/release-policy.md](docs/release-policy.md).
 - Hero Ranking now sorts positioned save heroes by pairwise combat score from
   current battle estimates, shows ranking numbers on hero map markers, and
   keeps army AI value visible as secondary context.
+- The map stage now has an `Auto center` toggle. Turning it off preserves the
+  current pan during automatic focus actions while still allowing level changes
+  and detail updates.
 - Subterranean gates with a single resolved paired gate now click through to the
   destination level outside path mode.
 - Path, scan, context-menu, and portal-destination interactions now work in the

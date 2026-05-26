@@ -1908,6 +1908,12 @@ After Tasks 9, 17, 25, and 31:
   preview and navigation behavior.
 - Task 31 is a verification task and should run after Tasks 26-30 are complete.
 
+## Map Auto Center Follow-Up
+
+| Task | Title | Status | Notes |
+| --- | --- | --- | --- |
+| C01 | Auto Center Toggle | done | Added a session-only `Auto center` toggle inside the map stage. When off, hero selection, alerts, scan results, ranking rows, portal focus actions, and path segment focus preserve current pan while still allowing level switches and detail updates. Frontend tests cover default-on state, on-state centering, off-state pan preservation across snapshot renders, cross-level focus, castle-alert fallback, and path segment focus. |
+
 ## Summary Table
 
 | Task | Title | Status | Blocked By |
@@ -1943,3 +1949,4 @@ After Tasks 9, 17, 25, and 31:
 | 29 | Expand Portal Target Details And Navigation | done | 28 |
 | 30 | Preserve Path Mode Portal Semantics | done | 29 |
 | 31 | End-To-End Portal Readability Verification | done | 26, 27, 28, 29, 30 |
+| C01 | Auto Center Toggle | done | - |

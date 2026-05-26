@@ -36,6 +36,7 @@
     heroSkillsButton: document.getElementById("hero-skills-button"),
     heroRankingButton: document.getElementById("hero-ranking-button"),
     mapStage: document.getElementById("map-stage"),
+    autoCenterToggle: document.getElementById("auto-center-toggle"),
     mapTooltip: document.getElementById("map-tooltip"),
     targetContextMenu: document.getElementById("target-context-menu"),
     mapOverlayTitle: document.getElementById("map-overlay-title"),
@@ -95,6 +96,7 @@
     showPortalLinks: true,
     dualLevel: false,
     pathMode: false,
+    autoCenter: true,
     targetFilter: "both",
     markers: [],
     hoveredMarkerId: null,
@@ -2310,6 +2312,10 @@
     if (!worldPoint) {
       return false;
     }
+    if (!mapView.autoCenter) {
+      drawMap();
+      return true;
+    }
     const canvasSize = syncCanvasSize();
     mapView.pan = {
       x: (canvasSize.width / 2) - (worldPoint.x * mapView.zoom),
@@ -3609,6 +3615,7 @@
       level: mapView.level,
       dualLevel: mapView.dualLevel,
       pathMode: mapView.pathMode,
+      autoCenter: mapView.autoCenter,
       targetFilter: mapView.targetFilter,
       activeMarkerId: mapView.activeMarkerId,
       hoveredMarkerId: mapView.hoveredMarkerId,
@@ -6145,6 +6152,10 @@
     drawMap();
   });
 
+  elements.autoCenterToggle.addEventListener("change", () => {
+    mapView.autoCenter = elements.autoCenterToggle.checked;
+  });
+
   elements.pathModeToggle.addEventListener("change", () => {
     setPathMode(elements.pathModeToggle.checked);
   });
@@ -6425,6 +6436,7 @@
   elements.routeOverlayToggle.checked = mapView.showRouteOverlay;
   elements.portalLinksToggle.checked = mapView.showPortalLinks;
   elements.portalLinksToggle.disabled = true;
+  elements.autoCenterToggle.checked = mapView.autoCenter;
   syncDualLevelControl(null);
   updatePathModeControl();
   renderTargetFilterControl();
