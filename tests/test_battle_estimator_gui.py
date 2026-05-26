@@ -31,6 +31,7 @@ from tests.test_h3_save_parser import (
     _build_hero_combat_fixture,
     _decode_test_hero_combat_active_secondaries,
     _decode_test_hero_combat_primary,
+    _write_hero_combat_fields,
 )
 from tests.test_h3_map_parser import (
     _minimal_h3m_with_templates_and_objects,
@@ -7166,6 +7167,105 @@ assert.ok(pathSegmentButtons().length >= 4);
 
             self._with_server(check, app_state=app_state)
 
+    def test_simulate_target_endpoint_uses_gm2_context_for_hero_target(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            h3svg_prefix = b"x" * h3_save_parser.HERO_COMBAT_GM2_H3SVG_OFFSET
+            _, adjusted_offsets = _write_multi_gui_combat_save(
+                game_dir,
+                "001.GM2",
+                (
+                    {
+                        "hero_name": "Isra",
+                        "name_offset": 256,
+                        "position": (39, 69, 1),
+                        "owner_color_id": 0,
+                        "primary_skills": (8, 6, 4, 5),
+                        "secondary_count": 0,
+                        "secondary_skills": (
+                            (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+                        ),
+                    },
+                    {
+                        "hero_name": "Marius",
+                        "name_offset": 768,
+                        "position": (39, 71, 1),
+                        "owner_color_id": 2,
+                        "primary_skills": (3, 9, 1, 1),
+                        "secondary_count": 0,
+                        "secondary_skills": (
+                            (HERO_COMBAT_ARMORER_INDEX, HERO_COMBAT_LEVEL_ADVANCED, 1),
+                        ),
+                    },
+                ),
+                h3svg_prefix=h3svg_prefix,
+            )
+            map_path = _write_h3m_map(temp_path / "map.h3m", position=(39, 70, 1))
+            app_state = battle_estimator_gui.GuiAppState(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+            hero_id = f"hero:{adjusted_offsets[256]}"
+            target_id = f"hero:{adjusted_offsets[768]}"
+
+            def check(base_url):
+                with patch.object(
+                    battle_estimator_gui.battle_estimator,
+                    "run_simulations",
+                    return_value=72.0,
+                ) as run_mock:
+                    status, _, payload = self._post_json(
+                        base_url,
+                        "/api/simulate-target",
+                        {
+                            "hero_id": hero_id,
+                            "target_id": target_id,
+                            "simulations": 9,
+                        },
+                    )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["hero_id"], hero_id)
+                self.assertEqual(payload["target_id"], target_id)
+                self.assertEqual(payload["estimate"]["target_id"], target_id)
+                combat_model = payload["estimate"]["combat_model"]
+                self.assertEqual(combat_model["player"]["status"], "primary+secondary")
+                self.assertEqual(combat_model["player"]["source"], "save")
+                self.assertEqual(combat_model["enemy"]["status"], "primary+secondary")
+                self.assertEqual(combat_model["enemy"]["source"], "save")
+                player_applied = {
+                    component["id"]: component
+                    for component in combat_model["player"]["applied"]
+                }
+                enemy_applied = {
+                    component["id"]: component
+                    for component in combat_model["enemy"]["applied"]
+                }
+                self.assertEqual(
+                    player_applied["primary_attack_defense"]["value"],
+                    {"attack": 8, "defense": 6},
+                )
+                self.assertEqual(player_applied["offence"]["value"], 30)
+                self.assertEqual(
+                    enemy_applied["primary_attack_defense"]["value"],
+                    {"attack": 3, "defense": 9},
+                )
+                self.assertEqual(enemy_applied["armorer"]["value"], 10)
+                player_context = run_mock.call_args.kwargs["player_combat_context"]
+                enemy_context = run_mock.call_args.kwargs["enemy_combat_context"]
+                self.assertEqual(
+                    player_context.primary_skills,
+                    h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
+                )
+                self.assertEqual(
+                    enemy_context.primary_skills,
+                    h3_save_parser.HeroPrimarySkills(3, 9, 1, 1),
+                )
+
+            self._with_server(check, app_state=app_state)
+
     def test_scan_radius_endpoint_returns_distance_sorted_neutral_and_hero_results(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -9337,6 +9437,66 @@ class BattleEstimatorGuiSnapshotTests(unittest.TestCase):
         )
         self.assertEqual(combat_context["unsupported_observed"], [])
 
+    def test_supported_gm2_snapshot_serializes_combat_context(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            game_dir.mkdir()
+            h3svg_prefix = b"x" * h3_save_parser.HERO_COMBAT_GM2_H3SVG_OFFSET
+            secondary_skills = (
+                (HERO_COMBAT_ARCHERY_INDEX, HERO_COMBAT_LEVEL_BASIC, 1),
+                (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 2),
+                (HERO_COMBAT_ARMORER_INDEX, HERO_COMBAT_LEVEL_ADVANCED, 3),
+            )
+            _, name_offset = _write_gui_combat_save(
+                game_dir,
+                "001.GM2",
+                primary_skills=(8, 6, 4, 5),
+                secondary_skills=secondary_skills,
+                secondary_count=0,
+                xor_key=h3_save_parser.HERO_ARMY_XOR_KEY,
+                h3svg_prefix=h3svg_prefix,
+            )
+            map_path = _write_empty_h3m_map(temp_path / "map.h3m")
+
+            snapshot = battle_estimator_gui.build_state_snapshot(
+                autosave_dir=game_dir,
+                map_file=map_path,
+            )
+
+        self.assertEqual(snapshot["heroes"][0]["id"], f"hero:{name_offset}")
+        combat_context = snapshot["heroes"][0]["combat_context"]
+        self.assertEqual(
+            combat_context["status"],
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
+        )
+        self.assertEqual(
+            combat_context["source"],
+            h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
+        )
+        self.assertIsNone(combat_context["reason"])
+        self.assertEqual(
+            combat_context["primary"],
+            {"attack": 8, "defense": 6, "spell_power": 4, "knowledge": 5},
+        )
+        self.assertEqual(
+            combat_context["secondary_skills"],
+            [
+                {"skill": "archery", "level": "basic"},
+                {"skill": "offence", "level": "expert"},
+                {"skill": "armorer", "level": "advanced"},
+            ],
+        )
+        self.assertEqual(
+            combat_context["passive_modifiers"],
+            {
+                "offence_melee_pct": 30,
+                "armorer_all_pct": 10,
+                "archery_ranged_pct": 10,
+            },
+        )
+        self.assertEqual(combat_context["unsupported_observed"], [])
+
     def test_primary_only_snapshot_serializes_secondary_failure_reason(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -9385,7 +9545,7 @@ class BattleEstimatorGuiSnapshotTests(unittest.TestCase):
             },
         )
 
-    def test_unsupported_gm2_snapshot_serializes_unavailable_combat_context(self):
+    def test_gm2_offset0_raw_snapshot_serializes_unavailable_combat_context(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             game_dir = temp_path / "game"
@@ -9718,6 +9878,7 @@ def _write_gui_combat_save(
     secondary_count=None,
     name_offset=256,
     xor_key=0x00,
+    h3svg_prefix=b"",
 ) -> tuple[Path, int]:
     payload, name_offset = _build_hero_combat_fixture(
         hero_name=hero_name,
@@ -9727,9 +9888,10 @@ def _write_gui_combat_save(
         name_offset=name_offset,
         xor_key=xor_key,
     )
+    payload = h3svg_prefix + payload
     save_path = game_dir / name
     save_path.write_bytes(gzip.compress(payload))
-    return save_path, name_offset
+    return save_path, name_offset + len(h3svg_prefix)
 
 
 def _write_h3m_map_with_town(path: Path, owner=2) -> Path:
@@ -9853,6 +10015,59 @@ def _write_multi_gui_save(
     save_path = game_dir / name
     save_path.write_bytes(gzip.compress(bytes(data)))
     return save_path
+
+
+def _write_multi_gui_combat_save(
+    game_dir: Path,
+    name: str,
+    hero_specs,
+    h3svg_prefix=b"",
+) -> tuple[Path, dict[int, int]]:
+    hero_specs = tuple(hero_specs)
+    max_name_offset = max(
+        (spec["name_offset"] for spec in hero_specs),
+        default=0,
+    )
+    data = bytearray(max(max_name_offset + 256, 96))
+    data[0:len(battle_estimator_gui.h3_save_parser.H3SVG_SIGNATURE)] = (
+        battle_estimator_gui.h3_save_parser.H3SVG_SIGNATURE
+    )
+    for spec in hero_specs:
+        xor_key = spec.get("xor_key", h3_save_parser.HERO_ARMY_XOR_KEY)
+        if xor_key != h3_save_parser.HERO_ARMY_XOR_KEY:
+            raise ValueError("multi GUI combat save helper only supports XOR 0x01")
+        hero_window_kwargs = {
+            "hero_name": spec["hero_name"],
+            "name_offset": spec["name_offset"],
+            "position": spec.get("position"),
+            "owner_color_id": spec.get("owner_color_id", 0),
+        }
+        if "creature_ids" in spec:
+            hero_window_kwargs["creature_ids"] = spec["creature_ids"]
+        if "counts" in spec:
+            hero_window_kwargs["counts"] = spec["counts"]
+        _write_xor_hero_window(
+            data,
+            **hero_window_kwargs,
+        )
+        _write_hero_combat_fields(
+            data,
+            spec["name_offset"],
+            primary_skills=spec.get("primary_skills", (8, 6, 4, 5)),
+            secondary_skills=spec.get("secondary_skills", ()),
+            secondary_count=spec.get("secondary_count"),
+            xor_key=xor_key,
+        )
+
+    save_path = game_dir / name
+    save_path.write_bytes(gzip.compress(h3svg_prefix + bytes(data)))
+    return (
+        save_path,
+        {
+            spec["name_offset"]: spec["name_offset"] + len(h3svg_prefix)
+            for spec in hero_specs
+        },
+    )
 
 
 def _expected_fingerprint(path: Path) -> dict:

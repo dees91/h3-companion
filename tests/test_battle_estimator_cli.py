@@ -155,15 +155,20 @@ def _write_combat_save(
     primary_skills=(8, 6, 4, 5),
     secondary_skills=(),
     secondary_count=None,
+    xor_key=0x00,
+    h3svg_prefix=b"",
 ):
     game_dir.mkdir(parents=True, exist_ok=True)
+    position_from_name_offset = (
+        h3_save_parser.HOTSEAT_HERO_STRUCT_POSITION_FROM_NAME_OFFSET
+        if xor_key == 0x00
+        else h3_save_parser.HERO_STRUCT_POSITION_FROM_NAME_OFFSET
+    )
     payload, name_offset = _build_parser_hero_fixture(
         hero_name=hero_name,
         position=position,
-        xor_key=0x00,
-        position_from_name_offset=(
-            h3_save_parser.HOTSEAT_HERO_STRUCT_POSITION_FROM_NAME_OFFSET
-        ),
+        xor_key=xor_key,
+        position_from_name_offset=position_from_name_offset,
     )
     mutable = bytearray(payload)
     mutable[0:len(h3_save_parser.H3SVG_SIGNATURE)] = h3_save_parser.H3SVG_SIGNATURE
@@ -173,10 +178,10 @@ def _write_combat_save(
         primary_skills=primary_skills,
         secondary_skills=secondary_skills,
         secondary_count=secondary_count,
-        xor_key=0x00,
+        xor_key=xor_key,
     )
     save_path = game_dir / name
-    save_path.write_bytes(gzip.compress(bytes(mutable)))
+    save_path.write_bytes(gzip.compress(h3svg_prefix + bytes(mutable)))
     return save_path
 
 
@@ -516,6 +521,68 @@ class BattleEstimatorCliTests(unittest.TestCase):
         self.assertEqual(
             selected_hero.primary_skills,
             h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
+        )
+
+    def test_scan_nearby_uses_supported_gm2_save_combat_context(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            game_dir = temp_path / "game"
+            h3svg_prefix = b"x" * h3_save_parser.HERO_COMBAT_GM2_H3SVG_OFFSET
+            save_path = _write_combat_save(
+                game_dir,
+                "001.GM2",
+                position=(39, 69, 1),
+                primary_skills=(8, 6, 4, 5),
+                secondary_count=0,
+                secondary_skills=(
+                    (HERO_COMBAT_OFFENSE_INDEX, HERO_COMBAT_LEVEL_EXPERT, 1),
+                ),
+                xor_key=h3_save_parser.HERO_ARMY_XOR_KEY,
+                h3svg_prefix=h3svg_prefix,
+            )
+            map_path = _write_h3m_map(
+                temp_path / "map.h3m",
+                position=(39, 70, 1),
+                count=37,
+            )
+            args = argparse.Namespace(
+                army_specs=(),
+                hero="Isra",
+                scan_nearby=2,
+                save_file=str(save_path),
+                autosave_dir=None,
+                save=None,
+                map_file=str(map_path),
+                all_heroes=False,
+                target_type="neutral",
+                include_removed=False,
+                simulations=1,
+            )
+
+            with patch.object(
+                battle_estimator,
+                "estimate_nearby_scan_targets",
+                return_value=(),
+            ) as estimate_mock:
+                with redirect_stdout(io.StringIO()):
+                    battle_estimator._run_nearby_scan(args)
+
+        selected_hero = estimate_mock.call_args.args[0]
+        self.assertEqual(
+            selected_hero.combat_context.status,
+            h3_save_parser.HERO_COMBAT_STATUS_PRIMARY_AND_SECONDARY,
+        )
+        self.assertEqual(
+            selected_hero.combat_context.source,
+            h3_save_parser.HERO_COMBAT_SOURCE_SAVE,
+        )
+        self.assertEqual(
+            selected_hero.primary_skills,
+            h3_save_parser.HeroPrimarySkills(8, 6, 4, 5),
+        )
+        self.assertEqual(
+            [(skill.skill_id, skill.level) for skill in selected_hero.secondary_skills],
+            [("offence", "expert")],
         )
 
     def test_autosave_hero_mode_prints_combat_model_when_context_used(self):
